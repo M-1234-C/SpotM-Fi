@@ -4,6 +4,7 @@ import os
 import tempfile
 import time
 import math
+import random
 
 # --- WINDOW & SCALING CONFIGURATION ---
 pygame.mixer.pre_init(44100, -16, 2, 2048)
@@ -54,6 +55,10 @@ current_track = {
     "path": ""
 }
 is_playing = False     
+is_shuffle = False  # Spotify shuffle engine toggle tracker
+
+# Tracker for tracks that have been manually toggled green
+green_toggled_tracks = set()
 
 # --- AUDIO TRACKING STATE ---
 track_duration = 0.0          
@@ -143,9 +148,13 @@ search_box_rect = pygame.Rect(260, 80, 500, 40)
 play_btn_rect = pygame.Rect(0, 0, 0, 0)
 prev_btn_rect = pygame.Rect(0, 0, 0, 0)
 next_btn_rect = pygame.Rect(0, 0, 0, 0)
+minus_10_btn_rect = pygame.Rect(0, 0, 0, 0)
+plus_10_btn_rect = pygame.Rect(0, 0, 0, 0)
+shuffle_btn_rect = pygame.Rect(0, 0, 0, 0)
 mediabar_add_btn_rect = pygame.Rect(0, 0, 0, 0)
 star_btn_rect = pygame.Rect(0, 0, 0, 0)
 playlist_play_btn_rect = pygame.Rect(0, 0, 0, 0)
+playlist_random_btn_rect = pygame.Rect(0, 0, 0, 0) # Track boundary for new playlist header shuffle trigger
 add_folder_btn_rect = pygame.Rect(0, 0, 0, 0)
 settings_btn_rect = pygame.Rect(0, 0, 0, 0)
 create_playlist_btn_rect = pygame.Rect(0, 0, 0, 0)
@@ -181,10 +190,17 @@ def advance_track(backward=False):
             break
             
     if current_index != -1:
-        if backward:
-            next_index = (current_index - 1) % len(playlist)
+        # Integrated Shuffle Player Routine Strategy
+        if is_shuffle and len(playlist) > 1:
+            next_index = current_index
+            while next_index == current_index:
+                next_index = random.randint(0, len(playlist) - 1)
         else:
-            next_index = (current_index + 1) % len(playlist)
+            if backward:
+                next_index = (current_index - 1) % len(playlist)
+            else:
+                next_index = (current_index + 1) % len(playlist)
+                
         current_track = playlist[next_index]
         is_playing = True
         load_and_play_track(current_track["path"])
@@ -207,7 +223,7 @@ def load_and_play_track(track_path):
         TEMP_WAV_PATH = None
 
     track_start_accumulator = 0.0
-    is_mp4 = track_path.lower().endswith(('.mp4', '.m4a'))
+    is_mp4 = track_path.lower().endswith(('.mp4', '.m4a', '.aac', '.alac', '.dsf', '.dff'))
 
     if is_mp4 and HAS_ANDROID_MEDIA and android_media_player:
         current_backend = "android"
@@ -240,7 +256,12 @@ def load_and_play_track(track_path):
                         audio = OggVorbis(track_path)
                         duration = audio.info.length
                     except:
-                        duration = 180.0
+                        try:
+                            from mutagen.flac import FLAC
+                            audio = FLAC(track_path)
+                            duration = audio.info.length
+                        except:
+                            duration = 180.0
         else:
             try:
                 from moviepy.editor import AudioFileClip
@@ -299,7 +320,7 @@ def rebuild_imported_tracks():
     for directory in saved_directories:
         try:
             for file in os.listdir(directory):
-                if file.lower().endswith(('.mp3', '.mp4', '.m4a', '.wav', '.ogg', '.flac', '.mpe', '.mpeg')):
+                if file.lower().endswith(('.mp3', '.mp4', '.m4a', '.wav', '.ogg', '.flac', '.mpe', '.mpeg', '.aac', '.alac', '.dsf', '.dff')):
                     clean_title = os.path.splitext(file)[0]
                     
                     if len(clean_title) > 18:
@@ -351,6 +372,29 @@ def draw_manual_thumbs_up(surface, x, y, w, h, color):
     pygame.draw.rect(surface, color, (x, y + h * 0.5, w * 0.22, h * 0.4), border_radius=max(1, int(w * 0.04)))
     pygame.draw.rect(surface, color, (x + w * 0.28, y + h * 0.35, w * 0.62, h * 0.55), border_radius=max(1, int(w * 0.06)))
     pygame.draw.rect(surface, color, (x + w * 0.28, y, w * 0.25, h * 0.45), border_radius=max(1, int(w * 0.06)))
+
+def draw_spotify_shuffle_icon(surface, rect, color):
+    """Draws a vector style crossing shuffle icon matching Spotify's layout"""
+    cx, cy = rect.centerx, rect.centery
+    w, h = 16, 12
+    x_left = cx - w // 2
+    x_right = cx + w // 2
+    y_top = cy - h // 2
+    y_bottom = cy + h // 2
+    
+    # Top strand going to bottom right
+    pygame.draw.line(surface, color, (x_left, y_top), (cx - 2, y_top), 2)
+    pygame.draw.line(surface, color, (cx - 2, y_top), (cx + 2, y_bottom), 2)
+    pygame.draw.line(surface, color, (cx + 2, y_bottom), (x_right, y_bottom), 2)
+    
+    # Bottom strand going to top right
+    pygame.draw.line(surface, color, (x_left, y_bottom), (cx - 2, y_bottom), 2)
+    pygame.draw.line(surface, color, (cx - 2, y_bottom), (cx + 2, y_top), 2)
+    pygame.draw.line(surface, color, (cx + 2, y_top), (x_right, y_top), 2)
+    
+    # Arrows on right heads
+    pygame.draw.polygon(surface, color, [(x_right, y_top - 3), (x_right + 4, y_top), (x_right, y_top + 3)])
+    pygame.draw.polygon(surface, color, [(x_right, y_bottom - 3), (x_right + 4, y_bottom), (x_right, y_bottom + 3)])
 
 def draw_solid_cog_wheel(surface, x, y, w, h, color):
     cx, cy = x + w // 2, y + h // 2
@@ -458,7 +502,7 @@ def draw_sidebar():
         y_offset += 40
 
 def draw_main_content():
-    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction
+    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction
     track_rects = []
     browser_rects = []
     settings_dir_rects = []
@@ -474,7 +518,7 @@ def draw_main_content():
         return
 
     # --- DETAILED PLAYLIST VIEWS (LIKED OR CUSTOM) ---
-    if (viewing_liked_playlist or selected_custom_playlist_name) and current_page == "Your Library":
+    if (viewing_liked_playlist or selected_custom_playlist_name) and current_page == "Your Library" and not is_browsing_for_cover:
         is_custom = selected_custom_playlist_name is not None
         active_tracks = custom_playlists[selected_custom_playlist_name]["tracks"] if is_custom else liked_tracks
         p_title_text = selected_custom_playlist_name if is_custom else "Liked Songs"
@@ -544,6 +588,7 @@ def draw_main_content():
             info_lbl = font_body.render(f"Local Account • {len(active_tracks)} songs", True, COLOR_TEXT_MUTED)
             virtual_surface.blit(info_lbl, (420, 140))
         
+        # PLAYLIST CONTROLS: Play/Pause Button
         playlist_play_btn_rect = pygame.Rect(260, 215, 50, 50)
         is_p_hovered = playlist_play_btn_rect.collidepoint(mouse_pos)
         is_p_clicked = is_p_hovered and pygame.mouse.get_pressed()[0]
@@ -560,6 +605,17 @@ def draw_main_content():
         else:
             pygame.draw.rect(virtual_surface, COLOR_BLACK, (279, 232, 4, 16))
             pygame.draw.rect(virtual_surface, COLOR_BLACK, (287, 232, 4, 16))
+
+        # PLAYLIST CONTROLS: Added Random Button adjacent to Play button
+        playlist_random_btn_rect = pygame.Rect(325, 222, 36, 36)
+        is_pr_hovered = playlist_random_btn_rect.collidepoint(mouse_pos)
+        
+        if is_pr_hovered:
+            pygame.draw.circle(virtual_surface, COLOR_HOVER, playlist_random_btn_rect.center, 18)
+            shuffle_icon_color = COLOR_WHITE
+        else:
+            shuffle_icon_color = COLOR_TEXT_MUTED
+        draw_spotify_shuffle_icon(virtual_surface, playlist_random_btn_rect, shuffle_icon_color)
             
         hash_lbl = font_small.render("#  TITLE", True, COLOR_TEXT_MUTED)
         album_lbl = font_small.render("ALBUM", True, COLOR_TEXT_MUTED)
@@ -584,15 +640,21 @@ def draw_main_content():
                 
                 if is_row_clicked:
                     pygame.draw.rect(virtual_surface, (60, 60, 60), row_rect, border_radius=6)
+                elif track["path"] in green_toggled_tracks:
+                    # Renders row background green if toggled active
+                    pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, row_rect, border_radius=6)
                 elif is_row_hovered:
                     pygame.draw.rect(virtual_surface, COLOR_HOVER, row_rect, border_radius=6)
                 
-                title_color = COLOR_SPOTIFY_GREEN if track["title"] == current_track["title"] else COLOR_WHITE
+                if track["path"] in green_toggled_tracks:
+                    title_color = COLOR_BLACK
+                else:
+                    title_color = COLOR_SPOTIFY_GREEN if track["title"] == current_track["title"] else COLOR_WHITE
                 
-                num_surf = font_body.render(str(index + 1), True, COLOR_TEXT_MUTED)
+                num_surf = font_body.render(str(index + 1), True, COLOR_BLACK if track["path"] in green_toggled_tracks else COLOR_TEXT_MUTED)
                 title_surf = font_body.render(track["title"], True, title_color)
-                artist_surf = font_small.render(track["artist"], True, COLOR_TEXT_MUTED)
-                album_surf = font_body.render(track["album"], True, COLOR_TEXT_MUTED)
+                artist_surf = font_small.render(track["artist"], True, COLOR_BLACK if track["path"] in green_toggled_tracks else COLOR_TEXT_MUTED)
+                album_surf = font_body.render(track["album"], True, COLOR_BLACK if track["path"] in green_toggled_tracks else COLOR_TEXT_MUTED)
                 
                 virtual_surface.blit(num_surf, (270, y_offset + 12))
                 virtual_surface.blit(title_surf, (310, y_offset + 4))
@@ -810,20 +872,32 @@ def draw_main_content():
                     
                     if is_card_clicked:
                         pygame.draw.rect(virtual_surface, (45, 45, 45), card_rect, border_radius=8)
+                    elif track["path"] in green_toggled_tracks:
+                        # Renders background card frame green if toggled active
+                        pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, card_rect, border_radius=8)
                     elif is_card_hovered:
                         pygame.draw.rect(virtual_surface, COLOR_HOVER, card_rect, border_radius=8)
                     else:
                         pygame.draw.rect(virtual_surface, COLOR_CARD_BG, card_rect, border_radius=8)
                     
                     cover_rect = pygame.Rect(box_x + 12, box_y + 12, card_width - 24, card_height - 24)
-                    cover_color = COLOR_SPOTIFY_GREEN if track["title"] == current_track["title"] else COLOR_LIGHT_GREY
+                    if track["path"] in green_toggled_tracks:
+                        cover_color = COLOR_WHITE
+                    else:
+                        cover_color = COLOR_SPOTIFY_GREEN if track["title"] == current_track["title"] else COLOR_LIGHT_GREY
                     pygame.draw.rect(virtual_surface, cover_color, cover_rect, border_radius=6)
                     
-                    title_color = COLOR_SPOTIFY_GREEN if track["title"] == current_track["title"] else COLOR_WHITE
+                    if track["path"] in green_toggled_tracks:
+                        title_color = COLOR_BLACK
+                        sub_color = COLOR_BLACK
+                    else:
+                        title_color = COLOR_SPOTIFY_GREEN if track["title"] == current_track["title"] else COLOR_WHITE
+                        sub_color = COLOR_TEXT_MUTED
+                        
                     title_surf = font_small.render(track["title"], True, title_color)
                     virtual_surface.blit(title_surf, (box_x + 12, box_y + card_height - 4))
                     
-                    sub_surf = font_small.render(track["album"], True, COLOR_TEXT_MUTED)
+                    sub_surf = font_small.render(track["album"], True, sub_color)
                     virtual_surface.blit(sub_surf, (box_x + 12, box_y + card_height + 14))
 
             virtual_surface.set_clip(None)
@@ -939,7 +1013,7 @@ def draw_modals():
             pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, modal_image_picker_rect)
             draw_spotify_pencil(virtual_surface, 390, 270, COLOR_BLACK)
             
-        # Unified cover overlay applied seamlessly across everything
+        # Outer cover overlay applied seamlessly across everything
         draw_unified_cover_overlay(virtual_surface, modal_image_picker_rect, mouse_pos)
             
         # --- PLAYLIST NAME INPUT ---
@@ -1054,7 +1128,7 @@ def draw_modals():
             virtual_surface.set_clip(None)
 
 def draw_media_bar():
-    global play_btn_rect, prev_btn_rect, next_btn_rect, mediabar_add_btn_rect, star_btn_rect, progress_bar_rect
+    global play_btn_rect, prev_btn_rect, next_btn_rect, minus_10_btn_rect, plus_10_btn_rect, mediabar_add_btn_rect, star_btn_rect, shuffle_btn_rect, progress_bar_rect
     
     if current_track["title"] == "Select a song":
         return
@@ -1070,7 +1144,7 @@ def draw_media_bar():
     center_x = WIDTH // 2
     center_y = HEIGHT - 60
     
-    star_btn_rect = pygame.Rect(center_x - 75, center_y - 10, 20, 20)
+    star_btn_rect = pygame.Rect(center_x - 125, center_y - 10, 20, 20)
     mouse_pos = get_virtual_mouse_pos()
     
     is_starred = current_track in liked_tracks
@@ -1086,38 +1160,18 @@ def draw_media_bar():
         
     draw_manual_thumbs_up(virtual_surface, star_btn_rect.x, star_btn_rect.y, star_btn_rect.width, star_btn_rect.height, star_color)
 
-    play_btn_rect = pygame.Rect(center_x - 18, center_y - 18, 36, 36)
-    is_mb_play_hovered = play_btn_rect.collidepoint(mouse_pos)
-    is_mb_play_clicked = is_mb_play_hovered and pygame.mouse.get_pressed()[0]
-    
-    if is_mb_play_clicked:
-        pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, (center_x, center_y), 16)
-    elif is_mb_play_hovered:
-        pygame.draw.circle(virtual_surface, COLOR_WHITE, (center_x, center_y), 20)
-    else:
-        pygame.draw.circle(virtual_surface, COLOR_WHITE, (center_x, center_y), 18)
-    
-    if not is_playing:
-        pygame.draw.polygon(virtual_surface, COLOR_BLACK, [(center_x - 4, center_y - 6), (center_x - 4, center_y + 6), (center_x + 6, center_y)])
-    else:
-        pygame.draw.rect(virtual_surface, COLOR_BLACK, (center_x - 5, center_y - 6, 3, 12))
-        pygame.draw.rect(virtual_surface, COLOR_BLACK, (center_x + 2, center_y - 6, 3, 12))
-    
-    prev_btn_rect = pygame.Rect(center_x - 45, center_y - 15, 25, 30)
-    next_btn_rect = pygame.Rect(center_x + 20, center_y - 15, 25, 30)
+    # --- RECONFIGURED CONFIGURATION ROW CONTROL SLOTS ---
+    # Moved Add Folder Plus button between Thumbs-Up and -10s
+    mediabar_add_btn_rect = pygame.Rect(center_x - 95, center_y - 14, 28, 28)
+    minus_10_btn_rect     = pygame.Rect(center_x - 55, center_y - 16, 32, 32)
+    prev_btn_rect         = pygame.Rect(center_x - 18, center_y - 18, 28, 36)
+    play_btn_rect         = pygame.Rect(center_x + 15, center_y - 18, 36, 36)
+    next_btn_rect         = pygame.Rect(center_x + 56, center_y - 18, 28, 36)
+    plus_10_btn_rect      = pygame.Rect(center_x + 90, center_y - 16, 32, 32)
+    # Shuffle sitting exactly next to +10s on the right wing boundary
+    shuffle_btn_rect      = pygame.Rect(center_x + 132, center_y - 16, 32, 32)
 
-    prev_hover = prev_btn_rect.collidepoint(mouse_pos)
-    prev_click = prev_hover and pygame.mouse.get_pressed()[0]
-    prev_color = COLOR_SPOTIFY_GREEN if prev_click else (COLOR_WHITE if prev_hover else COLOR_TEXT_MUTED)
-    pygame.draw.polygon(virtual_surface, prev_color, [(center_x - 35, center_y), (center_x - 25, center_y - 6), (center_x - 25, center_y + 6)])
-    
-    next_hover = next_btn_rect.collidepoint(mouse_pos)
-    next_click = next_hover and pygame.mouse.get_pressed()[0]
-    next_color = COLOR_SPOTIFY_GREEN if next_click else (COLOR_WHITE if next_hover else COLOR_TEXT_MUTED)
-    pygame.draw.polygon(virtual_surface, next_color, [(center_x + 35, center_y), (center_x + 25, center_y - 6), (center_x + 25, center_y + 6)])
-    
-    # Circle with '+' button inside next to the forward to next music button - Styled like Spotify
-    mediabar_add_btn_rect = pygame.Rect(center_x + 55, center_y - 14, 28, 28)
+    # --- RENDER PLAYLIST QUICK ADD BUTTON (CIRCLE PLUS BETWEEN THUMBS UP & -10) ---
     add_hover = mediabar_add_btn_rect.collidepoint(mouse_pos)
     add_click = add_hover and pygame.mouse.get_pressed()[0]
     
@@ -1128,7 +1182,6 @@ def draw_media_bar():
         pygame.draw.circle(virtual_surface, COLOR_WHITE, mediabar_add_btn_rect.center, 14)
         plus_color = COLOR_BLACK
     else:
-        # Transparent outline matching Spotify's standard interface design
         pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, mediabar_add_btn_rect.center, 13, width=2)
         plus_color = COLOR_TEXT_MUTED
         
@@ -1136,9 +1189,88 @@ def draw_media_bar():
     plus_x = mediabar_add_btn_rect.centerx - plus_surf.get_width() // 2
     plus_y = mediabar_add_btn_rect.centery - plus_surf.get_height() // 2 - 2
     virtual_surface.blit(plus_surf, (plus_x, plus_y))
+
+    # --- RENDER -10S BUTTON ---
+    m10_hover = minus_10_btn_rect.collidepoint(mouse_pos)
+    m10_click = m10_hover and pygame.mouse.get_pressed()[0]
     
+    if m10_click:
+        pygame.draw.circle(virtual_surface, (20, 150, 65), minus_10_btn_rect.center, 16)
+        pygame.draw.circle(virtual_surface, COLOR_WHITE, minus_10_btn_rect.center, 16, width=2)
+        m10_text_color = COLOR_WHITE
+    elif m10_hover:
+        pygame.draw.circle(virtual_surface, COLOR_HOVER, minus_10_btn_rect.center, 16)
+        pygame.draw.circle(virtual_surface, COLOR_WHITE, minus_10_btn_rect.center, 16, width=2)
+        m10_text_color = COLOR_WHITE
+    else:
+        pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, minus_10_btn_rect.center, 16, width=2)
+        m10_text_color = COLOR_TEXT_MUTED
+        
+    m10_surf = font_small.render("-10", True, m10_text_color)
+    virtual_surface.blit(m10_surf, (minus_10_btn_rect.centerx - m10_surf.get_width() // 2, minus_10_btn_rect.centery - m10_surf.get_height() // 2))
+
+    # --- RENDER PREVIOUS BUTTON ---
+    prev_hover = prev_btn_rect.collidepoint(mouse_pos)
+    prev_click = prev_hover and pygame.mouse.get_pressed()[0]
+    prev_color = COLOR_SPOTIFY_GREEN if prev_click else (COLOR_WHITE if prev_hover else COLOR_TEXT_MUTED)
+    pygame.draw.polygon(virtual_surface, prev_color, [(center_x - 15, center_y), (center_x, center_y - 9), (center_x, center_y + 9)])
+    
+    # --- RENDER MAIN PLAY CONTROL BUTTON ---
+    is_mb_play_hovered = play_btn_rect.collidepoint(mouse_pos)
+    is_mb_play_clicked = is_mb_play_hovered and pygame.mouse.get_pressed()[0]
+    
+    if is_mb_play_clicked:
+        pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, (center_x + 33, center_y), 16)
+    elif is_mb_play_hovered:
+        pygame.draw.circle(virtual_surface, COLOR_WHITE, (center_x + 33, center_y), 20)
+    else:
+        pygame.draw.circle(virtual_surface, COLOR_WHITE, (center_x + 33, center_y), 18)
+    
+    if not is_playing:
+        pygame.draw.polygon(virtual_surface, COLOR_BLACK, [(center_x + 30, center_y - 6), (center_x + 30, center_y + 6), (center_x + 40, center_y)])
+    else:
+        pygame.draw.rect(virtual_surface, COLOR_BLACK, (center_x + 29, center_y - 6, 3, 12))
+        pygame.draw.rect(virtual_surface, COLOR_BLACK, (center_x + 35, center_y - 6, 3, 12))
+
+    # --- RENDER NEXT BUTTON ---
+    next_hover = next_btn_rect.collidepoint(mouse_pos)
+    next_click = next_hover and pygame.mouse.get_pressed()[0]
+    next_color = COLOR_SPOTIFY_GREEN if next_click else (COLOR_WHITE if next_hover else COLOR_TEXT_MUTED)
+    pygame.draw.polygon(virtual_surface, next_color, [(center_x + 80, center_y), (center_x + 65, center_y - 9), (center_x + 65, center_y + 9)])
+    
+    # --- RENDER +10S BUTTON ---
+    p10_hover = plus_10_btn_rect.collidepoint(mouse_pos)
+    p10_click = p10_hover and pygame.mouse.get_pressed()[0]
+    
+    if p10_click:
+        pygame.draw.circle(virtual_surface, (20, 150, 65), plus_10_btn_rect.center, 16)
+        pygame.draw.circle(virtual_surface, COLOR_WHITE, plus_10_btn_rect.center, 16, width=2)
+        p10_text_color = COLOR_WHITE
+    elif p10_hover:
+        pygame.draw.circle(virtual_surface, COLOR_HOVER, plus_10_btn_rect.center, 16)
+        pygame.draw.circle(virtual_surface, COLOR_WHITE, plus_10_btn_rect.center, 16, width=2)
+        p10_text_color = COLOR_WHITE
+    else:
+        pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, plus_10_btn_rect.center, 16, width=2)
+        p10_text_color = COLOR_TEXT_MUTED
+        
+    p10_surf = font_small.render("+10", True, p10_text_color)
+    virtual_surface.blit(p10_surf, (plus_10_btn_rect.centerx - p10_surf.get_width() // 2, plus_10_btn_rect.centery - p10_surf.get_height() // 2))
+
+    # --- RENDER SHUFFLE RANDOM BUTTON (SPOTIFY SHUFFLE CLONE DESIGN) ---
+    sh_hover = shuffle_btn_rect.collidepoint(mouse_pos)
+    
+    if is_shuffle:
+        sh_icon_color = COLOR_SPOTIFY_GREEN
+        # Draw small green active dot indicator under icon matching Spotify standard interface rules
+        pygame.draw.circle(virtual_surface, COLOR_SPOTIFY_GREEN, (shuffle_btn_rect.centerx, shuffle_btn_rect.centery + 12), 2)
+    else:
+        sh_icon_color = COLOR_WHITE if sh_hover else COLOR_TEXT_MUTED
+
+    draw_spotify_shuffle_icon(virtual_surface, shuffle_btn_rect, sh_icon_color)
+
     progress_bar_width = 400
-    progress_bar_x = center_x - (progress_bar_width // 2)
+    progress_bar_x = center_x - (progress_bar_width // 2) + 20
     progress_bar_y = HEIGHT - 25
     progress_bar_rect = pygame.Rect(progress_bar_x, progress_bar_y - 10, progress_bar_width, 24)
     
@@ -1353,7 +1485,7 @@ while running:
                                         custom_playlists[p_name]["tracks"].append(track_to_add_to_playlist)
                                     show_add_to_playlist_modal = False
                                     track_to_add_to_playlist = None
-                                    target_music_scroll = 0.0 # Clear dynamic assignment scrolling variables
+                                    target_music_scroll = 0.0 
                                     break
                         continue
 
@@ -1411,7 +1543,7 @@ while running:
                                     break
                         continue
 
-                    # --- PLAYLIST HEADER COVER CLICK REDIRECTION ENGAGEMENT HANDLING ---
+                    # --- PLAYLIST HEADER INTERACTION HANDLING ---
                     if (viewing_liked_playlist or selected_custom_playlist_name) and current_page == "Your Library":
                         if playlist_cover_rect.collidepoint(mouse_pos):
                             is_browsing_for_cover = True
@@ -1419,6 +1551,7 @@ while running:
                             update_browser_contents()
                             continue
                             
+                        # Playlist Header Play button interaction
                         if playlist_play_btn_rect.collidepoint(mouse_pos):
                             active_tracks = custom_playlists[selected_custom_playlist_name]["tracks"] if selected_custom_playlist_name else liked_tracks
                             if active_tracks:
@@ -1435,6 +1568,17 @@ while running:
                                     else:
                                         if current_backend == "android": android_media_player.pause()
                                         else: pygame.mixer.music.pause()
+
+                        # Playlist Header Random button interaction
+                        if playlist_random_btn_rect.collidepoint(mouse_pos):
+                            active_tracks = custom_playlists[selected_custom_playlist_name]["tracks"] if selected_custom_playlist_name else liked_tracks
+                            if active_tracks:
+                                is_shuffle = True  # Enable shuffle engine state in media bar
+                                playlist_is_playing = True
+                                random_index = random.randint(0, len(active_tracks) - 1)
+                                current_track = active_tracks[random_index]
+                                is_playing = True
+                                load_and_play_track(current_track["path"])
 
                     if current_page == "Your Library" and not viewing_liked_playlist and not selected_custom_playlist_name:
                         if create_playlist_btn_rect.collidepoint(mouse_pos):
@@ -1485,6 +1629,12 @@ while running:
                                     clip_rect_bounds = pygame.Rect(230, 140, WIDTH - 230, HEIGHT - 140 - content_bottom_margin)
                                     
                                 if clip_rect_bounds.collidepoint(mouse_pos) and rect.collidepoint(mouse_pos):
+                                    # Toggle track to green state on click, back to grey if clicked again
+                                    if track["path"] in green_toggled_tracks:
+                                        green_toggled_tracks.remove(track["path"])
+                                    else:
+                                        green_toggled_tracks.add(track["path"])
+                                        
                                     current_track = track
                                     playlist_is_playing = True if (viewing_liked_playlist or selected_custom_playlist_name) else False
                                     is_playing = True 
@@ -1507,15 +1657,35 @@ while running:
                                     except: pass
                                 is_playing = True
 
-                            if next_btn_rect.collidepoint(mouse_pos):
-                                advance_track(backward=False)
-                            elif prev_btn_rect.collidepoint(mouse_pos):
-                                advance_track(backward=True)
-                                
+                            # --- PLAYLIST QUICK ADD BUTTON (CIRCLE PLUS BETWEEN THUMBS UP & -10) ---
                             if mediabar_add_btn_rect.collidepoint(mouse_pos):
                                 track_to_add_to_playlist = current_track
                                 show_add_to_playlist_modal = True
                                 target_music_scroll = 0.0
+
+                            # --- SKIP -10S BUTTON LOGIC ---
+                            if minus_10_btn_rect.collidepoint(mouse_pos) and track_duration > 0 and music_loaded:
+                                if current_backend == "android" and android_media_player:
+                                    try: current_pos = android_media_player.getCurrentPosition() / 1000.0
+                                    except: current_pos = 0.0
+                                else:
+                                    mix_pos = pygame.mixer.music.get_pos()
+                                    current_pos = track_start_accumulator + (mix_pos / 1000.0) if mix_pos != -1 else track_start_accumulator
+                                
+                                seek_target = max(0.0, current_pos - 10.0)
+                                track_start_accumulator = seek_target
+                                if current_backend == "android" and android_media_player:
+                                    try:
+                                        android_media_player.seekTo(int(seek_target * 1000))
+                                        android_media_player.start()
+                                    except: pass
+                                else:
+                                    try: pygame.mixer.music.play(start=seek_target)
+                                    except: pass
+                                is_playing = True
+
+                            if prev_btn_rect.collidepoint(mouse_pos):
+                                advance_track(backward=True)
 
                             if play_btn_rect.collidepoint(mouse_pos):
                                 if music_loaded: 
@@ -1526,6 +1696,34 @@ while running:
                                     else:
                                         if current_backend == "android": android_media_player.pause()
                                         else: pygame.mixer.music.pause()
+
+                            if next_btn_rect.collidepoint(mouse_pos):
+                                advance_track(backward=False)
+
+                            # --- SKIP +10S BUTTON LOGIC ---
+                            if plus_10_btn_rect.collidepoint(mouse_pos) and track_duration > 0 and music_loaded:
+                                if current_backend == "android" and android_media_player:
+                                    try: current_pos = android_media_player.getCurrentPosition() / 1000.0
+                                    except: current_pos = 0.0
+                                else:
+                                    mix_pos = pygame.mixer.music.get_pos()
+                                    current_pos = track_start_accumulator + (mix_pos / 1000.0) if mix_pos != -1 else track_start_accumulator
+                                
+                                seek_target = min(track_duration, current_pos + 10.0)
+                                track_start_accumulator = seek_target
+                                if current_backend == "android" and android_media_player:
+                                    try:
+                                        android_media_player.seekTo(int(seek_target * 1000))
+                                        android_media_player.start()
+                                    except: pass
+                                else:
+                                    try: pygame.mixer.music.play(start=seek_target)
+                                    except: pass
+                                is_playing = True
+                                
+                            # --- SHUFFLE TOGGLE BUTTON CLICK INTERCEPT ---
+                            if shuffle_btn_rect.collidepoint(mouse_pos):
+                                is_shuffle = not is_shuffle
 
                             if star_btn_rect.collidepoint(mouse_pos):
                                 if current_track in liked_tracks:
