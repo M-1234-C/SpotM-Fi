@@ -29,9 +29,12 @@ screen = pygame.display.set_mode((REAL_WIDTH, REAL_HEIGHT), pygame.FULLSCREEN)
 virtual_surface = pygame.Surface((WIDTH, HEIGHT))
 clock = pygame.time.Clock()
 
-# FIXED: Pygame scrap engine MUST be initialized strictly AFTER set_mode()
+# FIXED: Safe compilation safeguard for platforms missing the pygame.scrap module entirely
+HAS_DESKTOP_SCRAP = False
 try:
+    import pygame.scrap
     pygame.scrap.init()
+    HAS_DESKTOP_SCRAP = True
 except:
     pass
 
@@ -1585,10 +1588,24 @@ def draw_media_bar():
 load_app_data()
 running = True
 
-try: pygame.key.start_text_input()
-except: pass
+# Track virtual keyboard state
+virtual_keyboard_active = False
 
 while running:
+    # --- VIRTUAL KEYBOARD TOGGLE ENGINE ---
+    if search_input_active and not virtual_keyboard_active:
+        try: pygame.key.start_text_input()
+        except: pass
+        virtual_keyboard_active = True
+    elif not search_input_active and virtual_keyboard_active:
+        try: pygame.key.stop_text_input()
+        except: pass
+        virtual_keyboard_active = False
+
+    dt = min(0.1, clock.get_time() / 1000.0)
+    
+    music_grid_scroll_offset += (target_music_scroll - music_grid_scroll_offset) * (15.0 * dt)
+
     dt = min(0.1, clock.get_time() / 1000.0)
     
     music_grid_scroll_offset += (target_music_scroll - music_grid_scroll_offset) * (15.0 * dt)
