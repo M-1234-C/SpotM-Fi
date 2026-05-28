@@ -5,6 +5,7 @@ import tempfile
 import time
 import math
 import random
+import json
 
 # --- WINDOW & SCALING CONFIGURATION ---
 pygame.mixer.pre_init(44100, -16, 2, 2048)
@@ -115,6 +116,7 @@ def get_clipboard_text():
     return ""
 
 # --- DATA STORAGE ---
+DATA_FILE = "spotify_fi_data.json"
 sidebar_items = ["Search", "Your Library"] 
 track_list = []
 imported_tracks = []
@@ -133,6 +135,7 @@ song_lyrics_database = {}  # Format: {"track_path": "lyrics string"}
 show_lyrics_editor_view = False
 lyrics_editor_cursor_timer = 0.0
 lyrics_text_changed = False
+lyrics_cursor_pos = 0
 
 # --- NEW GUI INPUT STATES ---
 show_create_playlist_modal = False
@@ -204,7 +207,7 @@ playlist_play_btn_rect = pygame.Rect(0, 0, 0, 0)
 playlist_random_btn_rect = pygame.Rect(0, 0, 0, 0) 
 add_folder_btn_rect = pygame.Rect(0, 0, 0, 0)
 settings_btn_rect = pygame.Rect(0, 0, 0, 0)
-create_playlist_btn_rect = pygame.Rect(0, 0, 0, 0)
+create_playlist_btn_rect = pygame.Rect(390, 35, 40, 40)
 select_folder_btn_rect = pygame.Rect(0, 0, 0, 0)
 cancel_browser_btn_rect = pygame.Rect(0, 0, 0, 0)
 close_settings_btn_rect = pygame.Rect(0, 0, 0, 0)
@@ -222,9 +225,85 @@ lyrics_close_rect = pygame.Rect(0, 0, 0, 0)
 lyrics_save_rect = pygame.Rect(0, 0, 0, 0)
 lyrics_textarea_rect = pygame.Rect(270, 145, 760, 420)
 
+# --- PERSISTENT JSON STORAGE ENGINE ---
+def save_app_data():
+    """Serializes core tracking lists, dicts, and metadata to JSON file."""
+    data = {
+        "saved_directories": saved_directories,
+        "liked_tracks": liked_tracks,
+        "liked_songs_custom_cover": {"image_path": liked_songs_custom_cover.get("image_path")},
+        "custom_playlists": {},
+        "song_lyrics_database": song_lyrics_database,
+        "green_toggled_tracks": list(green_toggled_tracks)
+    }
+    
+    # Strip non-serializable pygame surfaces from custom playlist dicts
+    for p_name, p_data in custom_playlists.items():
+        data["custom_playlists"][p_name] = {
+            "tracks": p_data["tracks"],
+            "image_path": p_data["image_path"],
+            "description": p_data["description"]
+        }
+        
+    try:
+        with open(DATA_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        print(f"File Save Error: {e}")
+
+def load_app_data():
+    """Loads state configuration and aggressively re-renders missing graphical surfaces."""
+    global saved_directories, liked_tracks, liked_songs_custom_cover
+    global custom_playlists, song_lyrics_database, green_toggled_tracks
+    
+    if not os.path.exists(DATA_FILE):
+        return
+        
+    try:
+        with open(DATA_FILE, "r") as f:
+            data = json.load(f)
+            
+        saved_directories = data.get("saved_directories", [])
+        liked_tracks = data.get("liked_tracks", [])
+        
+        # Reload liked songs cover state & reconstruct Pygame Surface
+        lsc = data.get("liked_songs_custom_cover", {})
+        liked_songs_custom_cover["image_path"] = lsc.get("image_path")
+        if liked_songs_custom_cover["image_path"] and os.path.exists(liked_songs_custom_cover["image_path"]):
+            try:
+                raw_img = pygame.image.load(liked_songs_custom_cover["image_path"])
+                liked_songs_custom_cover["surface"] = pygame.transform.smoothscale(raw_img, (130, 110))
+            except:
+                pass
+                
+        song_lyrics_database = data.get("song_lyrics_database", {})
+        green_toggled_tracks = set(data.get("green_toggled_tracks", []))
+        
+        # Reload playlists and reconstruct any graphical Pygame image covers saved
+        loaded_playlists = data.get("custom_playlists", {})
+        for p_name, p_data in loaded_playlists.items():
+            surface = None
+            if p_data.get("image_path") and os.path.exists(p_data["image_path"]):
+                try:
+                    raw_img = pygame.image.load(p_data["image_path"])
+                    surface = pygame.transform.smoothscale(raw_img, (130, 110))
+                except:
+                    pass
+            custom_playlists[p_name] = {
+                "tracks": p_data.get("tracks", []),
+                "image_path": p_data.get("image_path"),
+                "description": p_data.get("description", ""),
+                "surface": surface
+            }
+            
+        # Hydrate active directory engine items
+        rebuild_imported_tracks()
+    except Exception as e:
+        print(f"File Load Error: {e}")
+
 # --- PLAYLIST AUTO-ADVANCE & NAVIGATION TRACKING ENGINE ---
 def advance_track(backward=False):
-    global current_track, is_playing
+    global current_track, is_playing, green_toggled_tracks
     if playlist_is_playing == "Liked Songs":
         playlist = liked_tracks
     elif playlist_is_playing in custom_playlists:
@@ -253,6 +332,7 @@ def advance_track(backward=False):
                 next_index = (current_index + 1) % len(playlist)
                 
         current_track = playlist[next_index]
+        green_toggled_tracks.add(current_track["path"])
         is_playing = True
         load_and_play_track(current_track["path"])
 
@@ -340,6 +420,7 @@ def load_and_play_track(track_path):
             pygame.mixer.music.play(start=0.0)
             music_loaded = True
             current_track["_play_start_time"] = time.time()
+            current_track["_has_started"] = False
         except Exception as e:
             print(f"Playback engine error: {e}")
             music_loaded = False
@@ -412,6 +493,7 @@ def scan_confirmed_directory(target_dir):
     target_music_scroll = 0.0
     rebuild_imported_tracks()
     is_browsing_storage = False  
+    save_app_data() # Persist state upon folder add
 
 # --- UI DRAWING FUNCTIONS ---
 def get_virtual_mouse_pos():
@@ -922,7 +1004,7 @@ def draw_main_content():
                     
                     if is_card_clicked:
                         pygame.draw.rect(virtual_surface, (45, 45, 45), card_rect, border_radius=8)
-                    elif track["title"] == current_track["title"]:
+                    elif track["path"] in green_toggled_tracks and track["title"] == current_track["title"]:
                         pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, card_rect, width=2, border_radius=8)
                     elif is_card_hovered:
                         pygame.draw.rect(virtual_surface, COLOR_HOVER, card_rect, border_radius=8)
@@ -1106,24 +1188,49 @@ def draw_modals():
             virtual_surface.set_clip(lyrics_textarea_rect)
 
             y_pos = lyrics_textarea_rect.y + 15 - int(lyrics_scroll_offset)
+            
+            temp_idx = 0
+            target_line_idx = 0
+            target_char_offset = 0
+            for idx, l in enumerate(lines):
+                if temp_idx <= lyrics_cursor_pos <= temp_idx + len(l):
+                    target_line_idx = idx
+                    target_char_offset = lyrics_cursor_pos - temp_idx
+                    break
+                temp_idx += len(l) + 1
+
             cursor_x = lyrics_textarea_rect.x + 15
             cursor_y = y_pos
+            cursor_drawn_for_line = False
             
             for i, line in enumerate(lines):
                 wrapped_sublines = get_wrapped_lines(line, font_small, 720)
                 line_color = COLOR_SPOTIFY_GREEN if i == active_line_idx else COLOR_WHITE
                 
                 if not line:
-                    cursor_x = lyrics_textarea_rect.x + 15
-                    cursor_y = y_pos
+                    if i == target_line_idx:
+                        cursor_x = lyrics_textarea_rect.x + 15
+                        cursor_y = y_pos
                     y_pos += 12
                 else:
+                    accumulated_chars = 0
                     for sub_idx, sl in enumerate(wrapped_sublines):
                         line_surf = font_small.render(sl, True, line_color)
                         virtual_surface.blit(line_surf, (lyrics_textarea_rect.x + 15, y_pos))
                         
-                        cursor_x = lyrics_textarea_rect.x + 15 + font_small.size(sl)[0]
-                        cursor_y = y_pos
+                        if i == target_line_idx and not cursor_drawn_for_line:
+                            next_accumulated = accumulated_chars + len(sl)
+                            if accumulated_chars <= target_char_offset <= next_accumulated:
+                                rem_offset = target_char_offset - accumulated_chars
+                                cursor_x = lyrics_textarea_rect.x + 15 + font_small.size(sl[:rem_offset])[0]
+                                cursor_y = y_pos
+                                cursor_drawn_for_line = True
+                            elif sub_idx == len(wrapped_sublines) - 1:
+                                cursor_x = lyrics_textarea_rect.x + 15 + font_small.size(sl)[0]
+                                cursor_y = y_pos
+                                cursor_drawn_for_line = True
+                        
+                        accumulated_chars += len(sl) + 1
                         y_pos += 20
                         
             virtual_surface.set_clip(None)
@@ -1286,11 +1393,10 @@ def draw_media_bar():
     now_playing_title = font_body.render(current_track["title"], True, COLOR_WHITE)
     now_playing_artist = font_small.render(current_track["artist"], True, COLOR_TEXT_MUTED)
     virtual_surface.blit(now_playing_title, (20, HEIGHT - 65))
-    virtual_surface.blit(now_playing_artist, (20, HEIGHT - 45))
+    virtual_surface.blit(now_playing_artist, (20, HEIGHT - 45)) 
     
-    center_x = WIDTH // 2
-    center_y = HEIGHT - 60
-    
+    center_x = WIDTH // 2 
+    center_y = HEIGHT - 60 
     star_btn_rect = pygame.Rect(center_x - 130, center_y - 10, 20, 20)
     mouse_pos = get_virtual_mouse_pos()
     
@@ -1425,7 +1531,7 @@ def draw_media_bar():
     percent_fill = 0.0
     
     if track_duration > 0 and music_loaded:
-        if current_backend == "android" and android_media_player:
+        if current_backend =="android" and android_media_player:
             try: elapsed_sec = android_media_player.getCurrentPosition() / 1000.0
             except: elapsed_sec = 0.0
         else:
@@ -1476,6 +1582,7 @@ def draw_media_bar():
             virtual_surface.blit(lyric_surf, (WIDTH - lyric_surf.get_width() - 30, HEIGHT - 55))
 
 # --- MAIN LOOP ---
+load_app_data()
 running = True
 
 try: pygame.key.start_text_input()
@@ -1497,7 +1604,11 @@ while running:
             if search_input_active:
                 if show_lyrics_editor_view and active_input_field == "lyrics":
                     track_ref = current_track.get("path", "")
-                    song_lyrics_database[track_ref] = song_lyrics_database.get(track_ref, "") + event.text
+                    txt = song_lyrics_database.get(track_ref, "")
+                    if lyrics_cursor_pos > len(txt): lyrics_cursor_pos = len(txt)
+                    new_txt = txt[:lyrics_cursor_pos] + event.text + txt[lyrics_cursor_pos:]
+                    song_lyrics_database[track_ref] = new_txt
+                    lyrics_cursor_pos += len(event.text)
                     lyrics_text_changed = True
                 elif show_create_playlist_modal:
                     if active_input_field == "name" and len(playlist_input_text) < 20:
@@ -1521,7 +1632,10 @@ while running:
                 if pasted_text:
                     if show_lyrics_editor_view and active_input_field == "lyrics":
                         track_ref = current_track.get("path", "")
-                        song_lyrics_database[track_ref] = song_lyrics_database.get(track_ref, "") + pasted_text
+                        txt = song_lyrics_database.get(track_ref, "")
+                        if lyrics_cursor_pos > len(txt): lyrics_cursor_pos = len(txt)
+                        song_lyrics_database[track_ref] = txt[:lyrics_cursor_pos] + pasted_text + txt[lyrics_cursor_pos:]
+                        lyrics_cursor_pos += len(pasted_text)
                         lyrics_text_changed = True
                     elif show_create_playlist_modal:
                         if active_input_field == "name":
@@ -1535,12 +1649,42 @@ while running:
             if show_lyrics_editor_view and search_input_active and active_input_field == "lyrics":
                 track_ref = current_track.get("path", "")
                 lyrics_txt = song_lyrics_database.get(track_ref, "")
+                if lyrics_cursor_pos > len(lyrics_txt): lyrics_cursor_pos = len(lyrics_txt)
+                
                 if event.key == pygame.K_BACKSPACE:
-                    song_lyrics_database[track_ref] = lyrics_txt[:-1]
-                    lyrics_text_changed = True
+                    if lyrics_cursor_pos > 0:
+                        song_lyrics_database[track_ref] = lyrics_txt[:lyrics_cursor_pos - 1] + lyrics_txt[lyrics_cursor_pos:]
+                        lyrics_cursor_pos -= 1
+                        lyrics_text_changed = True
+                elif event.key == pygame.K_DELETE:
+                    if lyrics_cursor_pos < len(lyrics_txt):
+                        song_lyrics_database[track_ref] = lyrics_txt[:lyrics_cursor_pos] + lyrics_txt[lyrics_cursor_pos + 1:]
+                        lyrics_text_changed = True
                 elif event.key == pygame.K_RETURN:
-                    song_lyrics_database[track_ref] = lyrics_txt + "\n"
+                    song_lyrics_database[track_ref] = lyrics_txt[:lyrics_cursor_pos] + "\n" + lyrics_txt[lyrics_cursor_pos:]
+                    lyrics_cursor_pos += 1
                     lyrics_text_changed = True
+                elif event.key == pygame.K_LEFT:
+                    if lyrics_cursor_pos > 0:
+                        lyrics_cursor_pos -= 1
+                elif event.key == pygame.K_RIGHT:
+                    if lyrics_cursor_pos < len(lyrics_txt):
+                        lyrics_cursor_pos += 1
+                elif event.key == pygame.K_UP:
+                    lines_before = lyrics_txt[:lyrics_cursor_pos].split('\n')
+                    if len(lines_before) > 1:
+                        current_line_offset = len(lines_before[-1])
+                        prev_line_len = len(lines_before[-2])
+                        target_offset = min(current_line_offset, prev_line_len)
+                        lyrics_cursor_pos = len('\n'.join(lines_before[:-1])) - prev_line_len + target_offset
+                elif event.key == pygame.K_DOWN:
+                    lines_before = lyrics_txt[:lyrics_cursor_pos].split('\n')
+                    lines_after = lyrics_txt[lyrics_cursor_pos:].split('\n')
+                    if len(lines_after) > 1:
+                        current_line_offset = len(lines_before[-1])
+                        next_line_len = len(lines_after[1])
+                        target_offset = min(current_line_offset, next_line_len)
+                        lyrics_cursor_pos = len(lyrics_txt[:lyrics_cursor_pos]) + len(lines_after[0]) + 1 + target_offset
                 elif event.key == pygame.K_ESCAPE:
                     search_input_active = False
                         
@@ -1634,32 +1778,9 @@ while running:
                             show_lyrics_editor_view = False
                             search_input_active = False
                         elif lyrics_save_rect.collidepoint(mouse_pos):
-                            track_ref = current_track.get("path", "")
-                            raw_lyrics = song_lyrics_database.get(track_ref, "")
-                            if raw_lyrics:
-                                lines = raw_lyrics.split('\n')
-                                parsed_lines = []
-                                contains_timestamps = any(l.strip().startswith('[') and ']' in l for l in lines if l.strip())
-                                
-                                if not contains_timestamps:
-                                    valid_text_lines = [l for l in lines if l.strip()]
-                                    total_lines = len(valid_text_lines)
-                                    if total_lines > 0:
-                                        duration_ceiling = track_duration if track_duration > 0 else 180.0
-                                        step = duration_ceiling / (total_lines + 1)
-                                        line_counter = 0
-                                        for line in lines:
-                                            if line.strip():
-                                                marker_time = (line_counter + 1) * step
-                                                mins = int(marker_time) // 60
-                                                secs = int(marker_time) % 60
-                                                parsed_lines.append(f"[{mins:02d}:{secs:02d}] {line}")
-                                                line_counter += 1
-                                            else:
-                                                parsed_lines.append(line)
-                                        song_lyrics_database[track_ref] = '\n'.join(parsed_lines)
                             show_lyrics_editor_view = False
                             search_input_active = False
+                            save_app_data()
                         elif lyrics_textarea_rect.collidepoint(mouse_pos):
                             search_input_active = True
                             active_input_field = "lyrics"
@@ -1713,6 +1834,7 @@ while running:
                             modal_playlist_cover_path = None
                             show_create_playlist_modal = False
                             search_input_active = False
+                            save_app_data()
                         elif modal_input_rect.collidepoint(mouse_pos):
                             search_input_active = True
                             active_input_field = "name"
@@ -1740,6 +1862,7 @@ while running:
                                     show_add_to_playlist_modal = False
                                     track_to_add_to_playlist = None
                                     target_music_scroll = 0.0 
+                                    save_app_data()
                                     break
                         continue
 
@@ -1750,6 +1873,7 @@ while running:
                                 saved_directories.remove(d_path)
                                 rebuild_imported_tracks()
                                 clicked_panel_item = True
+                                save_app_data()
                                 break
                         if clicked_panel_item:
                             continue
@@ -1792,6 +1916,7 @@ while running:
                                             elif browsing_cover_target == "liked_view":
                                                 liked_songs_custom_cover["image_path"] = item["path"]
                                                 liked_songs_custom_cover["surface"] = scaled_surf
+                                            save_app_data()
                                         except Exception as image_err:
                                             print(f"Error importing cover layout graphics: {image_err}")
                                         is_browsing_for_cover = False
@@ -1822,6 +1947,7 @@ while running:
                                     current_track = active_tracks[0]  
                                     playlist_is_playing = p_title_text  
                                     is_playing = True
+                                    green_toggled_tracks.add(current_track["path"])
                                     load_and_play_track(current_track["path"])
 
                         if playlist_random_btn_rect.collidepoint(mouse_pos):
@@ -1833,6 +1959,7 @@ while running:
                                     random_index = random.randint(0, len(active_tracks) - 1)
                                     current_track = active_tracks[random_index]
                                     is_playing = True
+                                    green_toggled_tracks.add(current_track["path"])
                                     load_and_play_track(current_track["path"])
 
                     if current_page == "Your Library" and not viewing_liked_playlist and not selected_custom_playlist_name:
@@ -1887,6 +2014,7 @@ while running:
                                     current_track = track
                                     playlist_is_playing = (selected_custom_playlist_name if selected_custom_playlist_name else "Liked Songs") if (viewing_liked_playlist or selected_custom_playlist_name) else None
                                     is_playing = True 
+                                    green_toggled_tracks.add(current_track["path"])
                                     load_and_play_track(current_track["path"])
                                     
                         if current_track["title"] != "Select a song" and not show_lyrics_editor_view:
@@ -1895,6 +2023,7 @@ while running:
                                 fraction = min(1.0, max(0.0, relative_x / progress_bar_rect.width))
                                 seek_target = fraction * track_duration
                                 track_start_accumulator = seek_target
+                                current_track["_has_started"] = False
                                 
                                 if current_backend == "android" and android_media_player:
                                     try:
@@ -1914,6 +2043,7 @@ while running:
                                 search_input_active = True
                                 active_input_field = "lyrics"
                                 target_lyrics_scroll = 0.0
+                                lyrics_cursor_pos = len(song_lyrics_database[track_ref])
 
                             if mediabar_add_btn_rect.collidepoint(mouse_pos):
                                 track_to_add_to_playlist = current_track
@@ -1921,6 +2051,7 @@ while running:
                                 target_music_scroll = 0.0
 
                             if minus_10_btn_rect.collidepoint(mouse_pos) and track_duration > 0 and music_loaded:
+                                current_track["_has_started"] = False
                                 if current_backend == "android" and android_media_player:
                                     try: current_pos = android_media_player.getCurrentPosition() / 1000.0
                                     except: current_pos = 0.0
@@ -1957,6 +2088,7 @@ while running:
                                 advance_track(backward=False)
 
                             if plus_10_btn_rect.collidepoint(mouse_pos) and track_duration > 0 and music_loaded:
+                                current_track["_has_started"] = False
                                 if current_backend == "android" and android_media_player:
                                     try: current_pos = android_media_player.getCurrentPosition() / 1000.0
                                     except: current_pos = 0.0
@@ -1984,6 +2116,7 @@ while running:
                                     liked_tracks.remove(current_track)
                                 else:
                                     liked_tracks.append(current_track)
+                                save_app_data()
             
     if is_playing and track_duration > 0 and music_loaded:
         if current_backend == "android" and android_media_player:
@@ -2015,6 +2148,8 @@ while running:
     
     pygame.display.flip()
     clock.tick(DEVICE_REFRESH_RATE)
+
+save_app_data()
 
 if TEMP_WAV_PATH and os.path.exists(TEMP_WAV_PATH):
     try: os.remove(TEMP_WAV_PATH)
