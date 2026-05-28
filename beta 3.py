@@ -45,10 +45,14 @@ track_list = []
 imported_tracks = []
 saved_directories = []  
 
-# Browser & Search State Engine
+# Browser, Search & Touch Engine States
 is_browsing_storage = False
 search_input_active = False
 search_query = ""
+
+is_dragging_grid = False
+last_touch_y = 0
+total_drag_dy = 0
 
 ROOT_PATH = "/storage/emulated/0" if os.path.exists("/storage/emulated/0") else "/sdcard"
 current_browser_path = ROOT_PATH
@@ -243,9 +247,11 @@ def draw_main_content():
             search_text = font_small.render(f"  {search_message}", True, COLOR_LIGHT_GREY)
         virtual_surface.blit(search_text, (275, 92))
 
+        # Re-engineered strict filtering module targeting file names safely
         filtered_tracks = []
+        cleaned_query = search_query.strip().lower()
         for track in imported_tracks:
-            if search_query.lower() in track["raw_title"].lower() or search_query.lower() in track["album"].lower():
+            if cleaned_query == "" or cleaned_query in track["raw_title"].lower() or cleaned_query in track["album"].lower():
                 filtered_tracks.append(track)
 
         if not imported_tracks:
@@ -264,7 +270,6 @@ def draw_main_content():
             
             cols = (WIDTH - start_x - 20) // (card_width + gap_x)
             
-            # Setup a true clipping region so boxes smoothly slice in/out of view under the search bar
             clip_rect = pygame.Rect(230, 140, WIDTH - 230, HEIGHT - 140 - 90)
             virtual_surface.set_clip(clip_rect)
             
@@ -277,7 +282,6 @@ def draw_main_content():
                 
                 card_rect = pygame.Rect(box_x, box_y, card_width, card_height + 40)
                 
-                # Only process boxes that are actively inside the scrollable clipping view
                 if card_rect.colliderect(clip_rect):
                     track_rects.append((card_rect, track))
                     
@@ -297,7 +301,6 @@ def draw_main_content():
                     sub_surf = font_small.render(track["album"], True, COLOR_TEXT_MUTED)
                     virtual_surface.blit(sub_surf, (box_x + 12, box_y + card_height + 14))
 
-            # Remove clip boundary so the rest of the UI continues drawing normally above the tracks
             virtual_surface.set_clip(None)
 
     elif current_page == "Your Library":
@@ -353,6 +356,10 @@ def draw_media_bar():
 
 # --- MAIN LOOP ---
 running = True
+
+try: pygame.key.stop_text_input()
+except: pass
+
 while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -360,15 +367,15 @@ while running:
             
         elif event.type == pygame.KEYDOWN:
             if current_page == "Search" and not is_browsing_storage:
-                search_input_active = True  # Automatically focus Search bar if typing on this page
+                search_input_active = True
                 if event.key == pygame.K_BACKSPACE:
                     search_query = search_query[:-1]
-                elif event.key == pygame.K_ESCAPE:
-                    search_query = ""
+                elif event.key == pygame.K_ESCAPE or event.key == pygame.K_RETURN:
                     search_input_active = False
+                    try: pygame.key.stop_text_input()
+                    except: pass
                 else:
-                    # Ignore arbitrary control system keystrokes using .isprintable() check
-                    if len(search_query) < 25 and event.unicode.isprintable():
+                    if len(search_query) < 25 and event.unicode and event.unicode.isprintable():
                         search_query += event.unicode
                         
         elif event.type == pygame.MOUSEBUTTONDOWN:
@@ -376,58 +383,85 @@ while running:
             
             if current_page == "Search":
                 if is_browsing_storage:
-                    if event.button == 4: 
-                        if browser_scroll_offset > 0:
-                            browser_scroll_offset -= 1
-                    elif event.button == 5: 
-                        if browser_scroll_offset + 11 < len(browser_items):
-                            browser_scroll_offset += 1
+                    if event.button == 4: browser_scroll_offset = max(0, browser_scroll_offset - 1)
+                    elif event.button == 5: browser_scroll_offset += 1
                 else:
-                    if event.button == 4: 
-                        music_grid_scroll_offset = max(0, music_grid_scroll_offset - 30)
-                    elif event.button == 5: 
-                        music_grid_scroll_offset += 30
+                    if event.button == 4: music_grid_scroll_offset = max(0, music_grid_scroll_offset - 30)
+                    elif event.button == 5: music_grid_scroll_offset += 30
 
-            if event.button == 1: 
-                # Click verification logic updated
-                if current_page == "Search" and not is_browsing_storage and search_box_rect.collidepoint(mouse_pos):
-                    search_input_active = True
-                else:
-                    search_input_active = False
-
-                for rect, target_page in sidebar_rects:
-                    if rect.collidepoint(mouse_pos):
-                        current_page = target_page
-                        is_browsing_storage = False 
-
-                if is_browsing_storage and current_page == "Search":
-                    if select_folder_btn_rect.collidepoint(mouse_pos):
-                        scan_confirmed_directory(current_browser_path)
-                    elif cancel_browser_btn_rect.collidepoint(mouse_pos):
-                        is_browsing_storage = False
+            if event.button == 1:
+                is_dragging_grid = True
+                last_touch_y = mouse_pos[1]
+                total_drag_dy = 0
+                
+        elif event.type == pygame.MOUSEMOTION:
+            if is_dragging_grid:
+                mouse_pos = get_virtual_mouse_pos()
+                dy = last_touch_y - mouse_pos[1]
+                total_drag_dy += abs(dy)
+                
+                if current_page == "Search":
+                    if is_browsing_storage:
+                        if dy < -15:
+                            browser_scroll_offset = max(0, browser_scroll_offset - 1)
+                            last_touch_y = mouse_pos[1]
+                        elif dy > 15:
+                            if browser_scroll_offset + 11 < len(browser_items):
+                                browser_scroll_offset += 1
+                            last_touch_y = mouse_pos[1]
                     else:
-                        for rect, item in browser_rects:
-                            if rect.collidepoint(mouse_pos) and item["is_dir"]:
-                                current_browser_path = item["path"]
-                                update_browser_contents()
-                                break
+                        music_grid_scroll_offset += dy
+                        music_grid_scroll_offset = max(0, music_grid_scroll_offset)
+                        last_touch_y = mouse_pos[1]
+
+        elif event.type == pygame.MOUSEBUTTONUP:
+            mouse_pos = get_virtual_mouse_pos()
+            if event.button == 1:
+                is_dragging_grid = False
+                
+                if total_drag_dy < 15:
+                    
+                    if current_page == "Search" and not is_browsing_storage and search_box_rect.collidepoint(mouse_pos):
+                        search_input_active = True
+                        try: pygame.key.start_text_input() 
+                        except: pass
+                    else:
+                        search_input_active = False
+                        try: pygame.key.stop_text_input()
+                        except: pass
+
+                    for rect, target_page in sidebar_rects:
+                        if rect.collidepoint(mouse_pos):
+                            current_page = target_page
+                            is_browsing_storage = False 
+
+                    if is_browsing_storage and current_page == "Search":
+                        if select_folder_btn_rect.collidepoint(mouse_pos):
+                            scan_confirmed_directory(current_browser_path)
+                        elif cancel_browser_btn_rect.collidepoint(mouse_pos):
+                            is_browsing_storage = False
+                        else:
+                            for rect, item in browser_rects:
+                                if rect.collidepoint(mouse_pos) and item["is_dir"]:
+                                    current_browser_path = item["path"]
+                                    update_browser_contents()
+                                    break
+                                    
+                    else:
+                        if current_page == "Search" and add_folder_btn_rect.collidepoint(mouse_pos):
+                            is_browsing_storage = True
+                            update_browser_contents()
                                 
-                else:
-                    if current_page == "Search" and add_folder_btn_rect.collidepoint(mouse_pos):
-                        is_browsing_storage = True
-                        update_browser_contents()
-                            
-                    if current_page in ["Home", "Search"]:
-                        for rect, track in track_rects:
-                            # Verify mouse clicks are inside the valid clipping scroll area frame
-                            clip_rect_bounds = pygame.Rect(230, 140, WIDTH - 230, HEIGHT - 140 - 90)
-                            if clip_rect_bounds.collidepoint(mouse_pos) and rect.collidepoint(mouse_pos):
-                                current_track = track
-                                is_playing = True 
-                                
-                    if play_btn_rect.collidepoint(mouse_pos):
-                        if current_track["title"] != "Select a song": 
-                            is_playing = not is_playing
+                        if current_page in ["Home", "Search"]:
+                            for rect, track in track_rects:
+                                clip_rect_bounds = pygame.Rect(230, 140, WIDTH - 230, HEIGHT - 140 - 90)
+                                if clip_rect_bounds.collidepoint(mouse_pos) and rect.collidepoint(mouse_pos):
+                                    current_track = track
+                                    is_playing = True 
+                                    
+                        if play_btn_rect.collidepoint(mouse_pos):
+                            if current_track["title"] != "Select a song": 
+                                is_playing = not is_playing
             
     virtual_surface.fill(COLOR_BLACK)
     
