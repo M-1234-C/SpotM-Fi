@@ -16,14 +16,14 @@ This is an offline music player that recreates the popular online music service 
 ​Add Folder: Go to the Search tab to import your music folder.
 
 # Help
-​Playlist Covers: When you create a playlist, you can assign an image to it just find it in the directores page that opens when you click to change the cover. If you want to change it after you have created the playlist then go into it and clcik the cover and select you image just like you did before it support the ormats: .png, .jpg, .jpeg.
+​Playlist Covers: When you create a playlist, you can assign an image to it just find it in the directores page that opens when you click to change the cover. If you want to change it after you have created the playlist then go into it and click the cover and select you image just like you did before it support the formats: .png, .jpg, .jpeg.
 
 ​Default Icons: If no image is found, the app will use a default grey placeholder with a music note.
 ​Song Art: The app tries to read metadata. If your MP3 already has an album cover attached to it, SpotM-Fi will attempt to display it in the song box.(custom icon support will be added in future version)
 
 Lyrics And Syncing: Open the Editor While a song is playing, look for the small paper icon
 ​a window will pop up. You can type directly into it or Paste lyrics you copied from the web.
-​On Desktop, you can use Ctrl + V. On Android the built in clipbaord.But how to sync the lyrics as by itself nothing happens.To Sync them you have to put "[]" before each verse with the time it plays in it for example: "[1:23] Oh i love music" or "[0:06] let it snow, let it snow, let it snow" once you done this for each verse hit the Save button then when you play the song the lyrics are synced and show in the bpottom left of media when the verse is being sang if they have been timed right and all lyric are saved inisde the .json file so when you close it or force clsoe the app by acident they will still be their when you open it up again
+​On Desktop, you can use Ctrl + V. On Android the built in clipbaord.But how to sync the lyrics as by itself nothing happens.To Sync them you have to put "[]" before each verse with the time it plays in it for example: "[1:23] Oh i love music" or "[0:06] let it snow, let it snow, let it snow" once you done this for each verse hit the Save button then when you play the song the lyrics are synced and show in the bpottom left of media when the verse is being sang if they have been timed right and all lyric are saved inisde the .json file so when you close it or force clsoe the app by acident they will still be their when you open it up again.
 ​
 # Installation
 
