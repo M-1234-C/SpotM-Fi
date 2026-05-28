@@ -11,10 +11,6 @@ pygame.mixer.pre_init(44100, -16, 2, 2048)
 pygame.init()
 pygame.mixer.init()
 pygame.font.init()
-try:
-    pygame.scrap.init()
-except:
-    pass
 
 info = pygame.display.Info()
 REAL_WIDTH, REAL_HEIGHT = info.current_w, info.current_h
@@ -31,6 +27,12 @@ WIDTH, HEIGHT = 1100, 700
 screen = pygame.display.set_mode((REAL_WIDTH, REAL_HEIGHT), pygame.FULLSCREEN)
 virtual_surface = pygame.Surface((WIDTH, HEIGHT))
 clock = pygame.time.Clock()
+
+# FIXED: Pygame scrap engine MUST be initialized strictly AFTER set_mode()
+try:
+    pygame.scrap.init()
+except:
+    pass
 
 # --- COLOR PALETTE ---
 COLOR_BLACK = (24, 24, 24)       
@@ -81,6 +83,37 @@ except:
     android_media_player = None
     HAS_ANDROID_MEDIA = False
 
+# --- DUAL-PLATFORM HYBRID CLIPBOARD UTILITY ---
+def get_clipboard_text():
+    """Extracts platform-agnostic string data from desktop or mobile native clipboards."""
+    # Attempt Primary Desktop Layer Extraction
+    try:
+        pasted_bytes = pygame.scrap.get(pygame.SCRAP_TEXT)
+        if pasted_bytes:
+            return pasted_bytes.decode('utf-8', errors='ignore').replace('\x00', '').replace('\r\n', '\n').replace('\r', '\n').replace('\xa0', ' ')
+    except:
+        pass
+        
+    # Attempt Fallback Android Native Integration Layer
+    if HAS_ANDROID_MEDIA:
+        try:
+            from jnius import autoclass
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            currentActivity = PythonActivity.mActivity
+            Context = autoclass('android.content.Context')
+            clipboard = currentActivity.getSystemService(Context.CLIPBOARD_SERVICE)
+            if clipboard.hasPrimaryClip():
+                clipData = clipboard.getPrimaryClip()
+                if clipData.getItemCount() > 0:
+                    item = clipData.getItemAt(0)
+                    text_obj = item.getText()
+                    if text_obj:
+                        return text_obj.toString()
+        except Exception as android_clip_err:
+            print(f"Android Native Clipboard Error: {android_clip_err}")
+            
+    return ""
+
 # --- DATA STORAGE ---
 sidebar_items = ["Search", "Your Library"] 
 track_list = []
@@ -120,7 +153,7 @@ is_browsing_storage = False
 search_input_active = False
 search_query = ""
 viewing_liked_playlist = False
-viewing_settings_page = False  # FIXED: Initialized core state layout tracker to avoid NameError crashes
+viewing_settings_page = False  
 playlist_is_playing = None  
 
 is_dragging_grid = False
@@ -230,7 +263,7 @@ def load_and_play_track(track_path):
     music_loaded = False
     try: 
         pygame.mixer.music.stop()
-        pygame.mixer.music.unload() # FIXED: Prevents system file handle lock exception crashes
+        pygame.mixer.music.unload() 
     except: pass
     
     if HAS_ANDROID_MEDIA and android_media_player:
@@ -381,7 +414,6 @@ def scan_confirmed_directory(target_dir):
     is_browsing_storage = False  
 
 # --- UI DRAWING FUNCTIONS ---
-
 def get_virtual_mouse_pos():
     real_x, real_y = pygame.mouse.get_pos()
     virtual_x = int(real_x * (WIDTH / REAL_WIDTH))
@@ -1336,9 +1368,8 @@ def draw_media_bar():
     prev_color = COLOR_SPOTIFY_GREEN if prev_click else (COLOR_WHITE if prev_hover else COLOR_TEXT_MUTED)
     pygame.draw.polygon(virtual_surface, prev_color, [(center_x - 15, center_y), (center_x, center_y - 9), (center_x, center_y + 9)])
     
-    # --- RENDER MAIN PLAY CONTROL BUTTON ---
     is_mb_play_hovered = play_btn_rect.collidepoint(mouse_pos)
-    is_mb_play_pressed = is_mb_play_hovered and pygame.mouse.get_pressed()[0] # FIXED: Restored scale dynamics with click verification checks
+    is_mb_play_pressed = is_mb_play_hovered and pygame.mouse.get_pressed()[0] 
 
     if is_mb_play_pressed:
         pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, (center_x + 33, center_y), 16)
@@ -1483,14 +1514,9 @@ while running:
             mods = pygame.key.get_mods()
             is_ctrl_or_cmd = (mods & pygame.KMOD_CTRL) or (mods & pygame.KMOD_META)
             
+            # FIXED: Relies on the hybrid architecture platform clipboard engine
             if is_ctrl_or_cmd and event.key == pygame.K_v and search_input_active:
-                pasted_text = ""
-                try:
-                    pasted_bytes = pygame.scrap.get(pygame.SCRAP_TEXT)
-                    if pasted_bytes:
-                        pasted_text = pasted_bytes.decode('utf-8', errors='ignore').replace('\x00', '').replace('\r\n', '\n').replace('\r', '\n').replace('\xa0', ' ')
-                except:
-                    pass
+                pasted_text = get_clipboard_text()
                 
                 if pasted_text:
                     if show_lyrics_editor_view and active_input_field == "lyrics":
@@ -1527,12 +1553,11 @@ while running:
                 elif event.key == pygame.K_RETURN:
                     search_input_active = False
             
-            elif current_page == "Search" and not is_browsing_storage and not viewing_settings_page:
-                if search_input_active:
-                    if event.key == pygame.K_BACKSPACE:
-                        search_query = search_query[:-1]
-                    elif event.key == pygame.K_ESCAPE or event.key == pygame.K_RETURN:
-                        search_input_active = False
+            elif current_page == "Search" and search_input_active:
+                if event.key == pygame.K_BACKSPACE:
+                    search_query = search_query[:-1]
+                elif event.key == pygame.K_ESCAPE or event.key == pygame.K_RETURN:
+                    search_input_active = False
                         
         elif event.type == pygame.MOUSEBUTTONDOWN:
             mouse_pos = get_virtual_mouse_pos()
