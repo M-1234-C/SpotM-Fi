@@ -99,6 +99,7 @@ browsing_cover_target = "create" # "create", "custom_view", or "liked_view"
 song_lyrics_database = {}  # Format: {"track_path": "lyrics string"}
 show_lyrics_editor_view = False
 lyrics_editor_cursor_timer = 0.0
+lyrics_text_changed = False
 
 # --- NEW GUI INPUT STATES ---
 show_create_playlist_modal = False
@@ -119,8 +120,8 @@ is_browsing_storage = False
 search_input_active = False
 search_query = ""
 viewing_liked_playlist = False
-playlist_is_playing = False  
-viewing_settings_page = False
+viewing_settings_page = False  # FIXED: Initialized core state layout tracker to avoid NameError crashes
+playlist_is_playing = None  
 
 is_dragging_grid = False
 last_touch_y = 0
@@ -167,7 +168,7 @@ mediabar_add_btn_rect = pygame.Rect(0, 0, 0, 0)
 mediabar_lyrics_btn_rect = pygame.Rect(0, 0, 0, 0)
 star_btn_rect = pygame.Rect(0, 0, 0, 0)
 playlist_play_btn_rect = pygame.Rect(0, 0, 0, 0)
-playlist_random_btn_rect = pygame.Rect(0, 0, 0, 0) # Track boundary for new playlist header shuffle trigger
+playlist_random_btn_rect = pygame.Rect(0, 0, 0, 0) 
 add_folder_btn_rect = pygame.Rect(0, 0, 0, 0)
 settings_btn_rect = pygame.Rect(0, 0, 0, 0)
 create_playlist_btn_rect = pygame.Rect(0, 0, 0, 0)
@@ -191,10 +192,10 @@ lyrics_textarea_rect = pygame.Rect(270, 145, 760, 420)
 # --- PLAYLIST AUTO-ADVANCE & NAVIGATION TRACKING ENGINE ---
 def advance_track(backward=False):
     global current_track, is_playing
-    if viewing_liked_playlist and playlist_is_playing:
+    if playlist_is_playing == "Liked Songs":
         playlist = liked_tracks
-    elif selected_custom_playlist_name and playlist_is_playing:
-        playlist = custom_playlists[selected_custom_playlist_name]["tracks"]
+    elif playlist_is_playing in custom_playlists:
+        playlist = custom_playlists[playlist_is_playing]["tracks"]
     else:
         playlist = imported_tracks
         
@@ -208,7 +209,6 @@ def advance_track(backward=False):
             break
             
     if current_index != -1:
-        # Integrated Shuffle Player Routine Strategy
         if is_shuffle and len(playlist) > 1:
             next_index = current_index
             while next_index == current_index:
@@ -228,7 +228,9 @@ def load_and_play_track(track_path):
     global track_duration, track_start_accumulator, TEMP_WAV_PATH, current_backend, music_loaded
     
     music_loaded = False
-    try: pygame.mixer.music.stop()
+    try: 
+        pygame.mixer.music.stop()
+        pygame.mixer.music.unload() # FIXED: Prevents system file handle lock exception crashes
     except: pass
     
     if HAS_ANDROID_MEDIA and android_media_player:
@@ -392,23 +394,18 @@ def draw_manual_thumbs_up(surface, x, y, w, h, color):
     pygame.draw.rect(surface, color, (x + w * 0.28, y, w * 0.25, h * 0.45), border_radius=max(1, int(w * 0.06)))
 
 def draw_piece_of_paper_icon(surface, rect, color):
-    """Draws a crisp, completely aligned clean document paper icon."""
     x, y, w, h = rect.x, rect.y, rect.width, rect.height
     px = x + 5
     py = y + 4
     pw = w - 10
     ph = h - 8
     
-    # Square outer boundary body
     pygame.draw.rect(surface, color, (px, py, pw, ph), width=2)
-    
-    # Internal text lines perfectly centered inside the box boundary
     pygame.draw.line(surface, color, (px + 4, py + 4), (px + pw - 4, py + 4), 2)
     pygame.draw.line(surface, color, (px + 4, py + 9), (px + pw - 4, py + 9), 2)
     pygame.draw.line(surface, color, (px + 4, py + 14), (px + pw - 4, py + 14), 2)
 
 def draw_spotify_shuffle_icon(surface, rect, color):
-    """Draws a vector style crossing shuffle icon matching Spotify's layout"""
     cx, cy = rect.centerx, rect.centery
     w, h = 16, 12
     x_left = cx - w // 2
@@ -416,17 +413,14 @@ def draw_spotify_shuffle_icon(surface, rect, color):
     y_top = cy - h // 2
     y_bottom = cy + h // 2
     
-    # Top strand going to bottom right
     pygame.draw.line(surface, color, (x_left, y_top), (cx - 2, y_top), 2)
     pygame.draw.line(surface, color, (cx - 2, y_top), (cx + 2, y_bottom), 2)
     pygame.draw.line(surface, color, (cx + 2, y_bottom), (x_right, y_bottom), 2)
     
-    # Bottom strand going to top right
     pygame.draw.line(surface, color, (x_left, y_bottom), (cx - 2, y_bottom), 2)
     pygame.draw.line(surface, color, (cx - 2, y_bottom), (cx + 2, y_top), 2)
     pygame.draw.line(surface, color, (cx + 2, y_top), (x_right, y_top), 2)
     
-    # Arrows on right heads
     pygame.draw.polygon(surface, color, [(x_right, y_top - 3), (x_right + 4, y_top), (x_right, y_top + 3)])
     pygame.draw.polygon(surface, color, [(x_right, y_bottom - 3), (x_right + 4, y_bottom), (x_right, y_bottom + 3)])
 
@@ -435,7 +429,6 @@ def draw_solid_cog_wheel(surface, x, y, w, h, color):
     r_out = min(w, h) // 2
     
     pygame.draw.circle(surface, color, (cx, cy), int(r_out * 0.85))
-    
     num_teeth = 8
     for i in range(num_teeth):
         angle = i * (2 * math.pi / num_teeth)
@@ -456,7 +449,6 @@ def draw_spotify_pencil(surface, cx, cy, color):
     surface.blit(rotated_surf, new_rect.topleft)
 
 def get_wrapped_lines(text, font, max_width):
-    """Splits text into multiple lines by words OR individual characters if no spaces exist"""
     words = text.split(' ')
     lines = []
     current_line = ""
@@ -487,18 +479,15 @@ def get_wrapped_lines(text, font, max_width):
     return lines
 
 def draw_unified_cover_overlay(surface, rect, mouse_pos):
-    """Draws an aesthetic, flat transparent overlay bar at the bottom matching the frame format"""
     if rect.collidepoint(mouse_pos):
         overlay_height = 32
         overlay_surf = pygame.Surface((rect.width, overlay_height), pygame.SRCALPHA)
-        # Transparent solid dark overlay bar matching exactly the frame width
         overlay_surf.fill((0, 0, 0, 180))
         
         hint_surf = font_small.render("Choose Cover Image", True, COLOR_WHITE)
         tx = (rect.width - hint_surf.get_width()) // 2
         ty = (overlay_height - hint_surf.get_height()) // 2
         overlay_surf.blit(hint_surf, (tx, ty))
-        
         surface.blit(overlay_surf, (rect.x, rect.bottom - overlay_height))
 
 def draw_sidebar():
@@ -547,11 +536,10 @@ def draw_main_content():
     pygame.draw.rect(virtual_surface, COLOR_BLACK, main_rect)
     mouse_pos = get_virtual_mouse_pos()
 
-    # Early intercept when full page destination selection view or lyrics workspace is active
     if show_add_to_playlist_modal or show_lyrics_editor_view:
         return
 
-    # --- DETAILED PLAYLIST VIEWS (LIKED OR CUSTOM) ---
+    # --- DETAILED PLAYLIST VIEWS ---
     if (viewing_liked_playlist or selected_custom_playlist_name) and current_page == "Your Library" and not is_browsing_for_cover:
         is_custom = selected_custom_playlist_name is not None
         active_tracks = custom_playlists[selected_custom_playlist_name]["tracks"] if is_custom else liked_tracks
@@ -575,7 +563,6 @@ def draw_main_content():
             else:
                 draw_spotify_pencil(virtual_surface, 330, 100, COLOR_BLACK)
                 
-        # Outer cover overlay applied seamlessly across everything
         draw_unified_cover_overlay(virtual_surface, playlist_cover_rect, mouse_pos)
         
         type_lbl = font_small.render("CUSTOM PLAYLIST" if is_custom else "PUBLIC PLAYLIST", True, COLOR_WHITE)
@@ -584,7 +571,6 @@ def draw_main_content():
         virtual_surface.blit(type_lbl, (420, 45))
         virtual_surface.blit(playlist_title, (420, 70))
 
-        # Render Playlist Description Layout Panel
         if is_custom:
             desc_str = custom_playlists[selected_custom_playlist_name].get("description", "")
             base_meta_str = f" • {len(active_tracks)} songs"
@@ -622,7 +608,6 @@ def draw_main_content():
             info_lbl = font_body.render(f"Local Account • {len(active_tracks)} songs", True, COLOR_TEXT_MUTED)
             virtual_surface.blit(info_lbl, (420, 140))
         
-        # PLAYLIST CONTROLS: Play/Pause Button
         playlist_play_btn_rect = pygame.Rect(260, 215, 50, 50)
         is_p_hovered = playlist_play_btn_rect.collidepoint(mouse_pos)
         is_p_clicked = is_p_hovered and pygame.mouse.get_pressed()[0]
@@ -634,16 +619,14 @@ def draw_main_content():
         else:
             pygame.draw.circle(virtual_surface, COLOR_SPOTIFY_GREEN, (285, 240), 25)
             
-        if not (is_playing and playlist_is_playing):
+        if not (is_playing and playlist_is_playing == p_title_text):
             pygame.draw.polygon(virtual_surface, COLOR_BLACK, [(280, 230), (280, 250), (295, 240)])
         else:
             pygame.draw.rect(virtual_surface, COLOR_BLACK, (279, 232, 4, 16))
             pygame.draw.rect(virtual_surface, COLOR_BLACK, (287, 232, 4, 16))
 
-        # PLAYLIST CONTROLS: Added Random Button adjacent to Play button
         playlist_random_btn_rect = pygame.Rect(325, 222, 36, 36)
         is_pr_hovered = playlist_random_btn_rect.collidepoint(mouse_pos)
-        
         if is_pr_hovered:
             pygame.draw.circle(virtual_surface, COLOR_HOVER, playlist_random_btn_rect.center, 18)
             
@@ -700,10 +683,9 @@ def draw_main_content():
                 virtual_surface.blit(album_surf, (650, y_offset + 12))
                 
             y_offset += 50
-            
         virtual_surface.set_clip(None)
 
-    # --- STORAGE BROWSER / CUSTOM COVER FILE EXPLORER VIEW ---
+    # --- STORAGE BROWSER ---
     elif (is_browsing_storage or is_browsing_for_cover) and current_page in ["Search", "Your Library"]:
         title_string = "Import custom cover picture (.png, .jpg)" if is_browsing_for_cover else "Device Storage Explorer"
         browser_title = font_title.render(title_string, True, COLOR_WHITE)
@@ -769,7 +751,6 @@ def draw_main_content():
                 item_surf = font_body.render(f"{prefix}{item['name']}", True, display_color)
                 virtual_surface.blit(item_surf, (260, y_offset))
             y_offset += 42
-            
         virtual_surface.set_clip(None)
 
     # --- DEDICATED SETTINGS PAGE VIEW ---
@@ -812,7 +793,6 @@ def draw_main_content():
                 virtual_surface.blit(lbl_path, (265, y_offset + 6))
                 virtual_surface.blit(lbl_del, (WIDTH - 250, y_offset + 6))
             y_offset += 50
-            
         virtual_surface.set_clip(None)
 
     # --- SEARCH PAGE ---
@@ -911,7 +891,6 @@ def draw_main_content():
                     if is_card_clicked:
                         pygame.draw.rect(virtual_surface, (45, 45, 45), card_rect, border_radius=8)
                     elif track["title"] == current_track["title"]:
-                        # Cleaner aesthetic selection: Green card border + title, image stays gray
                         pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, card_rect, width=2, border_radius=8)
                     elif is_card_hovered:
                         pygame.draw.rect(virtual_surface, COLOR_HOVER, card_rect, border_radius=8)
@@ -919,8 +898,6 @@ def draw_main_content():
                         pygame.draw.rect(virtual_surface, COLOR_CARD_BG, card_rect, border_radius=8)
                     
                     cover_rect = pygame.Rect(box_x + 12, box_y + 12, card_width - 24, card_height - 24)
-                    
-                    # FIXED: Always draw the inner image placeholder as a solid grey box layout
                     pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, border_radius=6)
                     
                     if track["title"] == current_track["title"]:
@@ -935,7 +912,6 @@ def draw_main_content():
                     
                     sub_surf = font_small.render(track["album"], True, sub_color)
                     virtual_surface.blit(sub_surf, (box_x + 12, box_y + card_height + 14))
-
             virtual_surface.set_clip(None)
 
     # --- YOUR LIBRARY GRID VIEW ---
@@ -1025,14 +1001,12 @@ def draw_main_content():
             virtual_surface.blit(name_lbl, (box_x + 15, box_y + 135))
             virtual_surface.blit(count_lbl, (box_x + 15, box_y + 160))
 
-# --- NEW GUI DIALOG POPUP RENDERING ENGINE ---
+# --- MODAL RENDERING ENGINE ---
 def draw_modals():
-    global modal_close_rect, modal_save_rect, modal_input_rect, modal_desc_rect, modal_playlist_rects, modal_image_picker_rect, lyrics_close_rect, lyrics_save_rect, lyrics_textarea_rect, max_music_scroll, lyrics_editor_cursor_timer, max_lyrics_scroll
+    global modal_close_rect, modal_save_rect, modal_input_rect, modal_desc_rect, modal_playlist_rects, modal_image_picker_rect, lyrics_close_rect, lyrics_save_rect, lyrics_textarea_rect, max_music_scroll, lyrics_editor_cursor_timer, max_lyrics_scroll, target_lyrics_scroll, lyrics_text_changed
     mouse_pos = get_virtual_mouse_pos()
     
-    # Modal C: Full Page Lyrics Song Workspace Interface
     if show_lyrics_editor_view:
-        # Full page background layout view mask
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (230, 0, WIDTH - 230, HEIGHT))
         
         track_ref = current_track.get("path", "")
@@ -1049,7 +1023,6 @@ def draw_modals():
         if search_input_active and active_input_field == "lyrics":
             pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, lyrics_textarea_rect, width=2, border_radius=8)
             
-        # Draw wrapped multi-line lyric line entries with timestamp sync highlighting
         if current_lyrics_str or current_lyrics_str == "":
             elapsed_sec = 0.0
             if track_duration > 0 and music_loaded:
@@ -1081,7 +1054,6 @@ def draw_modals():
                     except:
                         pass
 
-            # Calculate complete vertical context height boundary dynamically
             total_lyrics_height = 0
             for line in lines:
                 wrapped_sublines = get_wrapped_lines(line, font_small, 720)
@@ -1090,13 +1062,15 @@ def draw_modals():
                 if not line:
                     total_lyrics_height += 12
                     
-            # DONT SCROLL UNTIL IT GETS PAST THE FULL PAGE (420px container size limit bounds)
             if total_lyrics_height > 420:
                 max_lyrics_scroll = max(0, total_lyrics_height - (lyrics_textarea_rect.height - 30))
             else:
                 max_lyrics_scroll = 0
 
-            # Enable local clipping window layer for long lyrics
+            if lyrics_text_changed:
+                target_lyrics_scroll = max_lyrics_scroll
+                lyrics_text_changed = False
+
             virtual_surface.set_clip(lyrics_textarea_rect)
 
             y_pos = lyrics_textarea_rect.y + 15 - int(lyrics_scroll_offset)
@@ -1118,12 +1092,10 @@ def draw_modals():
                         
                         cursor_x = lyrics_textarea_rect.x + 15 + font_small.size(sl)[0]
                         cursor_y = y_pos
-                            
                         y_pos += 20
                         
             virtual_surface.set_clip(None)
                 
-            # Draw simple flashing layout tracking text editor cursor index indicator bar
             if search_input_active and active_input_field == "lyrics" and (time.time() % 1.0 < 0.5):
                 if cursor_y + 16 <= lyrics_textarea_rect.bottom and cursor_y >= lyrics_textarea_rect.y:
                     pygame.draw.line(virtual_surface, COLOR_SPOTIFY_GREEN, (cursor_x, cursor_y), (cursor_x, cursor_y + 16), 2)
@@ -1146,7 +1118,6 @@ def draw_modals():
         virtual_surface.blit(s_txt, (lyrics_save_rect.x + 24, lyrics_save_rect.y + 11))
         return
 
-    # Modal A: Full-Page Create Playlist Interface
     if show_create_playlist_modal:
         if is_browsing_for_cover:
             draw_main_content()
@@ -1165,10 +1136,8 @@ def draw_modals():
             pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, modal_image_picker_rect)
             draw_spotify_pencil(virtual_surface, 390, 270, COLOR_BLACK)
             
-        # Outer cover overlay applied seamlessly across everything
         draw_unified_cover_overlay(virtual_surface, modal_image_picker_rect, mouse_pos)
             
-        # --- PLAYLIST NAME INPUT ---
         label_meta = font_small.render("Name", True, COLOR_TEXT_MUTED)
         virtual_surface.blit(label_meta, (530, 160))
         
@@ -1183,7 +1152,6 @@ def draw_modals():
             text_surf = font_body.render("My Playlist #1", True, COLOR_TEXT_MUTED)
         virtual_surface.blit(text_surf, (modal_input_rect.x + 15, modal_input_rect.y + 11))
         
-        # --- PLAYLIST DESCRIPTION MULTI-LINE AUTO-WRAP INPUT ---
         label_desc = font_small.render("Description", True, COLOR_TEXT_MUTED)
         virtual_surface.blit(label_desc, (530, 245))
         
@@ -1220,14 +1188,10 @@ def draw_modals():
         s_txt = font_body.render("Save", True, COLOR_BLACK)
         virtual_surface.blit(s_txt, (modal_save_rect.x + 32, modal_save_rect.y + 11))
 
-    # Modal B: Full Page Playlist Destination Selector Screen (Excludes Favorites)
     elif show_add_to_playlist_modal:
         content_bottom_margin = 90 if current_track["title"] != "Select a song" else 0
-        
-        # Draw full page layout area next to the sidebar panel layout boundary
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (230, 0, WIDTH - 230, HEIGHT - content_bottom_margin))
         
-        # Heading panel configuration
         lbl = font_title.render("Pick a playlist to add it to", True, COLOR_WHITE)
         virtual_surface.blit(lbl, (260, 40))
         
@@ -1276,13 +1240,11 @@ def draw_modals():
                     count_lbl = font_small.render(f"{len(custom_playlists[p_name]['tracks'])} tracks", True, COLOR_TEXT_MUTED)
                     virtual_surface.blit(count_lbl, (WIDTH - 140, item_rect.y + 14))
                 y_item += 55
-                
             virtual_surface.set_clip(None)
 
 def draw_media_bar():
     global play_btn_rect, prev_btn_rect, next_btn_rect, minus_10_btn_rect, plus_10_btn_rect, mediabar_add_btn_rect, mediabar_lyrics_btn_rect, star_btn_rect, shuffle_btn_rect, progress_bar_rect
     
-    # Hide the media bar while working on the lyrics editor workspace
     if current_track["title"] == "Select a song" or show_lyrics_editor_view:
         return
 
@@ -1297,7 +1259,6 @@ def draw_media_bar():
     center_x = WIDTH // 2
     center_y = HEIGHT - 60
     
-    # SHIFTED TO THE RIGHT: Thumbs up (star) button takes the old paper icon slot location
     star_btn_rect = pygame.Rect(center_x - 130, center_y - 10, 20, 20)
     mouse_pos = get_virtual_mouse_pos()
     
@@ -1314,8 +1275,7 @@ def draw_media_bar():
         
     draw_manual_thumbs_up(virtual_surface, star_btn_rect.x, star_btn_rect.y, star_btn_rect.width, star_btn_rect.height, star_color)
 
-    # --- RECONFIGURED CONFIGURATION ROW CONTROL SLOTS WITH LYRICS SHIFTED LEFT ---
-    mediabar_lyrics_btn_rect = pygame.Rect(center_x - 165, center_y - 14, 28, 28) # Shifted left here
+    mediabar_lyrics_btn_rect = pygame.Rect(center_x - 165, center_y - 14, 28, 28) 
     mediabar_add_btn_rect    = pygame.Rect(center_x - 95, center_y - 14, 28, 28)
     minus_10_btn_rect        = pygame.Rect(center_x - 55, center_y - 16, 32, 32)
     prev_btn_rect            = pygame.Rect(center_x - 18, center_y - 18, 28, 36)
@@ -1324,7 +1284,6 @@ def draw_media_bar():
     plus_10_btn_rect         = pygame.Rect(center_x + 90, center_y - 16, 32, 32)
     shuffle_btn_rect         = pygame.Rect(center_x + 132, center_y - 16, 32, 32)
 
-    # --- RENDER SQUARE LYRICS BUTTON (LEFT NEXT TO THUMBS UP) ---
     lyrics_hover = mediabar_lyrics_btn_rect.collidepoint(mouse_pos)
     lyrics_click = lyrics_hover and pygame.mouse.get_pressed()[0]
     
@@ -1334,10 +1293,8 @@ def draw_media_bar():
         paper_icon_color = COLOR_WHITE
     else:
         paper_icon_color = COLOR_TEXT_MUTED
-        
     draw_piece_of_paper_icon(virtual_surface, mediabar_lyrics_btn_rect, paper_icon_color)
 
-    # --- RENDER PLAYLIST QUICK ADD BUTTON (CIRCLE PLUS BETWEEN LYRICS & -10) ---
     add_hover = mediabar_add_btn_rect.collidepoint(mouse_pos)
     add_click = add_hover and pygame.mouse.get_pressed()[0]
     
@@ -1356,7 +1313,6 @@ def draw_media_bar():
     plus_y = mediabar_add_btn_rect.centery - plus_surf.get_height() // 2 - 2
     virtual_surface.blit(plus_surf, (plus_x, plus_y))
 
-    # --- RENDER -10S BUTTON ---
     m10_hover = minus_10_btn_rect.collidepoint(mouse_pos)
     m10_click = m10_hover and pygame.mouse.get_pressed()[0]
     
@@ -1375,7 +1331,6 @@ def draw_media_bar():
     m10_surf = font_small.render("-10", True, m10_text_color)
     virtual_surface.blit(m10_surf, (minus_10_btn_rect.centerx - m10_surf.get_width() // 2, minus_10_btn_rect.centery - m10_surf.get_height() // 2))
 
-    # --- RENDER PREVIOUS BUTTON ---
     prev_hover = prev_btn_rect.collidepoint(mouse_pos)
     prev_click = prev_hover and pygame.mouse.get_pressed()[0]
     prev_color = COLOR_SPOTIFY_GREEN if prev_click else (COLOR_WHITE if prev_hover else COLOR_TEXT_MUTED)
@@ -1383,10 +1338,9 @@ def draw_media_bar():
     
     # --- RENDER MAIN PLAY CONTROL BUTTON ---
     is_mb_play_hovered = play_btn_rect.collidepoint(mouse_pos)
-    is_mb_play_clicked = is_mb_play_hovered 
-    pointing = is_mb_play_hovered and pygame.mouse.get_pressed()[0]
+    is_mb_play_pressed = is_mb_play_hovered and pygame.mouse.get_pressed()[0] # FIXED: Restored scale dynamics with click verification checks
 
-    if is_mb_play_clicked:
+    if is_mb_play_pressed:
         pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, (center_x + 33, center_y), 16)
     elif is_mb_play_hovered:
         pygame.draw.circle(virtual_surface, COLOR_WHITE, (center_x + 33, center_y), 20)
@@ -1399,13 +1353,11 @@ def draw_media_bar():
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (center_x + 29, center_y - 6, 3, 12))
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (center_x + 35, center_y - 6, 3, 12))
 
-    # --- RENDER NEXT BUTTON ---
     next_hover = next_btn_rect.collidepoint(mouse_pos)
     next_click = next_hover and pygame.mouse.get_pressed()[0]
     next_color = COLOR_SPOTIFY_GREEN if next_click else (COLOR_WHITE if next_hover else COLOR_TEXT_MUTED)
     pygame.draw.polygon(virtual_surface, next_color, [(center_x + 80, center_y), (center_x + 65, center_y - 9), (center_x + 65, center_y + 9)])
     
-    # --- RENDER +10S BUTTON ---
     p10_hover = plus_10_btn_rect.collidepoint(mouse_pos)
     p10_click = p10_hover and pygame.mouse.get_pressed()[0]
     
@@ -1424,16 +1376,12 @@ def draw_media_bar():
     p10_surf = font_small.render("+10", True, p10_text_color)
     virtual_surface.blit(p10_surf, (plus_10_btn_rect.centerx - p10_surf.get_width() // 2, plus_10_btn_rect.centery - p10_surf.get_height() // 2))
 
-    # --- RENDER SHUFFLE RANDOM BUTTON (SPOTIFY SHUFFLE CLONE DESIGN) ---
     sh_hover = shuffle_btn_rect.collidepoint(mouse_pos)
-    
     if is_shuffle:
         sh_icon_color = COLOR_SPOTIFY_GREEN
-        # Draw small green active dot indicator under icon matching Spotify standard interface rules
         pygame.draw.circle(virtual_surface, COLOR_SPOTIFY_GREEN, (shuffle_btn_rect.centerx, shuffle_btn_rect.centery + 12), 2)
     else:
         sh_icon_color = COLOR_WHITE if sh_hover else COLOR_TEXT_MUTED
-
     draw_spotify_shuffle_icon(virtual_surface, shuffle_btn_rect, sh_icon_color)
 
     progress_bar_width = 400
@@ -1446,7 +1394,7 @@ def draw_media_bar():
     percent_fill = 0.0
     
     if track_duration > 0 and music_loaded:
-        if current_backend =="android" and android_media_player:
+        if current_backend == "android" and android_media_player:
             try: elapsed_sec = android_media_player.getCurrentPosition() / 1000.0
             except: elapsed_sec = 0.0
         else:
@@ -1472,7 +1420,6 @@ def draw_media_bar():
     virtual_surface.blit(time_start, (progress_bar_x - 35, progress_bar_y - 6))
     virtual_surface.blit(time_end, (progress_bar_x + progress_bar_width + 10, progress_bar_y - 6))
 
-    # --- DYNAMIC SYNCED LYRIC DISPLAY IN MEDIA BAR ---
     track_ref = current_track.get("path", "")
     current_lyrics_str = song_lyrics_database.get(track_ref, "")
     if current_lyrics_str:
@@ -1520,6 +1467,7 @@ while running:
                 if show_lyrics_editor_view and active_input_field == "lyrics":
                     track_ref = current_track.get("path", "")
                     song_lyrics_database[track_ref] = song_lyrics_database.get(track_ref, "") + event.text
+                    lyrics_text_changed = True
                 elif show_create_playlist_modal:
                     if active_input_field == "name" and len(playlist_input_text) < 20:
                         playlist_input_text += event.text
@@ -1532,7 +1480,6 @@ while running:
                         search_query += event.text
 
         elif event.type == pygame.KEYDOWN:
-            # Clipboard Control Injection Engine for Ctrl+V / Cmd+V Systems
             mods = pygame.key.get_mods()
             is_ctrl_or_cmd = (mods & pygame.KMOD_CTRL) or (mods & pygame.KMOD_META)
             
@@ -1541,7 +1488,6 @@ while running:
                 try:
                     pasted_bytes = pygame.scrap.get(pygame.SCRAP_TEXT)
                     if pasted_bytes:
-                        # FIXED: Ignored decode errors for web characters, fixed carriage returns and non-breaking spaces from browser clipboards
                         pasted_text = pasted_bytes.decode('utf-8', errors='ignore').replace('\x00', '').replace('\r\n', '\n').replace('\r', '\n').replace('\xa0', ' ')
                 except:
                     pass
@@ -1550,6 +1496,7 @@ while running:
                     if show_lyrics_editor_view and active_input_field == "lyrics":
                         track_ref = current_track.get("path", "")
                         song_lyrics_database[track_ref] = song_lyrics_database.get(track_ref, "") + pasted_text
+                        lyrics_text_changed = True
                     elif show_create_playlist_modal:
                         if active_input_field == "name":
                             playlist_input_text = (playlist_input_text + pasted_text)[:20]
@@ -1564,8 +1511,10 @@ while running:
                 lyrics_txt = song_lyrics_database.get(track_ref, "")
                 if event.key == pygame.K_BACKSPACE:
                     song_lyrics_database[track_ref] = lyrics_txt[:-1]
+                    lyrics_text_changed = True
                 elif event.key == pygame.K_RETURN:
                     song_lyrics_database[track_ref] = lyrics_txt + "\n"
+                    lyrics_text_changed = True
                 elif event.key == pygame.K_ESCAPE:
                     search_input_active = False
                         
@@ -1660,7 +1609,6 @@ while running:
                             show_lyrics_editor_view = False
                             search_input_active = False
                         elif lyrics_save_rect.collidepoint(mouse_pos):
-                            # Auto-time Stamp Interpolator Layout Conversion Rules Engine
                             track_ref = current_track.get("path", "")
                             raw_lyrics = song_lyrics_database.get(track_ref, "")
                             if raw_lyrics:
@@ -1825,22 +1773,19 @@ while running:
                                     break
                         continue
 
-                    # --- PLAYLIST HEADER INTERACTION HANDLING ---
                     if (viewing_liked_playlist or selected_custom_playlist_name) and current_page == "Your Library":
+                        p_title_text = selected_custom_playlist_name if selected_custom_playlist_name else "Liked Songs"
                         if playlist_cover_rect.collidepoint(mouse_pos):
                             is_browsing_for_cover = True
                             browsing_cover_target = "custom_view" if selected_custom_playlist_name else "liked_view"
                             update_browser_contents()
                             continue
                             
-                        # Playlist Header Play button interaction
                         if playlist_play_btn_rect.collidepoint(mouse_pos):
                             active_tracks = custom_playlists[selected_custom_playlist_name]["tracks"] if selected_custom_playlist_name else liked_tracks
                             if active_tracks:
-                                # FIXED: Synchronized cleanly with any song inside the list context rather than breaking outside top index bounds
                                 is_current_track_in_playlist = any(track["path"] == current_track["path"] for track in active_tracks)
-                                if is_current_track_in_playlist:
-                                    playlist_is_playing = True
+                                if is_current_track_in_playlist and playlist_is_playing == p_title_text:
                                     is_playing = not is_playing
                                     if is_playing:
                                         if current_backend == "android": android_media_player.start()
@@ -1850,16 +1795,15 @@ while running:
                                         else: pygame.mixer.music.pause()
                                 else:
                                     current_track = active_tracks[0]  
-                                    playlist_is_playing = True  
+                                    playlist_is_playing = p_title_text  
                                     is_playing = True
                                     load_and_play_track(current_track["path"])
 
-                        # Playlist Header Random button interaction
                         if playlist_random_btn_rect.collidepoint(mouse_pos):
                             active_tracks = custom_playlists[selected_custom_playlist_name]["tracks"] if selected_custom_playlist_name else liked_tracks
                             if active_tracks:
                                 is_shuffle = not is_shuffle
-                                playlist_is_playing = True
+                                playlist_is_playing = p_title_text
                                 if is_shuffle:
                                     random_index = random.randint(0, len(active_tracks) - 1)
                                     current_track = active_tracks[random_index]
@@ -1916,7 +1860,7 @@ while running:
                                     
                                 if clip_rect_bounds.collidepoint(mouse_pos) and rect.collidepoint(mouse_pos):
                                     current_track = track
-                                    playlist_is_playing = True if (viewing_liked_playlist or selected_custom_playlist_name) else False
+                                    playlist_is_playing = (selected_custom_playlist_name if selected_custom_playlist_name else "Liked Songs") if (viewing_liked_playlist or selected_custom_playlist_name) else None
                                     is_playing = True 
                                     load_and_play_track(current_track["path"])
                                     
@@ -1937,7 +1881,6 @@ while running:
                                     except: pass
                                 is_playing = True
 
-                            # --- SQUARE LYRICS BUTTON TOUCH DETECT ---
                             if mediabar_lyrics_btn_rect.collidepoint(mouse_pos):
                                 show_lyrics_editor_view = True
                                 track_ref = current_track.get("path", "")
@@ -1947,13 +1890,11 @@ while running:
                                 active_input_field = "lyrics"
                                 target_lyrics_scroll = 0.0
 
-                            # --- PLAYLIST QUICK ADD BUTTON ---
                             if mediabar_add_btn_rect.collidepoint(mouse_pos):
                                 track_to_add_to_playlist = current_track
                                 show_add_to_playlist_modal = True
                                 target_music_scroll = 0.0
 
-                            # --- SKIP -10S BUTTON LOGIC ---
                             if minus_10_btn_rect.collidepoint(mouse_pos) and track_duration > 0 and music_loaded:
                                 if current_backend == "android" and android_media_player:
                                     try: current_pos = android_media_player.getCurrentPosition() / 1000.0
@@ -1990,7 +1931,6 @@ while running:
                             if next_btn_rect.collidepoint(mouse_pos):
                                 advance_track(backward=False)
 
-                            # --- SKIP +10S BUTTON LOGIC ---
                             if plus_10_btn_rect.collidepoint(mouse_pos) and track_duration > 0 and music_loaded:
                                 if current_backend == "android" and android_media_player:
                                     try: current_pos = android_media_player.getCurrentPosition() / 1000.0
@@ -2011,7 +1951,6 @@ while running:
                                     except: pass
                                 is_playing = True
                                 
-                            # --- SHUFFLE TOGGLE BUTTON CLICK INTERCEPT ---
                             if shuffle_btn_rect.collidepoint(mouse_pos):
                                 is_shuffle = not is_shuffle
 
