@@ -27,7 +27,7 @@ Lyrics And Syncing: Open the Editor While a song is playing, look for the small 
 ​
 # Installation
 
-To run this app, you need to install the following libraries. Some are "backups" that help the app read special music formats or work on Android so if you want to decrease the space it takes up get the ones you only need but i recomend installing them all anyway.
+To run this app, you need to install the following libraries. Some are "backups" that help the app read special music formats or work on Android so if you want to decrease the space it takes up get the ones you only need but i recomend installing them all anyway.(.apk and .exe will be in realeases when i figure out how to build them)
 
 ### 1. Core Requirements (Must Install)
 These are required for the app to open and play standard music:
