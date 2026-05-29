@@ -23,9 +23,22 @@ try:
 except:
     DEVICE_REFRESH_RATE = 60
 
-WIDTH, HEIGHT = 1100, 700
+# --- PORTRAIT & SENSOR ORIENTATION ENGINE ---
+# Enable device sensor auto-rotation on Android devices via jnius
+try:
+    from jnius import autoclass
+    PythonActivity = autoclass('org.kivy.android.PythonActivity')
+    ActivityInfo = autoclass('android.content.pm.ActivityInfo')
+    # SCREEN_ORIENTATION_SENSOR = 4
+    PythonActivity.mActivity.setRequestedOrientation(4)
+except:
+    pass
 
-screen = pygame.display.set_mode((REAL_WIDTH, REAL_HEIGHT), pygame.FULLSCREEN)
+is_portrait = REAL_HEIGHT > REAL_WIDTH
+WIDTH = 700 if is_portrait else 1100
+HEIGHT = 1100 if is_portrait else 700
+
+screen = pygame.display.set_mode((REAL_WIDTH, REAL_HEIGHT), pygame.FULLSCREEN | pygame.RESIZABLE)
 virtual_surface = pygame.Surface((WIDTH, HEIGHT))
 clock = pygame.time.Clock()
 
@@ -119,7 +132,7 @@ def get_clipboard_text():
     return ""
 
 # --- DATA STORAGE ---
-DATA_FILE = "spotify_fi_data.json"
+DATA_FILE = "SpotM-Fi.json"
 sidebar_items = ["Search", "Your Library"] 
 track_list = []
 imported_tracks = []
@@ -565,6 +578,22 @@ def draw_spotify_pencil(surface, cx, cy, color):
     new_rect = rotated_surf.get_rect(center=(cx, cy))
     surface.blit(rotated_surf, new_rect.topleft)
 
+def draw_search_icon(surface, cx, cy, size, color):
+    pygame.draw.circle(surface, color, (int(cx - size*0.1), int(cy - size*0.1)), int(size*0.3), width=2)
+    pygame.draw.line(surface, color, (cx + size*0.1, cy + size*0.1), (cx + size*0.4, cy + size*0.4), width=3)
+
+def draw_library_icon(surface, cx, cy, size, color):
+    w = max(2, int(size * 0.15))
+    h = int(size * 0.6)
+    pygame.draw.rect(surface, color, (cx - size*0.4, cy - h//2, w, h), border_radius=1)
+    pygame.draw.rect(surface, color, (cx - size*0.1, cy - h//2, w, h), border_radius=1)
+    
+    book_surf = pygame.Surface((w, h), pygame.SRCALPHA)
+    pygame.draw.rect(book_surf, color, (0, 0, w, h), border_radius=1)
+    rotated_book = pygame.transform.rotate(book_surf, -20)
+    rect = rotated_book.get_rect(center=(cx + size*0.25, cy))
+    surface.blit(rotated_book, rect.topleft)
+
 def get_wrapped_lines(text, font, max_width):
     words = text.split(' ')
     lines = []
@@ -612,34 +641,71 @@ def draw_sidebar():
     sidebar_rects = [] 
     
     content_bottom_margin = 90 if (current_track["title"] != "Select a song" and not show_lyrics_editor_view) else 0
-    sidebar_rect = pygame.Rect(0, 0, 230, HEIGHT - content_bottom_margin)
-    pygame.draw.rect(virtual_surface, COLOR_DARK_GREY, sidebar_rect)
     
-    logo_text = font_title.render("SpotM-Fi", True, COLOR_SPOTIFY_GREEN)
-    virtual_surface.blit(logo_text, (20, 30))
-    
-    y_offset = 90
-    mouse_pos = get_virtual_mouse_pos()
-    
-    for item in sidebar_items:
-        item_rect = pygame.Rect(10, y_offset - 5, 210, 35)
-        sidebar_rects.append((item_rect, item))
+    if not is_portrait:
+        sidebar_rect = pygame.Rect(0, 0, 230, HEIGHT - content_bottom_margin)
+        pygame.draw.rect(virtual_surface, COLOR_DARK_GREY, sidebar_rect)
         
-        is_hovered = item_rect.collidepoint(mouse_pos)
-        is_clicked = is_hovered and pygame.mouse.get_pressed()[0]
+        logo_text = font_title.render("SpotM-Fi", True, COLOR_SPOTIFY_GREEN)
+        virtual_surface.blit(logo_text, (20, 30))
         
-        if is_clicked:
-            pygame.draw.rect(virtual_surface, (60, 60, 60), item_rect, border_radius=5)
-            text_color = COLOR_SPOTIFY_GREEN
-        elif is_hovered or (current_page == item and not is_browsing_storage and not viewing_liked_playlist and not viewing_settings_page and not selected_custom_playlist_name and not show_create_playlist_modal and not show_add_to_playlist_modal and not show_lyrics_editor_view):
-            pygame.draw.rect(virtual_surface, COLOR_HOVER, item_rect, border_radius=5)
-            text_color = COLOR_WHITE
-        else:
-            text_color = COLOR_TEXT_MUTED
+        y_offset = 90
+        mouse_pos = get_virtual_mouse_pos()
+        
+        for item in sidebar_items:
+            item_rect = pygame.Rect(10, y_offset - 5, 210, 35)
+            sidebar_rects.append((item_rect, item))
             
-        text_surf = font_body.render(item, True, text_color)
-        virtual_surface.blit(text_surf, (25, y_offset))
-        y_offset += 40
+            is_hovered = item_rect.collidepoint(mouse_pos)
+            is_clicked = is_hovered and pygame.mouse.get_pressed()[0]
+            
+            if is_clicked:
+                pygame.draw.rect(virtual_surface, (60, 60, 60), item_rect, border_radius=5)
+                text_color = COLOR_SPOTIFY_GREEN
+            elif is_hovered or (current_page == item and not is_browsing_storage and not viewing_liked_playlist and not viewing_settings_page and not selected_custom_playlist_name and not show_create_playlist_modal and not show_add_to_playlist_modal and not show_lyrics_editor_view):
+                pygame.draw.rect(virtual_surface, COLOR_HOVER, item_rect, border_radius=5)
+                text_color = COLOR_WHITE
+            else:
+                text_color = COLOR_TEXT_MUTED
+                
+            text_surf = font_body.render(item, True, text_color)
+            virtual_surface.blit(text_surf, (25, y_offset))
+            y_offset += 40
+    else:
+        sidebar_height = 65
+        sidebar_rect = pygame.Rect(0, HEIGHT - content_bottom_margin - sidebar_height, WIDTH, sidebar_height)
+        pygame.draw.rect(virtual_surface, COLOR_DARK_GREY, sidebar_rect)
+        
+        mouse_pos = get_virtual_mouse_pos()
+        item_width = WIDTH // len(sidebar_items)
+        
+        for i, item in enumerate(sidebar_items):
+            item_rect = pygame.Rect(i * item_width, sidebar_rect.y, item_width, sidebar_height)
+            sidebar_rects.append((item_rect, item))
+            
+            is_hovered = item_rect.collidepoint(mouse_pos)
+            is_clicked = is_hovered and pygame.mouse.get_pressed()[0]
+            
+            if is_clicked:
+                text_color = COLOR_SPOTIFY_GREEN
+            elif is_hovered or (current_page == item and not is_browsing_storage and not viewing_liked_playlist and not viewing_settings_page and not selected_custom_playlist_name and not show_create_playlist_modal and not show_add_to_playlist_modal and not show_lyrics_editor_view):
+                text_color = COLOR_WHITE
+            else:
+                text_color = COLOR_TEXT_MUTED
+                
+            cx = item_rect.centerx
+            cy = item_rect.y + 22
+            icon_size = 24
+            
+            if item == "Search":
+                draw_search_icon(virtual_surface, cx, cy, icon_size, text_color)
+            elif item == "Your Library":
+                draw_library_icon(virtual_surface, cx, cy, icon_size, text_color)
+                
+            text_surf = font_small.render(item, True, text_color)
+            tx = item_rect.x + (item_rect.width - text_surf.get_width()) // 2
+            ty = item_rect.y + 40
+            virtual_surface.blit(text_surf, (tx, ty))
 
 def draw_main_content():
     global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction
@@ -649,7 +715,15 @@ def draw_main_content():
     custom_playlist_rects = []
     
     content_bottom_margin = 90 if (current_track["title"] != "Select a song" and not show_lyrics_editor_view) else 0
-    main_rect = pygame.Rect(230, 0, WIDTH - 230, HEIGHT - content_bottom_margin)
+    portrait_sidebar_h = 65 if is_portrait else 0
+    
+    main_x = 0 if is_portrait else 230
+    main_y = 0
+    main_w = WIDTH - main_x
+    main_h = HEIGHT - content_bottom_margin - portrait_sidebar_h
+    content_pad_x = main_x + 30
+    
+    main_rect = pygame.Rect(main_x, main_y, main_w, main_h)
     pygame.draw.rect(virtual_surface, COLOR_BLACK, main_rect)
     mouse_pos = get_virtual_mouse_pos()
 
@@ -662,31 +736,31 @@ def draw_main_content():
         active_tracks = custom_playlists[selected_custom_playlist_name]["tracks"] if is_custom else liked_tracks
         p_title_text = selected_custom_playlist_name if is_custom else "Liked Songs"
         
-        header_rect = pygame.Rect(230, 0, WIDTH - 230, 200)
+        header_rect = pygame.Rect(main_x, 0, main_w, 200)
         pygame.draw.rect(virtual_surface, COLOR_HOVER, header_rect)
         
-        playlist_cover_rect = pygame.Rect(260, 30, 140, 140)
+        playlist_cover_rect = pygame.Rect(content_pad_x, 30, 140, 140)
         
         if is_custom and custom_playlists[selected_custom_playlist_name]["surface"]:
             disp_surf = pygame.transform.smoothscale(custom_playlists[selected_custom_playlist_name]["surface"], (140, 140))
-            virtual_surface.blit(disp_surf, (260, 30))
+            virtual_surface.blit(disp_surf, (content_pad_x, 30))
         elif not is_custom and liked_songs_custom_cover["surface"]:
             disp_surf = pygame.transform.smoothscale(liked_songs_custom_cover["surface"], (140, 140))
-            virtual_surface.blit(disp_surf, (260, 30))
+            virtual_surface.blit(disp_surf, (content_pad_x, 30))
         else:
             pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, playlist_cover_rect)
             if not is_custom:
-                draw_manual_thumbs_up(virtual_surface, 305, 75, 50, 50, COLOR_BLACK)
+                draw_manual_thumbs_up(virtual_surface, content_pad_x + 45, 75, 50, 50, COLOR_BLACK)
             else:
-                draw_spotify_pencil(virtual_surface, 330, 100, COLOR_BLACK)
+                draw_spotify_pencil(virtual_surface, content_pad_x + 70, 100, COLOR_BLACK)
                 
         draw_unified_cover_overlay(virtual_surface, playlist_cover_rect, mouse_pos)
         
         type_lbl = font_small.render("CUSTOM PLAYLIST" if is_custom else "PUBLIC PLAYLIST", True, COLOR_WHITE)
         playlist_title = font_huge.render(p_title_text, True, COLOR_WHITE)
         
-        virtual_surface.blit(type_lbl, (420, 45))
-        virtual_surface.blit(playlist_title, (420, 70))
+        virtual_surface.blit(type_lbl, (content_pad_x + 160, 45))
+        virtual_surface.blit(playlist_title, (content_pad_x + 160, 70))
 
         if is_custom:
             desc_str = custom_playlists[selected_custom_playlist_name].get("description", "")
@@ -695,9 +769,9 @@ def draw_main_content():
             if desc_str:
                 desc_w = font_body.size(desc_str)[0]
                 meta_w = font_body.size(base_meta_str)[0]
-                max_allowed_w = WIDTH - 440 - meta_w
+                max_allowed_w = main_w - 210 - meta_w
                 
-                if desc_w > max_allowed_w:
+                if desc_w > max_allowed_w and max_allowed_w > 0:
                     max_scroll_range = desc_w - max_allowed_w
                     marquee_offset += marquee_direction * (40.0 * (clock.get_time() / 1000.0))
                     
@@ -711,38 +785,38 @@ def draw_main_content():
                     marquee_surf = pygame.Surface((max_allowed_w, 24), pygame.SRCALPHA)
                     desc_raw_surf = font_body.render(desc_str, True, COLOR_WHITE)
                     marquee_surf.blit(desc_raw_surf, (-int(marquee_offset), 0))
-                    virtual_surface.blit(marquee_surf, (420, 140))
+                    virtual_surface.blit(marquee_surf, (content_pad_x + 160, 140))
                     
                     meta_lbl = font_body.render(base_meta_str, True, COLOR_TEXT_MUTED)
-                    virtual_surface.blit(meta_lbl, (420 + max_allowed_w, 140))
+                    virtual_surface.blit(meta_lbl, (content_pad_x + 160 + max_allowed_w, 140))
                 else:
                     info_lbl = font_body.render(f"{desc_str}{base_meta_str}", True, COLOR_TEXT_MUTED)
-                    virtual_surface.blit(info_lbl, (420, 140))
+                    virtual_surface.blit(info_lbl, (content_pad_x + 160, 140))
             else:
                 info_lbl = font_body.render(f"Local Account{base_meta_str}", True, COLOR_TEXT_MUTED)
-                virtual_surface.blit(info_lbl, (420, 140))
+                virtual_surface.blit(info_lbl, (content_pad_x + 160, 140))
         else:
             info_lbl = font_body.render(f"Local Account • {len(active_tracks)} songs", True, COLOR_TEXT_MUTED)
-            virtual_surface.blit(info_lbl, (420, 140))
+            virtual_surface.blit(info_lbl, (content_pad_x + 160, 140))
         
-        playlist_play_btn_rect = pygame.Rect(260, 215, 50, 50)
+        playlist_play_btn_rect = pygame.Rect(content_pad_x, 215, 50, 50)
         is_p_hovered = playlist_play_btn_rect.collidepoint(mouse_pos)
         is_p_clicked = is_p_hovered and pygame.mouse.get_pressed()[0]
         
         if is_p_clicked:
-            pygame.draw.circle(virtual_surface, (20, 150, 65), (285, 240), 23)
+            pygame.draw.circle(virtual_surface, (20, 150, 65), (content_pad_x + 25, 240), 23)
         elif is_p_hovered:
-            pygame.draw.circle(virtual_surface, (40, 230, 110), (285, 240), 26)
+            pygame.draw.circle(virtual_surface, (40, 230, 110), (content_pad_x + 25, 240), 26)
         else:
-            pygame.draw.circle(virtual_surface, COLOR_SPOTIFY_GREEN, (285, 240), 25)
+            pygame.draw.circle(virtual_surface, COLOR_SPOTIFY_GREEN, (content_pad_x + 25, 240), 25)
             
         if not (is_playing and playlist_is_playing == p_title_text):
-            pygame.draw.polygon(virtual_surface, COLOR_BLACK, [(280, 230), (280, 250), (295, 240)])
+            pygame.draw.polygon(virtual_surface, COLOR_BLACK, [(content_pad_x + 20, 230), (content_pad_x + 20, 250), (content_pad_x + 35, 240)])
         else:
-            pygame.draw.rect(virtual_surface, COLOR_BLACK, (279, 232, 4, 16))
-            pygame.draw.rect(virtual_surface, COLOR_BLACK, (287, 232, 4, 16))
+            pygame.draw.rect(virtual_surface, COLOR_BLACK, (content_pad_x + 19, 232, 4, 16))
+            pygame.draw.rect(virtual_surface, COLOR_BLACK, (content_pad_x + 27, 232, 4, 16))
 
-        playlist_random_btn_rect = pygame.Rect(325, 222, 36, 36)
+        playlist_random_btn_rect = pygame.Rect(content_pad_x + 65, 222, 36, 36)
         is_pr_hovered = playlist_random_btn_rect.collidepoint(mouse_pos)
         if is_pr_hovered:
             pygame.draw.circle(virtual_surface, COLOR_HOVER, playlist_random_btn_rect.center, 18)
@@ -757,20 +831,23 @@ def draw_main_content():
             pygame.draw.circle(virtual_surface, COLOR_SPOTIFY_GREEN, (playlist_random_btn_rect.centerx, playlist_random_btn_rect.centery + 12), 2)
             
         hash_lbl = font_small.render("#  TITLE", True, COLOR_TEXT_MUTED)
-        album_lbl = font_small.render("ALBUM", True, COLOR_TEXT_MUTED)
-        virtual_surface.blit(hash_lbl, (270, 285))
-        virtual_surface.blit(album_lbl, (650, 285))
-        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (260, 305), (WIDTH - 40, 305), 1)
+        virtual_surface.blit(hash_lbl, (content_pad_x + 10, 285))
+        
+        if not is_portrait:
+            album_lbl = font_small.render("ALBUM", True, COLOR_TEXT_MUTED)
+            virtual_surface.blit(album_lbl, (content_pad_x + 390, 285))
+            
+        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 305), (main_x + main_w - 40, 305), 1)
         
         total_content_height = len(active_tracks) * 50
-        max_music_scroll = max(0, total_content_height - (HEIGHT - 315 - content_bottom_margin) + 50)
+        max_music_scroll = max(0, total_content_height - (main_h - 315) + 50)
         
-        clip_rect = pygame.Rect(230, 315, WIDTH - 230, HEIGHT - 315 - content_bottom_margin)
+        clip_rect = pygame.Rect(main_x, 315, main_w, main_h - 315)
         virtual_surface.set_clip(clip_rect)
         
         y_offset = 315 - int(music_grid_scroll_offset)
         for index, track in enumerate(active_tracks):
-            row_rect = pygame.Rect(250, y_offset, WIDTH - 280, 45)
+            row_rect = pygame.Rect(main_x + 20, y_offset, main_w - 50, 45)
             if row_rect.colliderect(clip_rect):
                 track_rects.append((row_rect, track))
                 
@@ -792,12 +869,14 @@ def draw_main_content():
                 num_surf = font_body.render(str(index + 1), True, COLOR_TEXT_MUTED)
                 title_surf = font_body.render(track["title"], True, title_color)
                 artist_surf = font_small.render(track["artist"], True, COLOR_TEXT_MUTED)
-                album_surf = font_body.render(track["album"], True, COLOR_TEXT_MUTED)
                 
-                virtual_surface.blit(num_surf, (270, y_offset + 12))
-                virtual_surface.blit(title_surf, (310, y_offset + 4))
-                virtual_surface.blit(artist_surf, (310, y_offset + 24))
-                virtual_surface.blit(album_surf, (650, y_offset + 12))
+                virtual_surface.blit(num_surf, (main_x + 40, y_offset + 12))
+                virtual_surface.blit(title_surf, (main_x + 80, y_offset + 4))
+                virtual_surface.blit(artist_surf, (main_x + 80, y_offset + 24))
+                
+                if not is_portrait:
+                    album_surf = font_body.render(track["album"], True, COLOR_TEXT_MUTED)
+                    virtual_surface.blit(album_surf, (main_x + 420, y_offset + 12))
                 
             y_offset += 50
         virtual_surface.set_clip(None)
@@ -806,13 +885,13 @@ def draw_main_content():
     elif (is_browsing_storage or is_browsing_for_cover) and current_page in ["Search", "Your Library"]:
         title_string = "Import custom cover picture (.png, .jpg)" if is_browsing_for_cover else "Device Storage Explorer"
         browser_title = font_title.render(title_string, True, COLOR_WHITE)
-        virtual_surface.blit(browser_title, (260, 40))
+        virtual_surface.blit(browser_title, (content_pad_x, 40))
         
         path_lbl = font_small.render(f"Path: {current_browser_path}", True, COLOR_SPOTIFY_GREEN)
-        virtual_surface.blit(path_lbl, (260, 75))
+        virtual_surface.blit(path_lbl, (content_pad_x, 75))
         
-        select_folder_btn_rect = pygame.Rect(730, 35, 160, 35)
-        cancel_browser_btn_rect = pygame.Rect(900, 35, 100, 35)
+        select_folder_btn_rect = pygame.Rect(main_x + main_w - 270, 35, 160, 35)
+        cancel_browser_btn_rect = pygame.Rect(main_x + main_w - 100, 35, 90, 35)
         
         sf_hovered = select_folder_btn_rect.collidepoint(mouse_pos)
         sf_clicked = sf_hovered and pygame.mouse.get_pressed()[0]
@@ -824,7 +903,7 @@ def draw_main_content():
         
         sf_text = "✓ Confirm File" if is_browsing_for_cover else "✓ Select Current"
         sf_lbl = font_small.render(sf_text, True, COLOR_WHITE if sf_color == COLOR_LIGHT_GREY else COLOR_BLACK)
-        virtual_surface.blit(sf_lbl, (755, 44))
+        virtual_surface.blit(sf_lbl, (select_folder_btn_rect.x + 25, 44))
         
         cc_hovered = cancel_browser_btn_rect.collidepoint(mouse_pos)
         cc_clicked = cc_hovered and pygame.mouse.get_pressed()[0]
@@ -834,19 +913,19 @@ def draw_main_content():
             cc_color = COLOR_HOVER if cc_hovered else COLOR_LIGHT_GREY
         pygame.draw.rect(virtual_surface, cc_color, cancel_browser_btn_rect, border_radius=15)
         cc_lbl = font_small.render("Cancel", True, COLOR_WHITE)
-        virtual_surface.blit(cc_lbl, (930, 44))
+        virtual_surface.blit(cc_lbl, (cancel_browser_btn_rect.x + 20, 44))
         
-        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (260, 115), (WIDTH - 40, 115), 1)
+        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
         
         total_content_height = len(browser_items) * 42
-        max_browser_scroll = max(0, total_content_height - (HEIGHT - 130 - content_bottom_margin) + 30)
+        max_browser_scroll = max(0, total_content_height - (main_h - 130) + 30)
         
-        clip_rect = pygame.Rect(230, 130, WIDTH - 230, HEIGHT - 130 - content_bottom_margin)
+        clip_rect = pygame.Rect(main_x, 130, main_w, main_h - 130)
         virtual_surface.set_clip(clip_rect)
         
         y_offset = 130 - int(browser_scroll_offset)
         for item in browser_items:
-            item_row_rect = pygame.Rect(250, y_offset - 4, WIDTH - 280, 35)
+            item_row_rect = pygame.Rect(main_x + 20, y_offset - 4, main_w - 50, 35)
             if item_row_rect.colliderect(clip_rect):
                 browser_rects.append((item_row_rect, item))
                 
@@ -866,16 +945,16 @@ def draw_main_content():
                     display_color = COLOR_SPOTIFY_GREEN
                 
                 item_surf = font_body.render(f"{prefix}{item['name']}", True, display_color)
-                virtual_surface.blit(item_surf, (260, y_offset))
+                virtual_surface.blit(item_surf, (content_pad_x, y_offset))
             y_offset += 42
         virtual_surface.set_clip(None)
 
     # --- DEDICATED SETTINGS PAGE VIEW ---
     elif viewing_settings_page and current_page == "Search":
         settings_title = font_title.render("Imported Music Directories", True, COLOR_WHITE)
-        virtual_surface.blit(settings_title, (260, 40))
+        virtual_surface.blit(settings_title, (content_pad_x, 40))
         
-        close_settings_btn_rect = pygame.Rect(900, 35, 100, 35)
+        close_settings_btn_rect = pygame.Rect(main_x + main_w - 110, 35, 90, 35)
         cs_hovered = close_settings_btn_rect.collidepoint(mouse_pos)
         cs_clicked = cs_hovered and pygame.mouse.get_pressed()[0]
         if cs_clicked:
@@ -884,19 +963,19 @@ def draw_main_content():
             cs_color = COLOR_HOVER if cs_hovered else COLOR_LIGHT_GREY
         pygame.draw.rect(virtual_surface, cs_color, close_settings_btn_rect, border_radius=15)
         cs_lbl = font_small.render("Back", True, COLOR_WHITE)
-        virtual_surface.blit(cs_lbl, (936, 44))
+        virtual_surface.blit(cs_lbl, (close_settings_btn_rect.x + 26, 44))
         
-        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (260, 115), (WIDTH - 40, 115), 1)
+        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
         
         total_content_height = len(saved_directories) * 50
-        max_settings_scroll = max(0, total_content_height - (HEIGHT - 130 - content_bottom_margin) + 30)
+        max_settings_scroll = max(0, total_content_height - (main_h - 130) + 30)
         
-        clip_rect = pygame.Rect(230, 130, WIDTH - 230, HEIGHT - 130 - content_bottom_margin)
+        clip_rect = pygame.Rect(main_x, 130, main_w, main_h - 130)
         virtual_surface.set_clip(clip_rect)
         
         y_offset = 130 - int(settings_scroll_offset)
         for d_path in saved_directories:
-            row_item_rect = pygame.Rect(250, y_offset - 4, WIDTH - 280, 42)
+            row_item_rect = pygame.Rect(main_x + 20, y_offset - 4, main_w - 50, 42)
             if row_item_rect.colliderect(clip_rect):
                 settings_dir_rects.append((row_item_rect, d_path))
                 
@@ -905,19 +984,19 @@ def draw_main_content():
                 pygame.draw.rect(virtual_surface, row_bg, row_item_rect, border_radius=6)
                 
                 lbl_path = font_body.render(f"  [FOLDER]  {d_path}", True, COLOR_WHITE)
-                lbl_del = font_body.render("Delete and Clear Music  [x] ", True, COLOR_WHITE if is_row_h else COLOR_TEXT_MUTED)
+                lbl_del = font_body.render("Delete [x]" if is_portrait else "Delete and Clear Music  [x] ", True, COLOR_WHITE if is_row_h else COLOR_TEXT_MUTED)
                 
-                virtual_surface.blit(lbl_path, (265, y_offset + 6))
-                virtual_surface.blit(lbl_del, (WIDTH - 250, y_offset + 6))
+                virtual_surface.blit(lbl_path, (main_x + 35, y_offset + 6))
+                virtual_surface.blit(lbl_del, (main_x + main_w - (120 if is_portrait else 250), y_offset + 6))
             y_offset += 50
         virtual_surface.set_clip(None)
 
     # --- SEARCH PAGE ---
     elif current_page == "Search":
         search_title = font_title.render("Search Results", True, COLOR_WHITE)
-        virtual_surface.blit(search_title, (260, 40))
+        virtual_surface.blit(search_title, (content_pad_x, 40))
         
-        add_folder_btn_rect = pygame.Rect(780, 80, 150, 40)
+        add_folder_btn_rect = pygame.Rect(main_x + main_w - 220, 80, 150, 40)
         is_af_hovered = add_folder_btn_rect.collidepoint(mouse_pos)
         is_af_clicked = is_af_hovered and pygame.mouse.get_pressed()[0]
         
@@ -932,10 +1011,10 @@ def draw_main_content():
             btn_color = COLOR_WHITE
             
         btn_txt = font_small.render("+ Add Folder", True, btn_color)
-        virtual_surface.blit(btn_txt, (818, 92))
+        virtual_surface.blit(btn_txt, (add_folder_btn_rect.x + 38, 92))
 
         if saved_directories:
-            settings_btn_rect = pygame.Rect(945, 80, 40, 40)
+            settings_btn_rect = pygame.Rect(main_x + main_w - 55, 80, 40, 40)
             is_st_hovered = settings_btn_rect.collidepoint(mouse_pos)
             is_st_clicked = is_st_hovered and pygame.mouse.get_pressed()[0]
             
@@ -952,6 +1031,7 @@ def draw_main_content():
             pygame.draw.rect(virtual_surface, box_bg_color, settings_btn_rect, border_radius=20)
             draw_solid_cog_wheel(virtual_surface, settings_btn_rect.x + 10, settings_btn_rect.y + 10, 20, 20, st_color)
 
+        search_box_rect = pygame.Rect(content_pad_x, 80, min(500, main_w - 240) if not is_portrait else main_w - 280, 40)
         pygame.draw.rect(virtual_surface, COLOR_WHITE, search_box_rect, border_radius=20)
         if search_input_active and not show_create_playlist_modal:
             pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, search_box_rect, width=2, border_radius=20)
@@ -960,7 +1040,7 @@ def draw_main_content():
             search_text = font_small.render(f"  {search_query}", True, COLOR_BLACK)
         else:
             search_text = font_small.render(f"  {search_message}", True, COLOR_LIGHT_GREY)
-        virtual_surface.blit(search_text, (275, 92))
+        virtual_surface.blit(search_text, (content_pad_x + 15, 92))
 
         filtered_tracks = []
         cleaned_query = search_query.strip().lower()
@@ -970,24 +1050,25 @@ def draw_main_content():
 
         if not imported_tracks:
             empty_surf = font_body.render("No local music loaded. Tap '+ Add Folder' above to explore your storage!", True, COLOR_TEXT_MUTED)
-            virtual_surface.blit(empty_surf, (260, 160))
+            virtual_surface.blit(empty_surf, (content_pad_x, 160))
         elif not filtered_tracks:
             no_match_surf = font_body.render(f"No results match your search query for '{search_query}'.", True, COLOR_TEXT_MUTED)
-            virtual_surface.blit(no_match_surf, (260, 160))
+            virtual_surface.blit(no_match_surf, (content_pad_x, 160))
         else:
-            start_x = 260
+            start_x = content_pad_x
             start_y = 150
             card_width = 140
             card_height = 140
             gap_x = 14  
             gap_y = 55  
             
-            cols = (WIDTH - start_x - 20) // (card_width + gap_x)
+            cols = (main_w - 20) // (card_width + gap_x)
+            if cols < 1: cols = 1
             rows = (len(filtered_tracks) + cols - 1) // cols if cols > 0 else 0
             total_content_height = rows * (card_height + gap_y)
-            max_music_scroll = max(0, total_content_height - (HEIGHT - 140 - content_bottom_margin) + 50)
+            max_music_scroll = max(0, total_content_height - (main_h - 140) + 50)
             
-            clip_rect = pygame.Rect(230, 140, WIDTH - 230, HEIGHT - 140 - content_bottom_margin)
+            clip_rect = pygame.Rect(main_x, 140, main_w, main_h - 140)
             virtual_surface.set_clip(clip_rect)
             
             for index, track in enumerate(filtered_tracks):
@@ -1034,9 +1115,9 @@ def draw_main_content():
     # --- YOUR LIBRARY GRID VIEW ---
     elif current_page == "Your Library":
         lib_title = font_title.render("Your Library", True, COLOR_WHITE)
-        virtual_surface.blit(lib_title, (260, 40))
+        virtual_surface.blit(lib_title, (content_pad_x, 40))
         
-        create_playlist_btn_rect = pygame.Rect(390, 35, 40, 40)
+        create_playlist_btn_rect = pygame.Rect(content_pad_x + 130, 35, 40, 40)
         is_cp_hovered = create_playlist_btn_rect.collidepoint(mouse_pos)
         is_cp_clicked = is_cp_hovered and pygame.mouse.get_pressed()[0]
         
@@ -1057,7 +1138,7 @@ def draw_main_content():
         plus_y = create_playlist_btn_rect.y + (create_playlist_btn_rect.height - cp_plus_surf.get_height()) // 2
         virtual_surface.blit(cp_plus_surf, (plus_x, plus_y))
         
-        liked_songs_card_rect = pygame.Rect(260, 95, 160, 200)
+        liked_songs_card_rect = pygame.Rect(content_pad_x, 95, 160, 200)
         is_lib_hovered = liked_songs_card_rect.collidepoint(mouse_pos)
         is_lib_clicked = is_lib_hovered and pygame.mouse.get_pressed()[0]
         
@@ -1070,21 +1151,22 @@ def draw_main_content():
             
         if liked_songs_custom_cover["surface"]:
             disp_thumb = pygame.transform.smoothscale(liked_songs_custom_cover["surface"], (130, 110))
-            virtual_surface.blit(disp_thumb, (275, 110))
+            virtual_surface.blit(disp_thumb, (content_pad_x + 15, 110))
         else:
-            pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, (275, 110, 130, 110), border_radius=4)
-            draw_manual_thumbs_up(virtual_surface, 315, 140, 50, 50, COLOR_BLACK)
+            pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, (content_pad_x + 15, 110, 130, 110), border_radius=4)
+            draw_manual_thumbs_up(virtual_surface, content_pad_x + 55, 140, 50, 50, COLOR_BLACK)
         
         card_txt1 = font_body.render("Liked Songs", True, COLOR_WHITE)
         card_txt2 = font_small.render(f"Playlist • {len(liked_tracks)} songs", True, COLOR_TEXT_MUTED)
-        virtual_surface.blit(card_txt1, (275, 230))
-        virtual_surface.blit(card_txt2, (275, 255))
+        virtual_surface.blit(card_txt1, (content_pad_x + 15, 230))
+        virtual_surface.blit(card_txt2, (content_pad_x + 15, 255))
 
-        start_x = 260
+        start_x = content_pad_x
         start_y = 95
         card_w, card_h = 160, 200
         gap_x, gap_y = 20, 20
-        columns_count = (WIDTH - start_x - 20) // (card_w + gap_x)
+        columns_count = (main_w - 20) // (card_w + gap_x)
+        if columns_count < 1: columns_count = 1
         
         for idx, p_name in enumerate(list(custom_playlists.keys())):
             layout_index = idx + 1
@@ -1123,18 +1205,25 @@ def draw_modals():
     global modal_close_rect, modal_save_rect, modal_input_rect, modal_desc_rect, modal_playlist_rects, modal_image_picker_rect, lyrics_close_rect, lyrics_save_rect, lyrics_textarea_rect, max_music_scroll, lyrics_editor_cursor_timer, max_lyrics_scroll, target_lyrics_scroll, lyrics_text_changed
     mouse_pos = get_virtual_mouse_pos()
     
+    portrait_sidebar_h = 65 if is_portrait else 0
+    main_x = 0 if is_portrait else 230
+    main_w = WIDTH - main_x
+    content_bottom_margin = 90 if (current_track["title"] != "Select a song" and not show_lyrics_editor_view) else 0
+    main_h = HEIGHT - content_bottom_margin - portrait_sidebar_h
+    content_pad_x = main_x + 30
+    
     if show_lyrics_editor_view:
-        pygame.draw.rect(virtual_surface, COLOR_BLACK, (230, 0, WIDTH - 230, HEIGHT))
+        pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT))
         
         track_ref = current_track.get("path", "")
         current_lyrics_str = song_lyrics_database.get(track_ref, "")
         
         header_lbl = font_huge.render("Edit Song Lyrics", True, COLOR_SPOTIFY_GREEN)
         track_lbl = font_body.render(f"Track: {current_track['title']} • {current_track['artist']}", True, COLOR_WHITE)
-        virtual_surface.blit(header_lbl, (270, 45))
-        virtual_surface.blit(track_lbl, (270, 105))
+        virtual_surface.blit(header_lbl, (main_x + 40, 45))
+        virtual_surface.blit(track_lbl, (main_x + 40, 105))
         
-        lyrics_textarea_rect = pygame.Rect(270, 145, 760, 420)
+        lyrics_textarea_rect = pygame.Rect(main_x + 40, 145, main_w - 80, 420)
         pygame.draw.rect(virtual_surface, COLOR_CARD_BG, lyrics_textarea_rect, border_radius=8)
         
         if search_input_active and active_input_field == "lyrics":
@@ -1173,7 +1262,7 @@ def draw_modals():
 
             total_lyrics_height = 0
             for line in lines:
-                wrapped_sublines = get_wrapped_lines(line, font_small, 720)
+                wrapped_sublines = get_wrapped_lines(line, font_small, lyrics_textarea_rect.width - 40)
                 if wrapped_sublines:
                     total_lyrics_height += len(wrapped_sublines) * 20
                 if not line:
@@ -1207,7 +1296,7 @@ def draw_modals():
             cursor_drawn_for_line = False
             
             for i, line in enumerate(lines):
-                wrapped_sublines = get_wrapped_lines(line, font_small, 720)
+                wrapped_sublines = get_wrapped_lines(line, font_small, lyrics_textarea_rect.width - 40)
                 line_color = COLOR_SPOTIFY_GREEN if i == active_line_idx else COLOR_WHITE
                 
                 if not line:
@@ -1246,8 +1335,8 @@ def draw_modals():
             placeholder = font_small.render("Type or paste the song lyrics here... (e.g., [00:12] Synced Line! Press Ctrl+V to paste)", True, COLOR_TEXT_MUTED)
             virtual_surface.blit(placeholder, (lyrics_textarea_rect.x + 15, lyrics_textarea_rect.y + 15))
             
-        lyrics_close_rect = pygame.Rect(800, 590, 100, 42)
-        lyrics_save_rect = pygame.Rect(920, 590, 110, 42)
+        lyrics_close_rect = pygame.Rect(main_x + main_w - 230, 590, 100, 42)
+        lyrics_save_rect = pygame.Rect(main_x + main_w - 110, 590, 110, 42)
         
         c_bg = COLOR_HOVER if lyrics_close_rect.collidepoint(mouse_pos) else COLOR_LIGHT_GREY
         pygame.draw.rect(virtual_surface, c_bg, lyrics_close_rect, border_radius=21)
@@ -1265,25 +1354,30 @@ def draw_modals():
             draw_main_content()
             return
 
-        pygame.draw.rect(virtual_surface, COLOR_BLACK, (230, 0, WIDTH - 230, HEIGHT))
+        pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT))
         
         lbl = font_huge.render("Create playlist", True, COLOR_WHITE)
-        virtual_surface.blit(lbl, (280, 60))
+        virtual_surface.blit(lbl, (main_x + 50, 60))
         
-        modal_image_picker_rect = pygame.Rect(280, 160, 220, 220)
+        modal_image_picker_rect = pygame.Rect(main_x + 50, 160, 220, 220)
         if modal_playlist_cover_surface:
             disp_modal_cover = pygame.transform.smoothscale(modal_playlist_cover_surface, (220, 220))
-            virtual_surface.blit(disp_modal_cover, (280, 160))
+            virtual_surface.blit(disp_modal_cover, (main_x + 50, 160))
         else:
             pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, modal_image_picker_rect)
-            draw_spotify_pencil(virtual_surface, 390, 270, COLOR_BLACK)
+            draw_spotify_pencil(virtual_surface, main_x + 160, 270, COLOR_BLACK)
             
         draw_unified_cover_overlay(virtual_surface, modal_image_picker_rect, mouse_pos)
             
         label_meta = font_small.render("Name", True, COLOR_TEXT_MUTED)
-        virtual_surface.blit(label_meta, (530, 160))
         
-        modal_input_rect = pygame.Rect(530, 185, 450, 42)
+        input_x = main_x + 300 if not is_portrait else main_x + 50
+        input_y = 185 if not is_portrait else 400
+        input_w = main_w - 330 if not is_portrait else main_w - 100
+        
+        virtual_surface.blit(label_meta, (input_x, input_y - 25))
+        
+        modal_input_rect = pygame.Rect(input_x, input_y, input_w, 42)
         pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, modal_input_rect, border_radius=6)
         if search_input_active and active_input_field == "name":
             pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, modal_input_rect, width=2, border_radius=6)
@@ -1295,15 +1389,15 @@ def draw_modals():
         virtual_surface.blit(text_surf, (modal_input_rect.x + 15, modal_input_rect.y + 11))
         
         label_desc = font_small.render("Description", True, COLOR_TEXT_MUTED)
-        virtual_surface.blit(label_desc, (530, 245))
+        virtual_surface.blit(label_desc, (input_x, input_y + 60))
         
-        modal_desc_rect = pygame.Rect(530, 270, 450, 110)
+        modal_desc_rect = pygame.Rect(input_x, input_y + 85, input_w, 110)
         pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, modal_desc_rect, border_radius=6)
         if search_input_active and active_input_field == "description":
             pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, modal_desc_rect, width=2, border_radius=6)
             
         if playlist_desc_text:
-            wrapped_lines = get_wrapped_lines(playlist_desc_text, font_small, 420)
+            wrapped_lines = get_wrapped_lines(playlist_desc_text, font_small, input_w - 30)
             y_text_line = modal_desc_rect.y + 12
             for line in wrapped_lines:
                 if y_text_line + 18 <= modal_desc_rect.bottom:
@@ -1315,10 +1409,14 @@ def draw_modals():
             virtual_surface.blit(desc_surf, (modal_desc_rect.x + 15, modal_desc_rect.y + 12))
         
         desc_lbl = font_small.render("Personalize your new local playlist with a clean title and custom description.", True, COLOR_WHITE)
-        virtual_surface.blit(desc_lbl, (280, 415))
+        if not is_portrait:
+            virtual_surface.blit(desc_lbl, (main_x + 50, 415))
+        else:
+            virtual_surface.blit(desc_lbl, (main_x + 50, input_y + 215))
         
-        modal_close_rect = pygame.Rect(760, 405, 100, 42)
-        modal_save_rect = pygame.Rect(880, 405, 100, 42)
+        btn_y = 405 if not is_portrait else input_y + 250
+        modal_close_rect = pygame.Rect(main_x + main_w - 240, btn_y, 100, 42)
+        modal_save_rect = pygame.Rect(main_x + main_w - 120, btn_y, 100, 42)
         
         c_bg = COLOR_HOVER if modal_close_rect.collidepoint(mouse_pos) else COLOR_CARD_BG
         pygame.draw.rect(virtual_surface, c_bg, modal_close_rect, border_radius=21)
@@ -1331,43 +1429,42 @@ def draw_modals():
         virtual_surface.blit(s_txt, (modal_save_rect.x + 32, modal_save_rect.y + 11))
 
     elif show_add_to_playlist_modal:
-        content_bottom_margin = 90 if current_track["title"] != "Select a song" else 0
-        pygame.draw.rect(virtual_surface, COLOR_BLACK, (230, 0, WIDTH - 230, HEIGHT - content_bottom_margin))
+        pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, main_h))
         
         lbl = font_title.render("Pick a playlist to add it to", True, COLOR_WHITE)
-        virtual_surface.blit(lbl, (260, 40))
+        virtual_surface.blit(lbl, (content_pad_x, 40))
         
         track_lbl_text = f"Song: {track_to_add_to_playlist['title']}" if track_to_add_to_playlist else ""
         track_lbl = font_small.render(track_lbl_text, True, COLOR_TEXT_MUTED)
-        virtual_surface.blit(track_lbl, (260, 70))
+        virtual_surface.blit(track_lbl, (content_pad_x, 70))
         
-        modal_close_rect = pygame.Rect(900, 35, 100, 35)
+        modal_close_rect = pygame.Rect(main_x + main_w - 110, 35, 90, 35)
         c_bg = COLOR_HOVER if modal_close_rect.collidepoint(mouse_pos) else COLOR_LIGHT_GREY
         pygame.draw.rect(virtual_surface, c_bg, modal_close_rect, border_radius=15)
         c_txt = font_small.render("Cancel", True, COLOR_WHITE)
-        virtual_surface.blit(c_txt, (modal_close_rect.x + 28, modal_close_rect.y + 8))
+        virtual_surface.blit(c_txt, (modal_close_rect.x + 23, modal_close_rect.y + 8))
         
-        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (260, 115), (WIDTH - 40, 115), 1)
+        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
         
         modal_playlist_rects = []
         p_names = list(custom_playlists.keys())
         
         if not p_names:
             empty_lbl = font_body.render("No custom playlists built yet.", True, COLOR_TEXT_MUTED)
-            virtual_surface.blit(empty_lbl, (260, 150))
+            virtual_surface.blit(empty_lbl, (content_pad_x, 150))
             hint_lbl = font_small.render("Go to 'Your Library' and tap '+' to create one.", True, COLOR_TEXT_MUTED)
-            virtual_surface.blit(hint_lbl, (260, 180))
+            virtual_surface.blit(hint_lbl, (content_pad_x, 180))
             max_music_scroll = 0
         else:
             total_content_height = len(p_names) * 55
-            max_music_scroll = max(0, total_content_height - (HEIGHT - 130 - content_bottom_margin) + 30)
+            max_music_scroll = max(0, total_content_height - (main_h - 130) + 30)
             
-            clip_rect = pygame.Rect(230, 130, WIDTH - 230, HEIGHT - 130 - content_bottom_margin)
+            clip_rect = pygame.Rect(main_x, 130, main_w, main_h - 130)
             virtual_surface.set_clip(clip_rect)
             
             y_item = 130 - int(music_grid_scroll_offset)
             for p_name in p_names:
-                item_rect = pygame.Rect(250, y_item, WIDTH - 280, 45)
+                item_rect = pygame.Rect(main_x + 20, y_item, main_w - 50, 45)
                 if item_rect.colliderect(clip_rect):
                     modal_playlist_rects.append((item_rect, p_name))
                     
@@ -1380,7 +1477,7 @@ def draw_modals():
                     virtual_surface.blit(p_lbl, (item_rect.x + 15, item_rect.y + 12))
                     
                     count_lbl = font_small.render(f"{len(custom_playlists[p_name]['tracks'])} tracks", True, COLOR_TEXT_MUTED)
-                    virtual_surface.blit(count_lbl, (WIDTH - 140, item_rect.y + 14))
+                    virtual_surface.blit(count_lbl, (main_x + main_w - 140, item_rect.y + 14))
                 y_item += 55
             virtual_surface.set_clip(None)
 
@@ -1393,14 +1490,18 @@ def draw_media_bar():
     bar_rect = pygame.Rect(0, HEIGHT - 90, WIDTH, 90)
     pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, bar_rect)
     
-    now_playing_title = font_body.render(current_track["title"], True, COLOR_WHITE)
-    now_playing_artist = font_small.render(current_track["artist"], True, COLOR_TEXT_MUTED)
+    now_playing_title = font_body.render(current_track["title"] if len(current_track["title"]) < 20 else current_track["title"][:17] + "...", True, COLOR_WHITE)
+    now_playing_artist = font_small.render(current_track["artist"] if len(current_track["artist"]) < 20 else current_track["artist"][:17] + "...", True, COLOR_TEXT_MUTED)
     virtual_surface.blit(now_playing_title, (20, HEIGHT - 65))
     virtual_surface.blit(now_playing_artist, (20, HEIGHT - 45)) 
     
     center_x = WIDTH // 2 
     center_y = HEIGHT - 60 
-    star_btn_rect = pygame.Rect(center_x - 130, center_y - 10, 20, 20)
+    
+    btn_offset_x = center_x
+    if is_portrait: btn_offset_x += 40
+    
+    star_btn_rect = pygame.Rect(btn_offset_x - 130, center_y - 10, 20, 20)
     mouse_pos = get_virtual_mouse_pos()
     
     is_starred = current_track in liked_tracks
@@ -1416,14 +1517,14 @@ def draw_media_bar():
         
     draw_manual_thumbs_up(virtual_surface, star_btn_rect.x, star_btn_rect.y, star_btn_rect.width, star_btn_rect.height, star_color)
 
-    mediabar_lyrics_btn_rect = pygame.Rect(center_x - 165, center_y - 14, 28, 28) 
-    mediabar_add_btn_rect    = pygame.Rect(center_x - 95, center_y - 14, 28, 28)
-    minus_10_btn_rect        = pygame.Rect(center_x - 55, center_y - 16, 32, 32)
-    prev_btn_rect            = pygame.Rect(center_x - 18, center_y - 18, 28, 36)
-    play_btn_rect            = pygame.Rect(center_x + 15, center_y - 18, 36, 36)
-    next_btn_rect            = pygame.Rect(center_x + 56, center_y - 18, 28, 36)
-    plus_10_btn_rect         = pygame.Rect(center_x + 90, center_y - 16, 32, 32)
-    shuffle_btn_rect         = pygame.Rect(center_x + 132, center_y - 16, 32, 32)
+    mediabar_lyrics_btn_rect = pygame.Rect(btn_offset_x - 165, center_y - 14, 28, 28) 
+    mediabar_add_btn_rect    = pygame.Rect(btn_offset_x - 95, center_y - 14, 28, 28)
+    minus_10_btn_rect        = pygame.Rect(btn_offset_x - 55, center_y - 16, 32, 32)
+    prev_btn_rect            = pygame.Rect(btn_offset_x - 18, center_y - 18, 28, 36)
+    play_btn_rect            = pygame.Rect(btn_offset_x + 15, center_y - 18, 36, 36)
+    next_btn_rect            = pygame.Rect(btn_offset_x + 56, center_y - 18, 28, 36)
+    plus_10_btn_rect         = pygame.Rect(btn_offset_x + 90, center_y - 16, 32, 32)
+    shuffle_btn_rect         = pygame.Rect(btn_offset_x + 132, center_y - 16, 32, 32)
 
     lyrics_hover = mediabar_lyrics_btn_rect.collidepoint(mouse_pos)
     lyrics_click = lyrics_hover and pygame.mouse.get_pressed()[0]
@@ -1475,28 +1576,28 @@ def draw_media_bar():
     prev_hover = prev_btn_rect.collidepoint(mouse_pos)
     prev_click = prev_hover and pygame.mouse.get_pressed()[0]
     prev_color = COLOR_SPOTIFY_GREEN if prev_click else (COLOR_WHITE if prev_hover else COLOR_TEXT_MUTED)
-    pygame.draw.polygon(virtual_surface, prev_color, [(center_x - 15, center_y), (center_x, center_y - 9), (center_x, center_y + 9)])
+    pygame.draw.polygon(virtual_surface, prev_color, [(btn_offset_x - 15, center_y), (btn_offset_x, center_y - 9), (btn_offset_x, center_y + 9)])
     
     is_mb_play_hovered = play_btn_rect.collidepoint(mouse_pos)
     is_mb_play_pressed = is_mb_play_hovered and pygame.mouse.get_pressed()[0] 
 
     if is_mb_play_pressed:
-        pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, (center_x + 33, center_y), 16)
+        pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, (btn_offset_x + 33, center_y), 16)
     elif is_mb_play_hovered:
-        pygame.draw.circle(virtual_surface, COLOR_WHITE, (center_x + 33, center_y), 20)
+        pygame.draw.circle(virtual_surface, COLOR_WHITE, (btn_offset_x + 33, center_y), 20)
     else:
-        pygame.draw.circle(virtual_surface, COLOR_WHITE, (center_x + 33, center_y), 18)
+        pygame.draw.circle(virtual_surface, COLOR_WHITE, (btn_offset_x + 33, center_y), 18)
     
     if not is_playing:
-        pygame.draw.polygon(virtual_surface, COLOR_BLACK, [(center_x + 30, center_y - 6), (center_x + 30, center_y + 6), (center_x + 40, center_y)])
+        pygame.draw.polygon(virtual_surface, COLOR_BLACK, [(btn_offset_x + 30, center_y - 6), (btn_offset_x + 30, center_y + 6), (btn_offset_x + 40, center_y)])
     else:
-        pygame.draw.rect(virtual_surface, COLOR_BLACK, (center_x + 29, center_y - 6, 3, 12))
-        pygame.draw.rect(virtual_surface, COLOR_BLACK, (center_x + 35, center_y - 6, 3, 12))
+        pygame.draw.rect(virtual_surface, COLOR_BLACK, (btn_offset_x + 29, center_y - 6, 3, 12))
+        pygame.draw.rect(virtual_surface, COLOR_BLACK, (btn_offset_x + 35, center_y - 6, 3, 12))
 
     next_hover = next_btn_rect.collidepoint(mouse_pos)
     next_click = next_hover and pygame.mouse.get_pressed()[0]
     next_color = COLOR_SPOTIFY_GREEN if next_click else (COLOR_WHITE if next_hover else COLOR_TEXT_MUTED)
-    pygame.draw.polygon(virtual_surface, next_color, [(center_x + 80, center_y), (center_x + 65, center_y - 9), (center_x + 65, center_y + 9)])
+    pygame.draw.polygon(virtual_surface, next_color, [(btn_offset_x + 80, center_y), (btn_offset_x + 65, center_y - 9), (btn_offset_x + 65, center_y + 9)])
     
     p10_hover = plus_10_btn_rect.collidepoint(mouse_pos)
     p10_click = p10_hover and pygame.mouse.get_pressed()[0]
@@ -1524,8 +1625,8 @@ def draw_media_bar():
         sh_icon_color = COLOR_WHITE if sh_hover else COLOR_TEXT_MUTED
     draw_spotify_shuffle_icon(virtual_surface, shuffle_btn_rect, sh_icon_color)
 
-    progress_bar_width = 400
-    progress_bar_x = center_x - (progress_bar_width // 2) + 20
+    progress_bar_width = min(400, WIDTH - 40) if is_portrait else 400
+    progress_bar_x = center_x - (progress_bar_width // 2) if is_portrait else btn_offset_x - (progress_bar_width // 2) + 20
     progress_bar_y = HEIGHT - 25
     progress_bar_rect = pygame.Rect(progress_bar_x, progress_bar_y - 10, progress_bar_width, 24)
     
@@ -1560,29 +1661,30 @@ def draw_media_bar():
     virtual_surface.blit(time_start, (progress_bar_x - 35, progress_bar_y - 6))
     virtual_surface.blit(time_end, (progress_bar_x + progress_bar_width + 10, progress_bar_y - 6))
 
-    track_ref = current_track.get("path", "")
-    current_lyrics_str = song_lyrics_database.get(track_ref, "")
-    if current_lyrics_str:
-        lyric_lines = current_lyrics_str.split('\n')
-        active_lyric_text = ""
-        best_time = -1
-        for line in lyric_lines:
-            line_stripped = line.strip()
-            if line_stripped.startswith('[') and ']' in line_stripped:
-                try:
-                    time_part, lyric_part = line_stripped.split(']', 1)
-                    time_part = time_part[1:].strip()
-                    if ':' in time_part:
-                        t_parts = time_part.split(':')
-                        lyric_time = float(t_parts[0]) * 60 + float(t_parts[1])
-                        if lyric_time <= elapsed_sec and lyric_time > best_time:
-                            best_time = lyric_time
-                            active_lyric_text = lyric_part.strip()
-                except:
-                    pass
-        if active_lyric_text:
-            lyric_surf = font_small.render(active_lyric_text, True, COLOR_SPOTIFY_GREEN)
-            virtual_surface.blit(lyric_surf, (WIDTH - lyric_surf.get_width() - 30, HEIGHT - 55))
+    if not is_portrait:
+        track_ref = current_track.get("path", "")
+        current_lyrics_str = song_lyrics_database.get(track_ref, "")
+        if current_lyrics_str:
+            lyric_lines = current_lyrics_str.split('\n')
+            active_lyric_text = ""
+            best_time = -1
+            for line in lyric_lines:
+                line_stripped = line.strip()
+                if line_stripped.startswith('[') and ']' in line_stripped:
+                    try:
+                        time_part, lyric_part = line_stripped.split(']', 1)
+                        time_part = time_part[1:].strip()
+                        if ':' in time_part:
+                            t_parts = time_part.split(':')
+                            lyric_time = float(t_parts[0]) * 60 + float(t_parts[1])
+                            if lyric_time <= elapsed_sec and lyric_time > best_time:
+                                best_time = lyric_time
+                                active_lyric_text = lyric_part.strip()
+                    except:
+                        pass
+            if active_lyric_text:
+                lyric_surf = font_small.render(active_lyric_text, True, COLOR_SPOTIFY_GREEN)
+                virtual_surface.blit(lyric_surf, (WIDTH - lyric_surf.get_width() - 30, HEIGHT - 55))
 
 # --- MAIN LOOP ---
 load_app_data()
@@ -1605,10 +1707,6 @@ while running:
     dt = min(0.1, clock.get_time() / 1000.0)
     
     music_grid_scroll_offset += (target_music_scroll - music_grid_scroll_offset) * (15.0 * dt)
-
-    dt = min(0.1, clock.get_time() / 1000.0)
-    
-    music_grid_scroll_offset += (target_music_scroll - music_grid_scroll_offset) * (15.0 * dt)
     browser_scroll_offset += (target_browser_scroll - browser_scroll_offset) * (15.0 * dt)
     settings_scroll_offset += (target_settings_scroll - settings_scroll_offset) * (15.0 * dt)
     lyrics_scroll_offset += (target_lyrics_scroll - lyrics_scroll_offset) * (15.0 * dt)
@@ -1616,6 +1714,13 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+            
+        elif event.type == pygame.VIDEORESIZE:
+            REAL_WIDTH, REAL_HEIGHT = event.w, event.h
+            screen = pygame.display.set_mode((REAL_WIDTH, REAL_HEIGHT), pygame.FULLSCREEN | pygame.RESIZABLE)
+            is_portrait = REAL_HEIGHT > REAL_WIDTH
+            WIDTH, HEIGHT = (700, 1100) if is_portrait else (1100, 700)
+            virtual_surface = pygame.Surface((WIDTH, HEIGHT))
             
         elif event.type == pygame.TEXTINPUT:
             if search_input_active:
@@ -2021,11 +2126,16 @@ while running:
                                 
                         if current_page in ["Search"] or (current_page == "Your Library" and (viewing_liked_playlist or selected_custom_playlist_name)):
                             for rect, track in track_rects:
+                                portrait_sidebar_h = 65 if is_portrait else 0
+                                main_x = 0 if is_portrait else 230
+                                main_w = WIDTH - main_x
                                 content_bottom_margin = 90 if current_track["title"] != "Select a song" else 0
+                                main_h = HEIGHT - content_bottom_margin - portrait_sidebar_h
+                                
                                 if current_page == "Your Library" and (viewing_liked_playlist or selected_custom_playlist_name):
-                                    clip_rect_bounds = pygame.Rect(230, 315, WIDTH - 230, HEIGHT - 315 - content_bottom_margin)
+                                    clip_rect_bounds = pygame.Rect(main_x, 315, main_w, main_h - 315)
                                 else:
-                                    clip_rect_bounds = pygame.Rect(230, 140, WIDTH - 230, HEIGHT - 140 - content_bottom_margin)
+                                    clip_rect_bounds = pygame.Rect(main_x, 140, main_w, main_h - 140)
                                     
                                 if clip_rect_bounds.collidepoint(mouse_pos) and rect.collidepoint(mouse_pos):
                                     current_track = track
