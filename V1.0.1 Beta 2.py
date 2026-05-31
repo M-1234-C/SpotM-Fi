@@ -640,7 +640,7 @@ def draw_sidebar():
     global sidebar_rects
     sidebar_rects = [] 
     
-    content_bottom_margin = 90 if (current_track["title"] != "Select a song" and not show_lyrics_editor_view) else 0
+    content_bottom_margin = (130 if is_portrait else 90) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view) else 0
     
     if not is_portrait:
         sidebar_rect = pygame.Rect(0, 0, 230, HEIGHT - content_bottom_margin)
@@ -714,7 +714,7 @@ def draw_main_content():
     settings_dir_rects = []
     custom_playlist_rects = []
     
-    content_bottom_margin = 90 if (current_track["title"] != "Select a song" and not show_lyrics_editor_view) else 0
+    content_bottom_margin = (130 if is_portrait else 90) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view) else 0
     portrait_sidebar_h = 65 if is_portrait else 0
     
     main_x = 0 if is_portrait else 230
@@ -1208,7 +1208,7 @@ def draw_modals():
     portrait_sidebar_h = 65 if is_portrait else 0
     main_x = 0 if is_portrait else 230
     main_w = WIDTH - main_x
-    content_bottom_margin = 90 if (current_track["title"] != "Select a song" and not show_lyrics_editor_view) else 0
+    content_bottom_margin = (130 if is_portrait else 90) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view) else 0
     main_h = HEIGHT - content_bottom_margin - portrait_sidebar_h
     content_pad_x = main_x + 30
     
@@ -1223,7 +1223,8 @@ def draw_modals():
         virtual_surface.blit(header_lbl, (main_x + 40, 45))
         virtual_surface.blit(track_lbl, (main_x + 40, 105))
         
-        lyrics_textarea_rect = pygame.Rect(main_x + 40, 145, main_w - 80, 420)
+        lyrics_box_h = HEIGHT - 250 if is_portrait else 420
+        lyrics_textarea_rect = pygame.Rect(main_x + 40, 145, main_w - 80, lyrics_box_h)
         pygame.draw.rect(virtual_surface, COLOR_CARD_BG, lyrics_textarea_rect, border_radius=8)
         
         if search_input_active and active_input_field == "lyrics":
@@ -1268,7 +1269,7 @@ def draw_modals():
                 if not line:
                     total_lyrics_height += 12
                     
-            if total_lyrics_height > 420:
+            if total_lyrics_height > lyrics_box_h:
                 max_lyrics_scroll = max(0, total_lyrics_height - (lyrics_textarea_rect.height - 30))
             else:
                 max_lyrics_scroll = 0
@@ -1335,8 +1336,14 @@ def draw_modals():
             placeholder = font_small.render("Type or paste the song lyrics here... (e.g., [00:12] Synced Line! Press Ctrl+V to paste)", True, COLOR_TEXT_MUTED)
             virtual_surface.blit(placeholder, (lyrics_textarea_rect.x + 15, lyrics_textarea_rect.y + 15))
             
-        lyrics_close_rect = pygame.Rect(main_x + main_w - 230, 590, 100, 42)
-        lyrics_save_rect = pygame.Rect(main_x + main_w - 110, 590, 110, 42)
+        if is_portrait:
+            btn_y = lyrics_textarea_rect.bottom + 20
+            start_x = main_x + (main_w - 230) // 2 
+            lyrics_close_rect = pygame.Rect(start_x, btn_y, 100, 42)
+            lyrics_save_rect = pygame.Rect(start_x + 120, btn_y, 110, 42)
+        else:
+            lyrics_close_rect = pygame.Rect(main_x + main_w - 230, 590, 100, 42)
+            lyrics_save_rect = pygame.Rect(main_x + main_w - 110, 590, 110, 42)
         
         c_bg = COLOR_HOVER if lyrics_close_rect.collidepoint(mouse_pos) else COLOR_LIGHT_GREY
         pygame.draw.rect(virtual_surface, c_bg, lyrics_close_rect, border_radius=21)
@@ -1357,22 +1364,32 @@ def draw_modals():
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT))
         
         lbl = font_huge.render("Create playlist", True, COLOR_WHITE)
-        virtual_surface.blit(lbl, (main_x + 50, 60))
+        if is_portrait:
+            virtual_surface.blit(lbl, (main_x + (main_w - lbl.get_width()) // 2, 45))
+        else:
+            virtual_surface.blit(lbl, (main_x + 50, 60))
         
-        modal_image_picker_rect = pygame.Rect(main_x + 50, 160, 220, 220)
+        if is_portrait:
+            img_x = main_x + (main_w - 220) // 2
+            img_y = 120
+        else:
+            img_x = main_x + 50
+            img_y = 160
+            
+        modal_image_picker_rect = pygame.Rect(img_x, img_y, 220, 220)
         if modal_playlist_cover_surface:
             disp_modal_cover = pygame.transform.smoothscale(modal_playlist_cover_surface, (220, 220))
-            virtual_surface.blit(disp_modal_cover, (main_x + 50, 160))
+            virtual_surface.blit(disp_modal_cover, (img_x, img_y))
         else:
             pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, modal_image_picker_rect)
-            draw_spotify_pencil(virtual_surface, main_x + 160, 270, COLOR_BLACK)
+            draw_spotify_pencil(virtual_surface, img_x + 110, img_y + 110, COLOR_BLACK)
             
         draw_unified_cover_overlay(virtual_surface, modal_image_picker_rect, mouse_pos)
             
         label_meta = font_small.render("Name", True, COLOR_TEXT_MUTED)
         
         input_x = main_x + 300 if not is_portrait else main_x + 50
-        input_y = 185 if not is_portrait else 400
+        input_y = 185 if not is_portrait else 405
         input_w = main_w - 330 if not is_portrait else main_w - 100
         
         virtual_surface.blit(label_meta, (input_x, input_y - 25))
@@ -1412,11 +1429,17 @@ def draw_modals():
         if not is_portrait:
             virtual_surface.blit(desc_lbl, (main_x + 50, 415))
         else:
-            virtual_surface.blit(desc_lbl, (main_x + 50, input_y + 215))
+            lbl_x = main_x + (main_w - desc_lbl.get_width()) // 2
+            virtual_surface.blit(desc_lbl, (max(main_x + 10, lbl_x), input_y + 215))
         
         btn_y = 405 if not is_portrait else input_y + 250
-        modal_close_rect = pygame.Rect(main_x + main_w - 240, btn_y, 100, 42)
-        modal_save_rect = pygame.Rect(main_x + main_w - 120, btn_y, 100, 42)
+        if is_portrait:
+            start_x = main_x + (main_w - 220) // 2
+            modal_close_rect = pygame.Rect(start_x, btn_y, 100, 42)
+            modal_save_rect = pygame.Rect(start_x + 120, btn_y, 100, 42)
+        else:
+            modal_close_rect = pygame.Rect(main_x + main_w - 240, btn_y, 100, 42)
+            modal_save_rect = pygame.Rect(main_x + main_w - 120, btn_y, 100, 42)
         
         c_bg = COLOR_HOVER if modal_close_rect.collidepoint(mouse_pos) else COLOR_CARD_BG
         pygame.draw.rect(virtual_surface, c_bg, modal_close_rect, border_radius=21)
@@ -1487,19 +1510,18 @@ def draw_media_bar():
     if current_track["title"] == "Select a song" or show_lyrics_editor_view:
         return
 
-    bar_rect = pygame.Rect(0, HEIGHT - 90, WIDTH, 90)
+    bar_height = 130 if is_portrait else 90
+    bar_rect = pygame.Rect(0, HEIGHT - bar_height, WIDTH, bar_height)
     pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, bar_rect)
     
     now_playing_title = font_body.render(current_track["title"] if len(current_track["title"]) < 20 else current_track["title"][:17] + "...", True, COLOR_WHITE)
     now_playing_artist = font_small.render(current_track["artist"] if len(current_track["artist"]) < 20 else current_track["artist"][:17] + "...", True, COLOR_TEXT_MUTED)
-    virtual_surface.blit(now_playing_title, (20, HEIGHT - 65))
-    virtual_surface.blit(now_playing_artist, (20, HEIGHT - 45)) 
+    virtual_surface.blit(now_playing_title, (20, HEIGHT - bar_height + 25))
+    virtual_surface.blit(now_playing_artist, (20, HEIGHT - bar_height + 45)) 
     
     center_x = WIDTH // 2 
-    center_y = HEIGHT - 60 
-    
+    center_y = HEIGHT - (90 if is_portrait else 60) 
     btn_offset_x = center_x
-    if is_portrait: btn_offset_x += 40
     
     star_btn_rect = pygame.Rect(btn_offset_x - 130, center_y - 10, 20, 20)
     mouse_pos = get_virtual_mouse_pos()
@@ -1627,7 +1649,7 @@ def draw_media_bar():
 
     progress_bar_width = min(400, WIDTH - 40) if is_portrait else 400
     progress_bar_x = center_x - (progress_bar_width // 2) if is_portrait else btn_offset_x - (progress_bar_width // 2) + 20
-    progress_bar_y = HEIGHT - 25
+    progress_bar_y = HEIGHT - (50 if is_portrait else 25)
     progress_bar_rect = pygame.Rect(progress_bar_x, progress_bar_y - 10, progress_bar_width, 24)
     
     elapsed_sec = 0.0
@@ -1661,29 +1683,31 @@ def draw_media_bar():
     virtual_surface.blit(time_start, (progress_bar_x - 35, progress_bar_y - 6))
     virtual_surface.blit(time_end, (progress_bar_x + progress_bar_width + 10, progress_bar_y - 6))
 
-    if not is_portrait:
-        track_ref = current_track.get("path", "")
-        current_lyrics_str = song_lyrics_database.get(track_ref, "")
-        if current_lyrics_str:
-            lyric_lines = current_lyrics_str.split('\n')
-            active_lyric_text = ""
-            best_time = -1
-            for line in lyric_lines:
-                line_stripped = line.strip()
-                if line_stripped.startswith('[') and ']' in line_stripped:
-                    try:
-                        time_part, lyric_part = line_stripped.split(']', 1)
-                        time_part = time_part[1:].strip()
-                        if ':' in time_part:
-                            t_parts = time_part.split(':')
-                            lyric_time = float(t_parts[0]) * 60 + float(t_parts[1])
-                            if lyric_time <= elapsed_sec and lyric_time > best_time:
-                                best_time = lyric_time
-                                active_lyric_text = lyric_part.strip()
-                    except:
-                        pass
-            if active_lyric_text:
-                lyric_surf = font_small.render(active_lyric_text, True, COLOR_SPOTIFY_GREEN)
+    track_ref = current_track.get("path", "")
+    current_lyrics_str = song_lyrics_database.get(track_ref, "")
+    if current_lyrics_str:
+        lyric_lines = current_lyrics_str.split('\n')
+        active_lyric_text = ""
+        best_time = -1
+        for line in lyric_lines:
+            line_stripped = line.strip()
+            if line_stripped.startswith('[') and ']' in line_stripped:
+                try:
+                    time_part, lyric_part = line_stripped.split(']', 1)
+                    time_part = time_part[1:].strip()
+                    if ':' in time_part:
+                        t_parts = time_part.split(':')
+                        lyric_time = float(t_parts[0]) * 60 + float(t_parts[1])
+                        if lyric_time <= elapsed_sec and lyric_time > best_time:
+                            best_time = lyric_time
+                            active_lyric_text = lyric_part.strip()
+                except:
+                    pass
+        if active_lyric_text:
+            lyric_surf = font_small.render(active_lyric_text, True, COLOR_SPOTIFY_GREEN)
+            if is_portrait:
+                virtual_surface.blit(lyric_surf, ((WIDTH - lyric_surf.get_width()) // 2, HEIGHT - 30))
+            else:
                 virtual_surface.blit(lyric_surf, (WIDTH - lyric_surf.get_width() - 30, HEIGHT - 55))
 
 # --- MAIN LOOP ---
@@ -2129,13 +2153,15 @@ while running:
                                 portrait_sidebar_h = 65 if is_portrait else 0
                                 main_x = 0 if is_portrait else 230
                                 main_w = WIDTH - main_x
-                                content_bottom_margin = 90 if current_track["title"] != "Select a song" else 0
-                                main_h = HEIGHT - content_bottom_margin - portrait_sidebar_h
+                                
+                                # Use dynamic margin to check bounds correctly
+                                event_margin = (130 if is_portrait else 90) if current_track["title"] != "Select a song" else 0
+                                main_h_event = HEIGHT - event_margin - portrait_sidebar_h
                                 
                                 if current_page == "Your Library" and (viewing_liked_playlist or selected_custom_playlist_name):
-                                    clip_rect_bounds = pygame.Rect(main_x, 315, main_w, main_h - 315)
+                                    clip_rect_bounds = pygame.Rect(main_x, 315, main_w, main_h_event - 315)
                                 else:
-                                    clip_rect_bounds = pygame.Rect(main_x, 140, main_w, main_h - 140)
+                                    clip_rect_bounds = pygame.Rect(main_x, 140, main_w, main_h_event - 140)
                                     
                                 if clip_rect_bounds.collidepoint(mouse_pos) and rect.collidepoint(mouse_pos):
                                     current_track = track
