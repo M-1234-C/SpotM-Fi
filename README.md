@@ -10,8 +10,6 @@ This is an offline music player that recreates the popular online music service 
 ​Hybrid Engine: Works on both Windows/Mac (Desktop) and Android phones.
 ​Auto-Save: All your playlists and lyrics are saved in a .json file.
 
-<img width="2880" height="233" alt="1001160831" src="https://github.com/user-attachments/assets/55a32887-d292-4141-a896-7bf2a122fbd2" />
-
 ​# Navigation 
 ​Sidebar: Switch between Home, Search, and your Playlists.
 ​Media Bar: Play, Pause, Shuffle, and Skip songs at the bottom of the screen.
@@ -23,8 +21,7 @@ This is an offline music player that recreates the popular online music service 
 # Help
 ​Playlist Covers: When you create a playlist, you can assign an image to it just find it in the directores page that opens when you click to change the cover. If you want to change it after you have created the playlist then go into it and click the cover and select you image just like you did before it support the formats: .png, .jpg, .jpeg.
 
-<img width="2880" height="1800" alt="1001160826" src="https://github.com/user-attachments/assets/d17696d9-d9a2-4cc2-a632-4c62fcad0d27" />
-
+<img width="2880" height="1800" alt="1001160829" src="https://github.com/user-attachments/assets/4d1f9b20-868e-44ea-8997-04517ea6bfc9" />
 
 ​Default Icons: If no image is found, the app will use a default grey placeholder with a music note.
 ​Song Art: The app tries to read metadata. If your MP3 already has an album cover attached to it, SpotM-Fi will attempt to display it in the song box.(custom icon support will be added in future version)
@@ -53,8 +50,7 @@ The app uses these to handle files like MP4, M4A, or AAC:
 If you are building this for an Android phone, you will also need:
 * **Pyjnius**: (Lets Python talk to the Android system)
 
-<img width="2880" height="1800" alt="1001160828" src="https://github.com/user-attachments/assets/a6f49b5c-4c2f-40b5-969f-e489f8499af9" />
-<img width="2880" height="1800" alt="1001160826" src="https://github.com/user-attachments/assets/bfdf54ab-bc54-4448-839d-15611ac0e120" />
+
 
 
 
