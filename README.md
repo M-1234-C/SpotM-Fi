@@ -1,3 +1,4 @@
+
 # SpotM-Fi
 This is an offline music player that recreates the popular online music service gui with full functionality
 
@@ -8,6 +9,8 @@ This is an offline music player that recreates the popular online music service 
 ​Liked Songs: Heart your favorite tracks to save them in a special list.
 ​Hybrid Engine: Works on both Windows/Mac (Desktop) and Android phones.
 ​Auto-Save: All your playlists and lyrics are saved in a .json file.
+
+<img width="2880" height="233" alt="1001160831" src="https://github.com/user-attachments/assets/55a32887-d292-4141-a896-7bf2a122fbd2" />
 
 ​# Navigation 
 ​Sidebar: Switch between Home, Search, and your Playlists.
@@ -43,4 +46,8 @@ The app uses these to handle files like MP4, M4A, or AAC:
 If you are building this for an Android phone, you will also need:
 * **Pyjnius**: (Lets Python talk to the Android system)
 
+<img width="2880" height="1800" alt="1001160826" src="https://github.com/user-attachments/assets/a96abbae-5014-47d3-ae44-ca881f1e1562" />
+<img width="2880" height="1800" alt="1001160828" src="https://github.com/user-attachments/assets/f376a343-d3ac-4b70-997e-73ddf3ee3b88" />
+<img width="2880" height="1800" alt="1001160829" src="https://github.com/user-attachments/assets/60bb76ad-1801-4cba-8d71-6069c456bf66" />
+<img width="2880" height="1800" alt="1001160832" src="https://github.com/user-attachments/assets/01a9f93e-8e09-4773-9e5e-2d2b15f0e813" />
 
