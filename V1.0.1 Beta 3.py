@@ -78,9 +78,8 @@ current_track = {
     "path": ""
 }
 is_playing = False     
-is_shuffle = False  # Spotify shuffle engine toggle tracker
+is_shuffle = False  
 
-# Tracker for tracks that have been manually toggled green
 green_toggled_tracks = set()
 
 # --- AUDIO TRACKING STATE ---
@@ -89,6 +88,8 @@ track_start_accumulator = 0.0
 TEMP_WAV_PATH = None          
 current_backend = "pygame"    
 music_loaded = False          
+is_dragging_progress = False
+drag_seek_target = 0.0
 
 # Android Native Decoders Initialization
 try:
@@ -102,8 +103,6 @@ except:
 
 # --- DUAL-PLATFORM HYBRID CLIPBOARD UTILITY ---
 def get_clipboard_text():
-    """Extracts platform-agnostic string data from desktop or mobile native clipboards."""
-    # Attempt Primary Desktop Layer Extraction
     try:
         pasted_bytes = pygame.scrap.get(pygame.SCRAP_TEXT)
         if pasted_bytes:
@@ -111,7 +110,6 @@ def get_clipboard_text():
     except:
         pass
         
-    # Attempt Fallback Android Native Integration Layer
     if HAS_ANDROID_MEDIA:
         try:
             from jnius import autoclass
@@ -139,35 +137,30 @@ imported_tracks = []
 liked_tracks = []        
 saved_directories = []  
 
-# Dynamic Playlist Storage Engine
-custom_playlists = {}  # Format: {"Playlist Name": {"tracks": [], "image_path": None, "surface": None, "description": ""}}
+custom_playlists = {}  
 liked_songs_custom_cover = {"image_path": None, "surface": None}
 selected_custom_playlist_name = None
 is_browsing_for_cover = False
-browsing_cover_target = "create" # "create", "custom_view", or "liked_view"
+browsing_cover_target = "create"
 
-# Song Lyrics Data Store Engine
-song_lyrics_database = {}  # Format: {"track_path": "lyrics string"}
+song_lyrics_database = {}  
 show_lyrics_editor_view = False
 lyrics_editor_cursor_timer = 0.0
 lyrics_text_changed = False
 lyrics_cursor_pos = 0
 
-# --- NEW GUI INPUT STATES ---
 show_create_playlist_modal = False
 playlist_input_text = ""
 playlist_desc_text = ""
-active_input_field = "name" # "name" or "description" or "lyrics"
+active_input_field = "name" 
 show_add_to_playlist_modal = False
 track_to_add_to_playlist = None
 modal_playlist_cover_surface = None  
 modal_playlist_cover_path = None
 
-# Marquee Description Animation Setup
 marquee_offset = 0.0
 marquee_direction = 1
 
-# Browser, Search, Library & Touch Engine States
 is_browsing_storage = False
 search_input_active = False
 search_query = ""
@@ -179,7 +172,6 @@ is_dragging_grid = False
 last_touch_y = 0
 total_drag_dy = 0
 
-# --- SMOOTH SCROLLING TARGET ENGINE ---
 music_grid_scroll_offset = 0.0  
 target_music_scroll = 0.0
 browser_scroll_offset = 0       
@@ -199,7 +191,6 @@ browser_items = []
 
 search_message = "Tap '+ Add Folder' to open the built-in storage browser."
 
-# Global interaction boundaries
 track_rects = []
 sidebar_rects = []
 browser_rects = []
@@ -229,21 +220,17 @@ cancel_browser_btn_rect = pygame.Rect(0, 0, 0, 0)
 close_settings_btn_rect = pygame.Rect(0, 0, 0, 0)
 progress_bar_rect = pygame.Rect(0, 0, 0, 0)
 
-# Modal Interaction Buttons
 modal_close_rect = pygame.Rect(0, 0, 0, 0)
 modal_save_rect = pygame.Rect(0, 0, 0, 0)
 modal_input_rect = pygame.Rect(0, 0, 0, 0)
 modal_desc_rect = pygame.Rect(0, 0, 0, 0)
 modal_image_picker_rect = pygame.Rect(0, 0, 0, 0)
 
-# Lyrics Layout Interaction System Buttons
 lyrics_close_rect = pygame.Rect(0, 0, 0, 0)
 lyrics_save_rect = pygame.Rect(0, 0, 0, 0)
 lyrics_textarea_rect = pygame.Rect(270, 145, 760, 420)
 
-# --- PERSISTENT JSON STORAGE ENGINE ---
 def save_app_data():
-    """Serializes core tracking lists, dicts, and metadata to JSON file."""
     data = {
         "saved_directories": saved_directories,
         "liked_tracks": liked_tracks,
@@ -253,7 +240,6 @@ def save_app_data():
         "green_toggled_tracks": list(green_toggled_tracks)
     }
     
-    # Strip non-serializable pygame surfaces from custom playlist dicts
     for p_name, p_data in custom_playlists.items():
         data["custom_playlists"][p_name] = {
             "tracks": p_data["tracks"],
@@ -268,7 +254,6 @@ def save_app_data():
         print(f"File Save Error: {e}")
 
 def load_app_data():
-    """Loads state configuration and aggressively re-renders missing graphical surfaces."""
     global saved_directories, liked_tracks, liked_songs_custom_cover
     global custom_playlists, song_lyrics_database, green_toggled_tracks
     
@@ -282,7 +267,6 @@ def load_app_data():
         saved_directories = data.get("saved_directories", [])
         liked_tracks = data.get("liked_tracks", [])
         
-        # Reload liked songs cover state & reconstruct Pygame Surface
         lsc = data.get("liked_songs_custom_cover", {})
         liked_songs_custom_cover["image_path"] = lsc.get("image_path")
         if liked_songs_custom_cover["image_path"] and os.path.exists(liked_songs_custom_cover["image_path"]):
@@ -295,7 +279,6 @@ def load_app_data():
         song_lyrics_database = data.get("song_lyrics_database", {})
         green_toggled_tracks = set(data.get("green_toggled_tracks", []))
         
-        # Reload playlists and reconstruct any graphical Pygame image covers saved
         loaded_playlists = data.get("custom_playlists", {})
         for p_name, p_data in loaded_playlists.items():
             surface = None
@@ -312,12 +295,10 @@ def load_app_data():
                 "surface": surface
             }
             
-        # Hydrate active directory engine items
         rebuild_imported_tracks()
     except Exception as e:
         print(f"File Load Error: {e}")
 
-# --- PLAYLIST AUTO-ADVANCE & NAVIGATION TRACKING ENGINE ---
 def advance_track(backward=False):
     global current_track, is_playing, green_toggled_tracks
     if playlist_is_playing == "Liked Songs":
@@ -352,7 +333,6 @@ def advance_track(backward=False):
         is_playing = True
         load_and_play_track(current_track["path"])
 
-# --- HYBRID PLAYBACK ENGINE CORE ---
 def load_and_play_track(track_path):
     global track_duration, track_start_accumulator, TEMP_WAV_PATH, current_backend, music_loaded
     
@@ -441,7 +421,6 @@ def load_and_play_track(track_path):
             print(f"Playback engine error: {e}")
             music_loaded = False
 
-# --- DIRECTORY NAVIGATION LOGIC ---
 def update_browser_contents():
     global browser_items, search_message, browser_scroll_offset, target_browser_scroll
     browser_items = []
@@ -509,14 +488,17 @@ def scan_confirmed_directory(target_dir):
     target_music_scroll = 0.0
     rebuild_imported_tracks()
     is_browsing_storage = False  
-    save_app_data() # Persist state upon folder add
-
-# --- UI DRAWING FUNCTIONS ---
+    save_app_data() 
+    
 def get_virtual_mouse_pos():
     real_x, real_y = pygame.mouse.get_pos()
-    virtual_x = int(real_x * (WIDTH / REAL_WIDTH))
-    virtual_y = int(real_y * (HEIGHT / REAL_HEIGHT))
+    scale_x = REAL_WIDTH / WIDTH
+    scale_y = REAL_HEIGHT / HEIGHT
+    
+    virtual_x = int(real_x / scale_x)
+    virtual_y = int(real_y / scale_y)
     return (virtual_x, virtual_y)
+
 
 def draw_manual_thumbs_up(surface, x, y, w, h, color):
     pygame.draw.rect(surface, color, (x, y + h * 0.5, w * 0.22, h * 0.4), border_radius=max(1, int(w * 0.04)))
@@ -640,7 +622,7 @@ def draw_sidebar():
     global sidebar_rects
     sidebar_rects = [] 
     
-    content_bottom_margin = (130 if is_portrait else 90) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view) else 0
+    content_bottom_margin = (130 if is_portrait else 90) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
     
     if not is_portrait:
         sidebar_rect = pygame.Rect(0, 0, 230, HEIGHT - content_bottom_margin)
@@ -714,7 +696,7 @@ def draw_main_content():
     settings_dir_rects = []
     custom_playlist_rects = []
     
-    content_bottom_margin = (130 if is_portrait else 90) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view) else 0
+    content_bottom_margin = (130 if is_portrait else 90) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
     portrait_sidebar_h = 65 if is_portrait else 0
     
     main_x = 0 if is_portrait else 230
@@ -954,7 +936,11 @@ def draw_main_content():
         settings_title = font_title.render("Imported Music Directories", True, COLOR_WHITE)
         virtual_surface.blit(settings_title, (content_pad_x, 40))
         
-        close_settings_btn_rect = pygame.Rect(main_x + main_w - 110, 35, 90, 35)
+        if not is_portrait:
+            close_settings_btn_rect = pygame.Rect(main_x + main_w - 250, 35, 90, 35)
+        else:
+            close_settings_btn_rect = pygame.Rect(main_x + main_w - 110, 35, 90, 35)
+            
         cs_hovered = close_settings_btn_rect.collidepoint(mouse_pos)
         cs_clicked = cs_hovered and pygame.mouse.get_pressed()[0]
         if cs_clicked:
@@ -996,7 +982,11 @@ def draw_main_content():
         search_title = font_title.render("Search Results", True, COLOR_WHITE)
         virtual_surface.blit(search_title, (content_pad_x, 40))
         
-        add_folder_btn_rect = pygame.Rect(main_x + main_w - 220, 80, 150, 40)
+        if not is_portrait:
+            add_folder_btn_rect = pygame.Rect(content_pad_x + 520, 80, 150, 40)
+        else:
+            add_folder_btn_rect = pygame.Rect(main_x + main_w - 220, 80, 150, 40)
+            
         is_af_hovered = add_folder_btn_rect.collidepoint(mouse_pos)
         is_af_clicked = is_af_hovered and pygame.mouse.get_pressed()[0]
         
@@ -1014,7 +1004,11 @@ def draw_main_content():
         virtual_surface.blit(btn_txt, (add_folder_btn_rect.x + 38, 92))
 
         if saved_directories:
-            settings_btn_rect = pygame.Rect(main_x + main_w - 55, 80, 40, 40)
+            if not is_portrait:
+                settings_btn_rect = pygame.Rect(content_pad_x + 680, 80, 40, 40)
+            else:
+                settings_btn_rect = pygame.Rect(main_x + main_w - 55, 80, 40, 40)
+                
             is_st_hovered = settings_btn_rect.collidepoint(mouse_pos)
             is_st_clicked = is_st_hovered and pygame.mouse.get_pressed()[0]
             
@@ -1031,7 +1025,7 @@ def draw_main_content():
             pygame.draw.rect(virtual_surface, box_bg_color, settings_btn_rect, border_radius=20)
             draw_solid_cog_wheel(virtual_surface, settings_btn_rect.x + 10, settings_btn_rect.y + 10, 20, 20, st_color)
 
-        search_box_rect = pygame.Rect(content_pad_x, 80, min(500, main_w - 240) if not is_portrait else main_w - 280, 40)
+        search_box_rect = pygame.Rect(content_pad_x, 80, 500 if not is_portrait else main_w - 280, 40)
         pygame.draw.rect(virtual_surface, COLOR_WHITE, search_box_rect, border_radius=20)
         if search_input_active and not show_create_playlist_modal:
             pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, search_box_rect, width=2, border_radius=20)
@@ -1208,7 +1202,7 @@ def draw_modals():
     portrait_sidebar_h = 65 if is_portrait else 0
     main_x = 0 if is_portrait else 230
     main_w = WIDTH - main_x
-    content_bottom_margin = (130 if is_portrait else 90) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view) else 0
+    content_bottom_margin = (130 if is_portrait else 90) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
     main_h = HEIGHT - content_bottom_margin - portrait_sidebar_h
     content_pad_x = main_x + 30
     
@@ -1342,8 +1336,8 @@ def draw_modals():
             lyrics_close_rect = pygame.Rect(start_x, btn_y, 100, 42)
             lyrics_save_rect = pygame.Rect(start_x + 120, btn_y, 110, 42)
         else:
-            lyrics_close_rect = pygame.Rect(main_x + main_w - 230, 590, 100, 42)
-            lyrics_save_rect = pygame.Rect(main_x + main_w - 110, 590, 110, 42)
+            lyrics_close_rect = pygame.Rect(main_x + 40, 590, 100, 42)
+            lyrics_save_rect = pygame.Rect(main_x + 150, 590, 100, 42)
         
         c_bg = COLOR_HOVER if lyrics_close_rect.collidepoint(mouse_pos) else COLOR_LIGHT_GREY
         pygame.draw.rect(virtual_surface, c_bg, lyrics_close_rect, border_radius=21)
@@ -1352,8 +1346,8 @@ def draw_modals():
         
         s_bg = (40, 230, 110) if lyrics_save_rect.collidepoint(mouse_pos) else COLOR_SPOTIFY_GREEN
         pygame.draw.rect(virtual_surface, s_bg, lyrics_save_rect, border_radius=21)
-        s_txt = font_body.render("✓ Save", True, COLOR_BLACK)
-        virtual_surface.blit(s_txt, (lyrics_save_rect.x + 24, lyrics_save_rect.y + 11))
+        s_txt = font_body.render("Save", True, COLOR_BLACK)
+        virtual_surface.blit(s_txt, (lyrics_save_rect.x + 30, lyrics_save_rect.y + 11))
         return
 
     if show_create_playlist_modal:
@@ -1432,14 +1426,15 @@ def draw_modals():
             lbl_x = main_x + (main_w - desc_lbl.get_width()) // 2
             virtual_surface.blit(desc_lbl, (max(main_x + 10, lbl_x), input_y + 215))
         
-        btn_y = 405 if not is_portrait else input_y + 250
         if is_portrait:
+            btn_y = input_y + 250
             start_x = main_x + (main_w - 220) // 2
             modal_close_rect = pygame.Rect(start_x, btn_y, 100, 42)
             modal_save_rect = pygame.Rect(start_x + 120, btn_y, 100, 42)
         else:
-            modal_close_rect = pygame.Rect(main_x + main_w - 240, btn_y, 100, 42)
-            modal_save_rect = pygame.Rect(main_x + main_w - 120, btn_y, 100, 42)
+            btn_y = 460
+            modal_close_rect = pygame.Rect(main_x + 50, btn_y, 100, 42)
+            modal_save_rect = pygame.Rect(main_x + 170, btn_y, 100, 42)
         
         c_bg = COLOR_HOVER if modal_close_rect.collidepoint(mouse_pos) else COLOR_CARD_BG
         pygame.draw.rect(virtual_surface, c_bg, modal_close_rect, border_radius=21)
@@ -1507,7 +1502,7 @@ def draw_modals():
 def draw_media_bar():
     global play_btn_rect, prev_btn_rect, next_btn_rect, minus_10_btn_rect, plus_10_btn_rect, mediabar_add_btn_rect, mediabar_lyrics_btn_rect, star_btn_rect, shuffle_btn_rect, progress_bar_rect
     
-    if current_track["title"] == "Select a song" or show_lyrics_editor_view:
+    if current_track["title"] == "Select a song" or show_lyrics_editor_view or show_create_playlist_modal:
         return
 
     bar_height = 130 if is_portrait else 90
@@ -1656,7 +1651,11 @@ def draw_media_bar():
     remaining_sec = 0.0
     percent_fill = 0.0
     
-    if track_duration > 0 and music_loaded:
+    if is_dragging_progress:
+        elapsed_sec = min(track_duration, drag_seek_target)
+        remaining_sec = max(0.0, track_duration - elapsed_sec)
+        percent_fill = min(1.0, max(0.0, elapsed_sec / track_duration))
+    elif track_duration > 0 and music_loaded:
         if current_backend =="android" and android_media_player:
             try: elapsed_sec = android_media_player.getCurrentPosition() / 1000.0
             except: elapsed_sec = 0.0
@@ -1714,11 +1713,9 @@ def draw_media_bar():
 load_app_data()
 running = True
 
-# Track virtual keyboard state
 virtual_keyboard_active = False
 
 while running:
-    # --- VIRTUAL KEYBOARD TOGGLE ENGINE ---
     if search_input_active and not virtual_keyboard_active:
         try: pygame.key.start_text_input()
         except: pass
@@ -1771,7 +1768,6 @@ while running:
             mods = pygame.key.get_mods()
             is_ctrl_or_cmd = (mods & pygame.KMOD_CTRL) or (mods & pygame.KMOD_META)
             
-            # FIXED: Relies on the hybrid architecture platform clipboard engine
             if is_ctrl_or_cmd and event.key == pygame.K_v and search_input_active:
                 pasted_text = get_clipboard_text()
                 
@@ -1852,6 +1848,15 @@ while running:
         elif event.type == pygame.MOUSEBUTTONDOWN:
             mouse_pos = get_virtual_mouse_pos()
             
+            if current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal:
+                if progress_bar_rect.collidepoint(mouse_pos) and track_duration > 0 and music_loaded:
+                    if event.button == 1:
+                        is_dragging_progress = True
+                        relative_x = mouse_pos[0] - progress_bar_rect.x
+                        fraction = min(1.0, max(0.0, relative_x / progress_bar_rect.width))
+                        drag_seek_target = fraction * track_duration
+                        continue
+
             if show_lyrics_editor_view:
                 if event.button == 4: target_lyrics_scroll = max(0.0, target_lyrics_scroll - 120.0)
                 elif event.button == 5: target_lyrics_scroll = min(max_lyrics_scroll, target_lyrics_scroll + 120.0)
@@ -1884,8 +1889,13 @@ while running:
                 total_drag_dy = 0
                 
         elif event.type == pygame.MOUSEMOTION:
-            if is_dragging_grid:
-                mouse_pos = get_virtual_mouse_pos()
+            mouse_pos = get_virtual_mouse_pos()
+            
+            if is_dragging_progress:
+                relative_x = mouse_pos[0] - progress_bar_rect.x
+                fraction = min(1.0, max(0.0, relative_x / progress_bar_rect.width))
+                drag_seek_target = fraction * track_duration
+            elif is_dragging_grid:
                 dy = last_touch_y - mouse_pos[1]
                 total_drag_dy += abs(dy)
                 
@@ -1916,6 +1926,21 @@ while running:
         elif event.type == pygame.MOUSEBUTTONUP:
             mouse_pos = get_virtual_mouse_pos()
             if event.button == 1:
+                if is_dragging_progress:
+                    is_dragging_progress = False
+                    track_start_accumulator = drag_seek_target
+                    current_track["_has_started"] = False
+                    if current_backend == "android" and android_media_player:
+                        try:
+                            android_media_player.seekTo(int(drag_seek_target * 1000))
+                            android_media_player.start()
+                        except: pass
+                    else:
+                        try: pygame.mixer.music.play(start=drag_seek_target)
+                        except: pass
+                    is_playing = True
+                    continue 
+
                 is_dragging_grid = False
                 
                 if total_drag_dy < 15:
@@ -2154,7 +2179,6 @@ while running:
                                 main_x = 0 if is_portrait else 230
                                 main_w = WIDTH - main_x
                                 
-                                # Use dynamic margin to check bounds correctly
                                 event_margin = (130 if is_portrait else 90) if current_track["title"] != "Select a song" else 0
                                 main_h_event = HEIGHT - event_margin - portrait_sidebar_h
                                 
@@ -2170,24 +2194,7 @@ while running:
                                     green_toggled_tracks.add(current_track["path"])
                                     load_and_play_track(current_track["path"])
                                     
-                        if current_track["title"] != "Select a song" and not show_lyrics_editor_view:
-                            if progress_bar_rect.collidepoint(mouse_pos) and track_duration > 0 and music_loaded:
-                                relative_x = mouse_pos[0] - progress_bar_rect.x
-                                fraction = min(1.0, max(0.0, relative_x / progress_bar_rect.width))
-                                seek_target = fraction * track_duration
-                                track_start_accumulator = seek_target
-                                current_track["_has_started"] = False
-                                
-                                if current_backend == "android" and android_media_player:
-                                    try:
-                                        android_media_player.seekTo(int(seek_target * 1000))
-                                        android_media_player.start()
-                                    except: pass
-                                else:
-                                    try: pygame.mixer.music.play(start=seek_target)
-                                    except: pass
-                                is_playing = True
-
+                        if current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal:
                             if mediabar_lyrics_btn_rect.collidepoint(mouse_pos):
                                 show_lyrics_editor_view = True
                                 track_ref = current_track.get("path", "")
@@ -2271,7 +2278,7 @@ while running:
                                     liked_tracks.append(current_track)
                                 save_app_data()
             
-    if is_playing and track_duration > 0 and music_loaded:
+    if is_playing and track_duration > 0 and music_loaded and not is_dragging_progress:
         if current_backend == "android" and android_media_player:
             try: elapsed = android_media_player.getCurrentPosition() / 1000.0
             except: elapsed = 0.0
@@ -2296,8 +2303,19 @@ while running:
     draw_media_bar()
     draw_modals()
     
+    # Accurate Letterbox/Pillarbox Screen Scaling
+    scale_x = REAL_WIDTH / WIDTH
+    scale_y = REAL_HEIGHT / HEIGHT
+    scale_factor = min(scale_x, scale_y)
+    scaled_w = int(WIDTH * scale_factor)
+    scaled_h = int(HEIGHT * scale_factor)
+    offset_x = (REAL_WIDTH - scaled_w) // 2
+    offset_y = (REAL_HEIGHT - scaled_h) // 2
+    
+            # Changed smoothscale to standard scale to fix performance issues on high-res displays
     scaled_frame = pygame.transform.scale(virtual_surface, (REAL_WIDTH, REAL_HEIGHT))
     screen.blit(scaled_frame, (0, 0))
+
     
     pygame.display.flip()
     clock.tick(DEVICE_REFRESH_RATE)
