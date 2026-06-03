@@ -2296,7 +2296,6 @@ while running:
                 current_track["_has_started"] = False
                 advance_track(backward=False)
 
-        # --- RENDER BLOCK WITH ASPECT RATIO FIX ---
     virtual_surface.fill(COLOR_BLACK)
     
     draw_main_content()
@@ -2304,29 +2303,22 @@ while running:
     draw_media_bar()
     draw_modals()
     
-    # Calculate uniform scale factor to prevent stretching across different screens
+    # Accurate Letterbox/Pillarbox Screen Scaling
     scale_x = REAL_WIDTH / WIDTH
     scale_y = REAL_HEIGHT / HEIGHT
     scale_factor = min(scale_x, scale_y)
-    
-    # Calculate pillarbox (sides) or letterbox (top/bottom) offsets
     scaled_w = int(WIDTH * scale_factor)
     scaled_h = int(HEIGHT * scale_factor)
     offset_x = (REAL_WIDTH - scaled_w) // 2
     offset_y = (REAL_HEIGHT - scaled_h) // 2
     
-    # Clear the real hardware window to prevent visual stretching artifacts
-    screen.fill(COLOR_BLACK)
-    
-    # Scale virtual frame to the calculated proportional dimensions instead of full width/height
-    scaled_frame = pygame.transform.scale(virtual_surface, (scaled_w, scaled_h))
-    
-    # Draw the frame perfectly centered on the screen
-    screen.blit(scaled_frame, (offset_x, offset_y))
+            # Changed smoothscale to standard scale to fix performance issues on high-res displays
+    scaled_frame = pygame.transform.scale(virtual_surface, (REAL_WIDTH, REAL_HEIGHT))
+    screen.blit(scaled_frame, (0, 0))
 
+    
     pygame.display.flip()
     clock.tick(DEVICE_REFRESH_RATE)
-
 
 save_app_data()
 
