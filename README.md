@@ -51,8 +51,6 @@ If you are building this for an Android phone, you will also need:
 * **Pyjnius**: (Lets Python talk to the Android system)
 
 
-<img width="546" height="674" alt="1001160849" src="https://github.com/user-attachments/assets/8fdaa605-0ade-4519-854c-ea52533611c8" />
-
 
 
 
