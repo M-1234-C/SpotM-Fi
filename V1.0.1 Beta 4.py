@@ -1049,7 +1049,6 @@ def draw_main_content():
             no_match_surf = font_body.render(f"No results match your search query for '{search_query}'.", True, COLOR_TEXT_MUTED)
             virtual_surface.blit(no_match_surf, (content_pad_x, 160))
         else:
-            start_x = content_pad_x
             start_y = 150
             card_width = 140
             card_height = 140
@@ -1058,6 +1057,11 @@ def draw_main_content():
             
             cols = (main_w - 20) // (card_width + gap_x)
             if cols < 1: cols = 1
+            
+            # Dynamically calculate grid width and center it
+            actual_grid_w = (cols * card_width) + ((cols - 1) * gap_x)
+            start_x = main_x + (main_w - actual_grid_w) // 2
+
             rows = (len(filtered_tracks) + cols - 1) // cols if cols > 0 else 0
             total_content_height = rows * (card_height + gap_y)
             max_music_scroll = max(0, total_content_height - (main_h - 140) + 50)
