@@ -75,8 +75,10 @@ current_track = {
     "title": "Select a song",
     "artist": "No Artist",
     "duration": "0:00",
-    "path": ""
+    "path": "",
+    "cover_image": None
 }
+current_song_cover_surface = None
 is_playing = False     
 is_shuffle = False  
 
@@ -209,6 +211,7 @@ plus_10_btn_rect = pygame.Rect(0, 0, 0, 0)
 shuffle_btn_rect = pygame.Rect(0, 0, 0, 0)
 mediabar_add_btn_rect = pygame.Rect(0, 0, 0, 0)
 mediabar_lyrics_btn_rect = pygame.Rect(0, 0, 0, 0)
+mediabar_cover_btn_rect = pygame.Rect(0, 0, 0, 0)
 star_btn_rect = pygame.Rect(0, 0, 0, 0)
 playlist_play_btn_rect = pygame.Rect(0, 0, 0, 0)
 playlist_random_btn_rect = pygame.Rect(0, 0, 0, 0) 
@@ -434,8 +437,9 @@ def update_browser_contents():
         for item in sorted(os.listdir(current_browser_path)):
             full_path = os.path.join(current_browser_path, item)
             is_dir = os.path.isdir(full_path)
-            if is_browsing_for_cover and not is_dir and not item.lower().endswith(('.png', '.jpg', '.jpeg')):
-                continue
+            if is_browsing_for_cover:
+                if (not is_dir) and (not item.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))):
+                    continue
             browser_items.append({"name": item, "is_dir": is_dir, "path": full_path})
     except Exception:
         search_message = "Access Denied: Restricted system folder or permission missing."
@@ -1095,6 +1099,11 @@ def draw_main_content():
                     
                     cover_rect = pygame.Rect(box_x + 12, box_y + 12, card_width - 24, card_height - 24)
                     pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, border_radius=6)
+                    if track.get("cover_image") and os.path.exists(track.get("cover_image")):
+                        try:
+                            img=pygame.transform.smoothscale(pygame.image.load(track["cover_image"]), (cover_rect.width, cover_rect.height))
+                            virtual_surface.blit(img, cover_rect.topleft)
+                        except: pass
                     
                     if track["title"] == current_track["title"]:
                         title_color = COLOR_SPOTIFY_GREEN
@@ -1504,7 +1513,7 @@ def draw_modals():
             virtual_surface.set_clip(None)
 
 def draw_media_bar():
-    global play_btn_rect, prev_btn_rect, next_btn_rect, minus_10_btn_rect, plus_10_btn_rect, mediabar_add_btn_rect, mediabar_lyrics_btn_rect, star_btn_rect, shuffle_btn_rect, progress_bar_rect
+    global play_btn_rect, prev_btn_rect, next_btn_rect, minus_10_btn_rect, plus_10_btn_rect, mediabar_add_btn_rect, mediabar_lyrics_btn_rect, mediabar_cover_btn_rect, star_btn_rect, shuffle_btn_rect, progress_bar_rect
     
     if current_track["title"] == "Select a song" or show_lyrics_editor_view or show_create_playlist_modal:
         return
@@ -1546,6 +1555,7 @@ def draw_media_bar():
     next_btn_rect            = pygame.Rect(btn_offset_x + 56, center_y - 18, 28, 36)
     plus_10_btn_rect         = pygame.Rect(btn_offset_x + 90, center_y - 16, 32, 32)
     shuffle_btn_rect         = pygame.Rect(btn_offset_x + 132, center_y - 16, 32, 32)
+    mediabar_cover_btn_rect     = pygame.Rect(btn_offset_x + 174, center_y - 16, 32, 32)
 
     lyrics_hover = mediabar_lyrics_btn_rect.collidepoint(mouse_pos)
     lyrics_click = lyrics_hover and pygame.mouse.get_pressed()[0]
@@ -1571,6 +1581,15 @@ def draw_media_bar():
         pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, mediabar_add_btn_rect.center, 13, width=2)
         plus_color = COLOR_TEXT_MUTED
         
+    
+    frame_color = COLOR_TEXT_MUTED if not mediabar_cover_btn_rect.collidepoint(mouse_pos) else COLOR_WHITE
+    pygame.draw.rect(virtual_surface, frame_color, mediabar_cover_btn_rect, 2, border_radius=3)
+    inner = pygame.Rect(mediabar_cover_btn_rect.x+3, mediabar_cover_btn_rect.y+3, 26, 22)
+    pygame.draw.rect(virtual_surface, frame_color, inner)
+    pygame.draw.polygon(virtual_surface, COLOR_BLACK, [(inner.x+2, inner.bottom-2), (inner.x+10, inner.y+8), (inner.x+16, inner.bottom-2)])
+    pygame.draw.polygon(virtual_surface, COLOR_BLACK, [(inner.x+12, inner.bottom-2), (inner.x+19, inner.y+5), (inner.right-2, inner.bottom-2)])
+    pygame.draw.circle(virtual_surface, COLOR_BLACK, (inner.right-5, inner.y+5), 3)
+
     plus_surf = font_body.render("+", True, plus_color)
     plus_x = mediabar_add_btn_rect.centerx - plus_surf.get_width() // 2
     plus_y = mediabar_add_btn_rect.centery - plus_surf.get_height() // 2 - 2
@@ -2152,16 +2171,29 @@ while running:
                                     marquee_direction = 1
                                     break
 
-                    if is_browsing_storage and current_page == "Search":
+                    if (is_browsing_storage or is_browsing_for_cover):
                         if select_folder_btn_rect.collidepoint(mouse_pos):
-                            scan_confirmed_directory(current_browser_path)
+                            if is_browsing_for_cover:
+                                pass
+                            else:
+                                scan_confirmed_directory(current_browser_path)
                         elif cancel_browser_btn_rect.collidepoint(mouse_pos):
                             is_browsing_storage = False
+                            is_browsing_for_cover = False
                         else:
                             for rect, item in browser_rects:
-                                if rect.collidepoint(mouse_pos) and item["is_dir"]:
-                                    current_browser_path = item["path"]
-                                    update_browser_contents()
+                                if rect.collidepoint(mouse_pos):
+                                    if item["is_dir"]:
+                                        current_browser_path = item["path"]
+                                        update_browser_contents()
+                                    elif is_browsing_for_cover:
+                                        try:
+                                            raw_img = pygame.image.load(item["path"])
+                                            modal_playlist_cover_surface = pygame.transform.smoothscale(raw_img, (220, 220))
+                                            modal_playlist_cover_path = item["path"]
+                                            is_browsing_for_cover = False
+                                        except Exception:
+                                            pass
                                     break
                                     
                     elif viewing_settings_page and current_page == "Search":
@@ -2199,7 +2231,11 @@ while running:
                                     load_and_play_track(current_track["path"])
                                     
                         if current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal:
-                            if mediabar_lyrics_btn_rect.collidepoint(mouse_pos):
+                            if mediabar_cover_btn_rect.collidepoint(mouse_pos):
+                                is_browsing_for_cover = True
+                                browsing_cover_target = "song"
+                                update_browser_contents()
+                            elif mediabar_lyrics_btn_rect.collidepoint(mouse_pos):
                                 show_lyrics_editor_view = True
                                 track_ref = current_track.get("path", "")
                                 if track_ref not in song_lyrics_database:
