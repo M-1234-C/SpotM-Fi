@@ -75,10 +75,8 @@ current_track = {
     "title": "Select a song",
     "artist": "No Artist",
     "duration": "0:00",
-    "path": "",
-    "cover_image": None
+    "path": ""
 }
-current_song_cover_surface = None
 is_playing = False     
 is_shuffle = False  
 
@@ -133,7 +131,7 @@ def get_clipboard_text():
 
 # --- DATA STORAGE ---
 DATA_FILE = "SpotM-Fi.json"
-sidebar_items = ["Search", "Your Library"] 
+sidebar_items = ["Search", "Your Library", "Settings"] 
 track_list = []
 imported_tracks = []
 liked_tracks = []        
@@ -169,6 +167,7 @@ search_query = ""
 viewing_liked_playlist = False
 viewing_settings_page = False  
 playlist_is_playing = None  
+layout_mode = "desktop"  
 
 is_dragging_grid = False
 last_touch_y = 0
@@ -211,7 +210,6 @@ plus_10_btn_rect = pygame.Rect(0, 0, 0, 0)
 shuffle_btn_rect = pygame.Rect(0, 0, 0, 0)
 mediabar_add_btn_rect = pygame.Rect(0, 0, 0, 0)
 mediabar_lyrics_btn_rect = pygame.Rect(0, 0, 0, 0)
-mediabar_cover_btn_rect = pygame.Rect(0, 0, 0, 0)
 star_btn_rect = pygame.Rect(0, 0, 0, 0)
 playlist_play_btn_rect = pygame.Rect(0, 0, 0, 0)
 playlist_random_btn_rect = pygame.Rect(0, 0, 0, 0) 
@@ -222,6 +220,8 @@ select_folder_btn_rect = pygame.Rect(0, 0, 0, 0)
 cancel_browser_btn_rect = pygame.Rect(0, 0, 0, 0)
 close_settings_btn_rect = pygame.Rect(0, 0, 0, 0)
 progress_bar_rect = pygame.Rect(0, 0, 0, 0)
+desktop_btn_rect = pygame.Rect(0, 0, 0, 0)
+phone_btn_rect = pygame.Rect(0, 0, 0, 0)
 
 modal_close_rect = pygame.Rect(0, 0, 0, 0)
 modal_save_rect = pygame.Rect(0, 0, 0, 0)
@@ -437,9 +437,8 @@ def update_browser_contents():
         for item in sorted(os.listdir(current_browser_path)):
             full_path = os.path.join(current_browser_path, item)
             is_dir = os.path.isdir(full_path)
-            if is_browsing_for_cover:
-                if (not is_dir) and (not item.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))):
-                    continue
+            if is_browsing_for_cover and not is_dir and not item.lower().endswith(('.png', '.jpg', '.jpeg')):
+                continue
             browser_items.append({"name": item, "is_dir": is_dir, "path": full_path})
     except Exception:
         search_message = "Access Denied: Restricted system folder or permission missing."
@@ -687,6 +686,8 @@ def draw_sidebar():
                 draw_search_icon(virtual_surface, cx, cy, icon_size, text_color)
             elif item == "Your Library":
                 draw_library_icon(virtual_surface, cx, cy, icon_size, text_color)
+            elif item == "Settings":
+                draw_solid_cog_wheel(virtual_surface, cx-12, cy-12, 24, 24, text_color)
                 
             text_surf = font_small.render(item, True, text_color)
             tx = item_rect.x + (item_rect.width - text_surf.get_width()) // 2
@@ -694,7 +695,7 @@ def draw_sidebar():
             virtual_surface.blit(text_surf, (tx, ty))
 
 def draw_main_content():
-    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction
+    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction, desktop_btn_rect, phone_btn_rect
     track_rects = []
     browser_rects = []
     settings_dir_rects = []
@@ -1054,17 +1055,27 @@ def draw_main_content():
             virtual_surface.blit(no_match_surf, (content_pad_x, 160))
         else:
             start_y = 150
-            card_width = 140
-            card_height = 140
-            gap_x = 14  
-            gap_y = 55  
+            if layout_mode == "phone":
+                card_width = 110
+                card_height = 110
+                gap_x = 10
+                gap_y = 45
+            else:
+                card_width = 140
+                card_height = 140
+                gap_x = 14
+                gap_y = 55
             
             cols = (main_w - 20) // (card_width + gap_x)
             if cols < 1: cols = 1
             
-            # Dynamically calculate grid width and center it
             actual_grid_w = (cols * card_width) + ((cols - 1) * gap_x)
-            start_x = main_x + (main_w - actual_grid_w) // 2
+            if is_portrait:
+                # Portrait: keep grid centred
+                start_x = main_x + (main_w - actual_grid_w) // 2
+            else:
+                # Landscape: left edge lines up with search bar / content padding
+                start_x = content_pad_x
 
             rows = (len(filtered_tracks) + cols - 1) // cols if cols > 0 else 0
             total_content_height = rows * (card_height + gap_y)
@@ -1099,11 +1110,6 @@ def draw_main_content():
                     
                     cover_rect = pygame.Rect(box_x + 12, box_y + 12, card_width - 24, card_height - 24)
                     pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, border_radius=6)
-                    if track.get("cover_image") and os.path.exists(track.get("cover_image")):
-                        try:
-                            img=pygame.transform.smoothscale(pygame.image.load(track["cover_image"]), (cover_rect.width, cover_rect.height))
-                            virtual_surface.blit(img, cover_rect.topleft)
-                        except: pass
                     
                     if track["title"] == current_track["title"]:
                         title_color = COLOR_SPOTIFY_GREEN
@@ -1118,6 +1124,60 @@ def draw_main_content():
                     sub_surf = font_small.render(track["album"], True, sub_color)
                     virtual_surface.blit(sub_surf, (box_x + 12, box_y + card_height + 14))
             virtual_surface.set_clip(None)
+
+    # --- SETTINGS PAGE (sidebar tab) ---
+    elif current_page == "Settings":
+        settings_page_title = font_title.render("Settings", True, COLOR_WHITE)
+        virtual_surface.blit(settings_page_title, (content_pad_x, 40))
+
+        btn_w, btn_h = 160, 40
+        btn_gap = 20
+        btn_y = 100
+
+        desktop_btn_rect = pygame.Rect(content_pad_x, btn_y, btn_w, btn_h)
+        phone_btn_rect = pygame.Rect(content_pad_x + btn_w + btn_gap, btn_y, btn_w, btn_h)
+
+        # Desktop/Tablet button — green when active
+        is_dt_hovered = desktop_btn_rect.collidepoint(mouse_pos)
+        is_dt_clicked = is_dt_hovered and pygame.mouse.get_pressed()[0]
+        if layout_mode == "desktop":
+            dt_color = COLOR_SPOTIFY_GREEN
+            dt_text_color = COLOR_BLACK
+        elif is_dt_clicked:
+            dt_color = (20, 150, 65)
+            dt_text_color = COLOR_WHITE
+        elif is_dt_hovered:
+            dt_color = COLOR_SPOTIFY_GREEN
+            dt_text_color = COLOR_BLACK
+        else:
+            dt_color = COLOR_LIGHT_GREY
+            dt_text_color = COLOR_WHITE
+        pygame.draw.rect(virtual_surface, dt_color, desktop_btn_rect, border_radius=20)
+        dt_lbl = font_small.render("Desktop/Tablet", True, dt_text_color)
+        dt_lbl_x = desktop_btn_rect.x + (btn_w - dt_lbl.get_width()) // 2
+        dt_lbl_y = desktop_btn_rect.y + (btn_h - dt_lbl.get_height()) // 2
+        virtual_surface.blit(dt_lbl, (dt_lbl_x, dt_lbl_y))
+
+        # Phone button — green when active
+        is_ph_hovered = phone_btn_rect.collidepoint(mouse_pos)
+        is_ph_clicked = is_ph_hovered and pygame.mouse.get_pressed()[0]
+        if layout_mode == "phone":
+            ph_color = COLOR_SPOTIFY_GREEN
+            ph_text_color = COLOR_BLACK
+        elif is_ph_clicked:
+            ph_color = (20, 150, 65)
+            ph_text_color = COLOR_WHITE
+        elif is_ph_hovered:
+            ph_color = COLOR_SPOTIFY_GREEN
+            ph_text_color = COLOR_BLACK
+        else:
+            ph_color = COLOR_LIGHT_GREY
+            ph_text_color = COLOR_WHITE
+        pygame.draw.rect(virtual_surface, ph_color, phone_btn_rect, border_radius=20)
+        ph_lbl = font_small.render("Phone", True, ph_text_color)
+        ph_lbl_x = phone_btn_rect.x + (btn_w - ph_lbl.get_width()) // 2
+        ph_lbl_y = phone_btn_rect.y + (btn_h - ph_lbl.get_height()) // 2
+        virtual_surface.blit(ph_lbl, (ph_lbl_x, ph_lbl_y))
 
     # --- YOUR LIBRARY GRID VIEW ---
     elif current_page == "Your Library":
@@ -1513,7 +1573,7 @@ def draw_modals():
             virtual_surface.set_clip(None)
 
 def draw_media_bar():
-    global play_btn_rect, prev_btn_rect, next_btn_rect, minus_10_btn_rect, plus_10_btn_rect, mediabar_add_btn_rect, mediabar_lyrics_btn_rect, mediabar_cover_btn_rect, star_btn_rect, shuffle_btn_rect, progress_bar_rect
+    global play_btn_rect, prev_btn_rect, next_btn_rect, minus_10_btn_rect, plus_10_btn_rect, mediabar_add_btn_rect, mediabar_lyrics_btn_rect, star_btn_rect, shuffle_btn_rect, progress_bar_rect
     
     if current_track["title"] == "Select a song" or show_lyrics_editor_view or show_create_playlist_modal:
         return
@@ -1555,7 +1615,6 @@ def draw_media_bar():
     next_btn_rect            = pygame.Rect(btn_offset_x + 56, center_y - 18, 28, 36)
     plus_10_btn_rect         = pygame.Rect(btn_offset_x + 90, center_y - 16, 32, 32)
     shuffle_btn_rect         = pygame.Rect(btn_offset_x + 132, center_y - 16, 32, 32)
-    mediabar_cover_btn_rect     = pygame.Rect(btn_offset_x + 174, center_y - 16, 32, 32)
 
     lyrics_hover = mediabar_lyrics_btn_rect.collidepoint(mouse_pos)
     lyrics_click = lyrics_hover and pygame.mouse.get_pressed()[0]
@@ -1581,15 +1640,6 @@ def draw_media_bar():
         pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, mediabar_add_btn_rect.center, 13, width=2)
         plus_color = COLOR_TEXT_MUTED
         
-    
-    frame_color = COLOR_TEXT_MUTED if not mediabar_cover_btn_rect.collidepoint(mouse_pos) else COLOR_WHITE
-    pygame.draw.rect(virtual_surface, frame_color, mediabar_cover_btn_rect, 2, border_radius=3)
-    inner = pygame.Rect(mediabar_cover_btn_rect.x+3, mediabar_cover_btn_rect.y+3, 26, 22)
-    pygame.draw.rect(virtual_surface, frame_color, inner)
-    pygame.draw.polygon(virtual_surface, COLOR_BLACK, [(inner.x+2, inner.bottom-2), (inner.x+10, inner.y+8), (inner.x+16, inner.bottom-2)])
-    pygame.draw.polygon(virtual_surface, COLOR_BLACK, [(inner.x+12, inner.bottom-2), (inner.x+19, inner.y+5), (inner.right-2, inner.bottom-2)])
-    pygame.draw.circle(virtual_surface, COLOR_BLACK, (inner.right-5, inner.y+5), 3)
-
     plus_surf = font_body.render("+", True, plus_color)
     plus_x = mediabar_add_btn_rect.centerx - plus_surf.get_width() // 2
     plus_y = mediabar_add_btn_rect.centery - plus_surf.get_height() // 2 - 2
@@ -2091,6 +2141,12 @@ while running:
                             target_settings_scroll = 0.0
                             target_lyrics_scroll = 0.0
 
+                    if current_page == "Settings":
+                        if desktop_btn_rect.collidepoint(mouse_pos):
+                            layout_mode = "desktop"
+                        elif phone_btn_rect.collidepoint(mouse_pos):
+                            layout_mode = "phone"
+
                     if is_browsing_for_cover and current_page == "Your Library":
                         if cancel_browser_btn_rect.collidepoint(mouse_pos):
                             is_browsing_for_cover = False
@@ -2171,29 +2227,16 @@ while running:
                                     marquee_direction = 1
                                     break
 
-                    if (is_browsing_storage or is_browsing_for_cover):
+                    if is_browsing_storage and current_page == "Search":
                         if select_folder_btn_rect.collidepoint(mouse_pos):
-                            if is_browsing_for_cover:
-                                pass
-                            else:
-                                scan_confirmed_directory(current_browser_path)
+                            scan_confirmed_directory(current_browser_path)
                         elif cancel_browser_btn_rect.collidepoint(mouse_pos):
                             is_browsing_storage = False
-                            is_browsing_for_cover = False
                         else:
                             for rect, item in browser_rects:
-                                if rect.collidepoint(mouse_pos):
-                                    if item["is_dir"]:
-                                        current_browser_path = item["path"]
-                                        update_browser_contents()
-                                    elif is_browsing_for_cover:
-                                        try:
-                                            raw_img = pygame.image.load(item["path"])
-                                            modal_playlist_cover_surface = pygame.transform.smoothscale(raw_img, (220, 220))
-                                            modal_playlist_cover_path = item["path"]
-                                            is_browsing_for_cover = False
-                                        except Exception:
-                                            pass
+                                if rect.collidepoint(mouse_pos) and item["is_dir"]:
+                                    current_browser_path = item["path"]
+                                    update_browser_contents()
                                     break
                                     
                     elif viewing_settings_page and current_page == "Search":
@@ -2231,11 +2274,7 @@ while running:
                                     load_and_play_track(current_track["path"])
                                     
                         if current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal:
-                            if mediabar_cover_btn_rect.collidepoint(mouse_pos):
-                                is_browsing_for_cover = True
-                                browsing_cover_target = "song"
-                                update_browser_contents()
-                            elif mediabar_lyrics_btn_rect.collidepoint(mouse_pos):
+                            if mediabar_lyrics_btn_rect.collidepoint(mouse_pos):
                                 show_lyrics_editor_view = True
                                 track_ref = current_track.get("path", "")
                                 if track_ref not in song_lyrics_database:
