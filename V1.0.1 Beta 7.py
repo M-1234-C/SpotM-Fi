@@ -1056,10 +1056,13 @@ def draw_main_content():
         else:
             start_y = 150
             if layout_mode == "phone":
-                card_width = 110
-                card_height = 110
-                gap_x = 10
-                gap_y = 45
+                card_width = 200
+                # Compensate for vertical stretch between virtual surface and real screen
+                # so cards appear square on the actual device display
+                stretch_ratio = (REAL_WIDTH * HEIGHT) / (REAL_HEIGHT * WIDTH)
+                card_height = int(card_width * max(0.65, min(1.0, stretch_ratio)))
+                gap_x = 20
+                gap_y = 65
             else:
                 card_width = 140
                 card_height = 140
