@@ -495,11 +495,20 @@ def scan_confirmed_directory(target_dir):
     
 def get_virtual_mouse_pos():
     real_x, real_y = pygame.mouse.get_pos()
-    scale_x = REAL_WIDTH / WIDTH
-    scale_y = REAL_HEIGHT / HEIGHT
-    
-    virtual_x = int(real_x / scale_x)
-    virtual_y = int(real_y / scale_y)
+    if is_portrait and layout_mode == "phone":
+        # Phone mode uses letterbox scaling — must account for offset
+        scale_factor = min(REAL_WIDTH / WIDTH, REAL_HEIGHT / HEIGHT)
+        scaled_w = int(WIDTH * scale_factor)
+        scaled_h = int(HEIGHT * scale_factor)
+        offset_x = (REAL_WIDTH - scaled_w) // 2
+        offset_y = (REAL_HEIGHT - scaled_h) // 2
+        virtual_x = int((real_x - offset_x) / scale_factor)
+        virtual_y = int((real_y - offset_y) / scale_factor)
+    else:
+        scale_x = REAL_WIDTH / WIDTH
+        scale_y = REAL_HEIGHT / HEIGHT
+        virtual_x = int(real_x / scale_x)
+        virtual_y = int(real_y / scale_y)
     return (virtual_x, virtual_y)
 
 
@@ -2629,15 +2638,20 @@ while running:
     # Accurate Letterbox/Pillarbox Screen Scaling
     scale_x = REAL_WIDTH / WIDTH
     scale_y = REAL_HEIGHT / HEIGHT
-    scale_factor = min(scale_x, scale_y)
-    scaled_w = int(WIDTH * scale_factor)
-    scaled_h = int(HEIGHT * scale_factor)
-    offset_x = (REAL_WIDTH - scaled_w) // 2
-    offset_y = (REAL_HEIGHT - scaled_h) // 2
-    
-            # Changed smoothscale to standard scale to fix performance issues on high-res displays
-    scaled_frame = pygame.transform.scale(virtual_surface, (REAL_WIDTH, REAL_HEIGHT))
-    screen.blit(scaled_frame, (0, 0))
+    if is_portrait and layout_mode == "phone":
+        # Phone mode: proper aspect-ratio-preserving scale — no stretch
+        scale_factor = min(scale_x, scale_y)
+        scaled_w = int(WIDTH * scale_factor)
+        scaled_h = int(HEIGHT * scale_factor)
+        offset_x = (REAL_WIDTH - scaled_w) // 2
+        offset_y = (REAL_HEIGHT - scaled_h) // 2
+        screen.fill(COLOR_BLACK)
+        scaled_frame = pygame.transform.scale(virtual_surface, (scaled_w, scaled_h))
+        screen.blit(scaled_frame, (offset_x, offset_y))
+    else:
+        # Desktop/tablet: original stretch-to-fill behaviour unchanged
+        scaled_frame = pygame.transform.scale(virtual_surface, (REAL_WIDTH, REAL_HEIGHT))
+        screen.blit(scaled_frame, (0, 0))
 
     
     pygame.display.flip()
