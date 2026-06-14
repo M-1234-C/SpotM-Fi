@@ -625,7 +625,8 @@ def draw_sidebar():
     global sidebar_rects
     sidebar_rects = [] 
     
-    content_bottom_margin = (130 if is_portrait else 90) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
+    _phone = is_portrait and layout_mode == "phone"
+    content_bottom_margin = (160 if _phone else (130 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
     
     if not is_portrait:
         sidebar_rect = pygame.Rect(0, 0, 230, HEIGHT - content_bottom_margin)
@@ -701,7 +702,8 @@ def draw_main_content():
     settings_dir_rects = []
     custom_playlist_rects = []
     
-    content_bottom_margin = (130 if is_portrait else 90) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
+    _phone = is_portrait and layout_mode == "phone"
+    content_bottom_margin = (160 if _phone else (130 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
     portrait_sidebar_h = 65 if is_portrait else 0
     
     main_x = 0 if is_portrait else 230
@@ -1349,7 +1351,8 @@ def draw_modals():
     portrait_sidebar_h = 65 if is_portrait else 0
     main_x = 0 if is_portrait else 230
     main_w = WIDTH - main_x
-    content_bottom_margin = (130 if is_portrait else 90) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
+    _phone = is_portrait and layout_mode == "phone"
+    content_bottom_margin = (160 if _phone else (130 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
     main_h = HEIGHT - content_bottom_margin - portrait_sidebar_h
     content_pad_x = main_x + 30
     
@@ -1652,147 +1655,313 @@ def draw_media_bar():
     if current_track["title"] == "Select a song" or show_lyrics_editor_view or show_create_playlist_modal:
         return
 
-    bar_height = 130 if is_portrait else 90
-    bar_rect = pygame.Rect(0, HEIGHT - bar_height, WIDTH, bar_height)
-    pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, bar_rect)
-    
-    now_playing_title = font_body.render(current_track["title"] if len(current_track["title"]) < 20 else current_track["title"][:17] + "...", True, COLOR_WHITE)
-    now_playing_artist = font_small.render(current_track["artist"] if len(current_track["artist"]) < 20 else current_track["artist"][:17] + "...", True, COLOR_TEXT_MUTED)
-    virtual_surface.blit(now_playing_title, (20, HEIGHT - bar_height + 25))
-    virtual_surface.blit(now_playing_artist, (20, HEIGHT - bar_height + 45)) 
-    
-    center_x = WIDTH // 2 
-    center_y = HEIGHT - (90 if is_portrait else 60) 
-    btn_offset_x = center_x
-    
-    star_btn_rect = pygame.Rect(btn_offset_x - 130, center_y - 10, 20, 20)
     mouse_pos = get_virtual_mouse_pos()
-    
-    is_starred = current_track in liked_tracks
-    is_star_hovered = star_btn_rect.collidepoint(mouse_pos)
-    is_star_clicked = is_star_hovered and pygame.mouse.get_pressed()[0]
-    
-    if is_star_clicked:
-        star_color = (20, 150, 65) if is_starred else COLOR_SPOTIFY_GREEN
-    elif is_star_hovered:
-        star_color = COLOR_WHITE if not is_starred else (40, 230, 110)
+    is_phone_mode = is_portrait and layout_mode == "phone"
+
+    # --- PHONE MODE: taller 2-row bar ---
+    # Row 1 (top): track title + artist left, lyrics/add/star icons right
+    # Row 2 (mid): -10  ◀  ▶  ▶  +10  shuffle  — all centred
+    # Row 3 (bot): progress bar spanning full width
+    if is_phone_mode:
+        bar_height = 160
+        bar_y = HEIGHT - bar_height
+        bar_rect = pygame.Rect(0, bar_y, WIDTH, bar_height)
+        pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, bar_rect)
+
+        # --- Row 1: track info (left) + accessory buttons (right) ---
+        info_y = bar_y + 10
+        now_playing_title = font_body.render(
+            current_track["title"] if len(current_track["title"]) < 22 else current_track["title"][:19] + "...",
+            True, COLOR_WHITE)
+        now_playing_artist = font_small.render(
+            current_track["artist"] if len(current_track["artist"]) < 22 else current_track["artist"][:19] + "...",
+            True, COLOR_TEXT_MUTED)
+        virtual_surface.blit(now_playing_title, (20, info_y))
+        virtual_surface.blit(now_playing_artist, (20, info_y + 22))
+
+        # Accessory buttons: lyrics | add | star — right side, vertically centred in row 1
+        acc_y = info_y + 16   # vertical centre of row 1
+        acc_right = WIDTH - 16
+
+        # Star (like) button — rightmost
+        star_btn_rect = pygame.Rect(acc_right - 24, acc_y - 12, 24, 24)
+        is_starred = current_track in liked_tracks
+        is_star_hovered = star_btn_rect.collidepoint(mouse_pos)
+        is_star_clicked = is_star_hovered and pygame.mouse.get_pressed()[0]
+        if is_star_clicked:
+            star_color = (20, 150, 65) if is_starred else COLOR_SPOTIFY_GREEN
+        elif is_star_hovered:
+            star_color = COLOR_WHITE if not is_starred else (40, 230, 110)
+        else:
+            star_color = COLOR_SPOTIFY_GREEN if is_starred else COLOR_TEXT_MUTED
+        draw_manual_thumbs_up(virtual_surface, star_btn_rect.x, star_btn_rect.y, star_btn_rect.width, star_btn_rect.height, star_color)
+
+        # Add-to-playlist button
+        mediabar_add_btn_rect = pygame.Rect(acc_right - 62, acc_y - 14, 28, 28)
+        add_hover = mediabar_add_btn_rect.collidepoint(mouse_pos)
+        add_click = add_hover and pygame.mouse.get_pressed()[0]
+        if add_click:
+            pygame.draw.circle(virtual_surface, (20, 150, 65), mediabar_add_btn_rect.center, 13)
+            plus_color = COLOR_WHITE
+        elif add_hover:
+            pygame.draw.circle(virtual_surface, COLOR_WHITE, mediabar_add_btn_rect.center, 14)
+            plus_color = COLOR_BLACK
+        else:
+            pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, mediabar_add_btn_rect.center, 13, width=2)
+            plus_color = COLOR_TEXT_MUTED
+        plus_surf = font_body.render("+", True, plus_color)
+        virtual_surface.blit(plus_surf, (mediabar_add_btn_rect.centerx - plus_surf.get_width() // 2,
+                                          mediabar_add_btn_rect.centery - plus_surf.get_height() // 2 - 2))
+
+        # Lyrics button
+        mediabar_lyrics_btn_rect = pygame.Rect(acc_right - 100, acc_y - 14, 28, 28)
+        lyrics_hover = mediabar_lyrics_btn_rect.collidepoint(mouse_pos)
+        lyrics_click = lyrics_hover and pygame.mouse.get_pressed()[0]
+        if lyrics_click:
+            paper_icon_color = COLOR_SPOTIFY_GREEN
+        elif lyrics_hover:
+            paper_icon_color = COLOR_WHITE
+        else:
+            paper_icon_color = COLOR_TEXT_MUTED
+        draw_piece_of_paper_icon(virtual_surface, mediabar_lyrics_btn_rect, paper_icon_color)
+
+        # --- Row 2: playback controls centred across full width ---
+        # Layout: -10  ◀  [PLAY]  ▶  +10  shuffle
+        # Gaps chosen so 6 items sit comfortably across 700px
+        ctrl_y = bar_y + 72        # vertical centre of control row
+        cx = WIDTH // 2            # screen centre
+
+        # Spacing: play circle r=18, each flanking btn r=16, gaps=14px
+        play_cx = cx
+        prev_cx = cx - 44
+        next_cx = cx + 44
+        m10_cx  = cx - 90
+        p10_cx  = cx + 90
+        sh_cx   = cx + 136
+        # lyrics/add/star already placed above, so no need here
+
+        minus_10_btn_rect = pygame.Rect(m10_cx - 16, ctrl_y - 16, 32, 32)
+        prev_btn_rect     = pygame.Rect(prev_cx - 14, ctrl_y - 18, 28, 36)
+        play_btn_rect     = pygame.Rect(play_cx - 18, ctrl_y - 18, 36, 36)
+        next_btn_rect     = pygame.Rect(next_cx - 14, ctrl_y - 18, 28, 36)
+        plus_10_btn_rect  = pygame.Rect(p10_cx - 16, ctrl_y - 16, 32, 32)
+        shuffle_btn_rect  = pygame.Rect(sh_cx - 16, ctrl_y - 16, 32, 32)
+
+        # -10
+        m10_hover = minus_10_btn_rect.collidepoint(mouse_pos)
+        m10_click = m10_hover and pygame.mouse.get_pressed()[0]
+        if m10_click:
+            pygame.draw.circle(virtual_surface, (20, 150, 65), minus_10_btn_rect.center, 16)
+            pygame.draw.circle(virtual_surface, COLOR_WHITE, minus_10_btn_rect.center, 16, width=2)
+            m10_text_color = COLOR_WHITE
+        elif m10_hover:
+            pygame.draw.circle(virtual_surface, COLOR_HOVER, minus_10_btn_rect.center, 16)
+            pygame.draw.circle(virtual_surface, COLOR_WHITE, minus_10_btn_rect.center, 16, width=2)
+            m10_text_color = COLOR_WHITE
+        else:
+            pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, minus_10_btn_rect.center, 16, width=2)
+            m10_text_color = COLOR_TEXT_MUTED
+        m10_surf = font_small.render("-10", True, m10_text_color)
+        virtual_surface.blit(m10_surf, (minus_10_btn_rect.centerx - m10_surf.get_width() // 2,
+                                         minus_10_btn_rect.centery - m10_surf.get_height() // 2))
+
+        # Prev
+        prev_hover = prev_btn_rect.collidepoint(mouse_pos)
+        prev_click = prev_hover and pygame.mouse.get_pressed()[0]
+        prev_color = COLOR_SPOTIFY_GREEN if prev_click else (COLOR_WHITE if prev_hover else COLOR_TEXT_MUTED)
+        pygame.draw.polygon(virtual_surface, prev_color,
+                            [(prev_cx + 1, ctrl_y), (prev_cx + 14, ctrl_y - 9), (prev_cx + 14, ctrl_y + 9)])
+
+        # Play/Pause
+        is_mb_play_hovered = play_btn_rect.collidepoint(mouse_pos)
+        is_mb_play_pressed = is_mb_play_hovered and pygame.mouse.get_pressed()[0]
+        if is_mb_play_pressed:
+            pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, (play_cx, ctrl_y), 16)
+        elif is_mb_play_hovered:
+            pygame.draw.circle(virtual_surface, COLOR_WHITE, (play_cx, ctrl_y), 20)
+        else:
+            pygame.draw.circle(virtual_surface, COLOR_WHITE, (play_cx, ctrl_y), 18)
+        if not is_playing:
+            pygame.draw.polygon(virtual_surface, COLOR_BLACK,
+                                [(play_cx - 5, ctrl_y - 7), (play_cx - 5, ctrl_y + 7), (play_cx + 8, ctrl_y)])
+        else:
+            pygame.draw.rect(virtual_surface, COLOR_BLACK, (play_cx - 6, ctrl_y - 7, 4, 14))
+            pygame.draw.rect(virtual_surface, COLOR_BLACK, (play_cx + 2, ctrl_y - 7, 4, 14))
+
+        # Next
+        next_hover = next_btn_rect.collidepoint(mouse_pos)
+        next_click = next_hover and pygame.mouse.get_pressed()[0]
+        next_color = COLOR_SPOTIFY_GREEN if next_click else (COLOR_WHITE if next_hover else COLOR_TEXT_MUTED)
+        pygame.draw.polygon(virtual_surface, next_color,
+                            [(next_cx - 1, ctrl_y), (next_cx - 14, ctrl_y - 9), (next_cx - 14, ctrl_y + 9)])
+
+        # +10
+        p10_hover = plus_10_btn_rect.collidepoint(mouse_pos)
+        p10_click = p10_hover and pygame.mouse.get_pressed()[0]
+        if p10_click:
+            pygame.draw.circle(virtual_surface, (20, 150, 65), plus_10_btn_rect.center, 16)
+            pygame.draw.circle(virtual_surface, COLOR_WHITE, plus_10_btn_rect.center, 16, width=2)
+            p10_text_color = COLOR_WHITE
+        elif p10_hover:
+            pygame.draw.circle(virtual_surface, COLOR_HOVER, plus_10_btn_rect.center, 16)
+            pygame.draw.circle(virtual_surface, COLOR_WHITE, plus_10_btn_rect.center, 16, width=2)
+            p10_text_color = COLOR_WHITE
+        else:
+            pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, plus_10_btn_rect.center, 16, width=2)
+            p10_text_color = COLOR_TEXT_MUTED
+        p10_surf = font_small.render("+10", True, p10_text_color)
+        virtual_surface.blit(p10_surf, (plus_10_btn_rect.centerx - p10_surf.get_width() // 2,
+                                         plus_10_btn_rect.centery - p10_surf.get_height() // 2))
+
+        # Shuffle
+        sh_hover = shuffle_btn_rect.collidepoint(mouse_pos)
+        if is_shuffle:
+            sh_icon_color = COLOR_SPOTIFY_GREEN
+            pygame.draw.circle(virtual_surface, COLOR_SPOTIFY_GREEN,
+                               (shuffle_btn_rect.centerx, shuffle_btn_rect.centery + 12), 2)
+        else:
+            sh_icon_color = COLOR_WHITE if sh_hover else COLOR_TEXT_MUTED
+        draw_spotify_shuffle_icon(virtual_surface, shuffle_btn_rect, sh_icon_color)
+
+        # --- Row 3: progress bar ---
+        progress_bar_width = WIDTH - 80
+        progress_bar_x = 40
+        progress_bar_y = HEIGHT - 28
+        progress_bar_rect = pygame.Rect(progress_bar_x, progress_bar_y - 10, progress_bar_width, 24)
+
     else:
-        star_color = COLOR_SPOTIFY_GREEN if is_starred else COLOR_TEXT_MUTED
-        
-    draw_manual_thumbs_up(virtual_surface, star_btn_rect.x, star_btn_rect.y, star_btn_rect.width, star_btn_rect.height, star_color)
+        # -----------------------------------------------------------------------
+        # ORIGINAL non-phone layout (desktop / tablet portrait) — UNCHANGED
+        # -----------------------------------------------------------------------
+        bar_height = 130 if is_portrait else 90
+        bar_rect = pygame.Rect(0, HEIGHT - bar_height, WIDTH, bar_height)
+        pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, bar_rect)
 
-    mediabar_lyrics_btn_rect = pygame.Rect(btn_offset_x - 165, center_y - 14, 28, 28) 
-    mediabar_add_btn_rect    = pygame.Rect(btn_offset_x - 95, center_y - 14, 28, 28)
-    minus_10_btn_rect        = pygame.Rect(btn_offset_x - 55, center_y - 16, 32, 32)
-    prev_btn_rect            = pygame.Rect(btn_offset_x - 18, center_y - 18, 28, 36)
-    play_btn_rect            = pygame.Rect(btn_offset_x + 15, center_y - 18, 36, 36)
-    next_btn_rect            = pygame.Rect(btn_offset_x + 56, center_y - 18, 28, 36)
-    plus_10_btn_rect         = pygame.Rect(btn_offset_x + 90, center_y - 16, 32, 32)
-    shuffle_btn_rect         = pygame.Rect(btn_offset_x + 132, center_y - 16, 32, 32)
+        now_playing_title = font_body.render(current_track["title"] if len(current_track["title"]) < 20 else current_track["title"][:17] + "...", True, COLOR_WHITE)
+        now_playing_artist = font_small.render(current_track["artist"] if len(current_track["artist"]) < 20 else current_track["artist"][:17] + "...", True, COLOR_TEXT_MUTED)
+        virtual_surface.blit(now_playing_title, (20, HEIGHT - bar_height + 25))
+        virtual_surface.blit(now_playing_artist, (20, HEIGHT - bar_height + 45))
 
-    lyrics_hover = mediabar_lyrics_btn_rect.collidepoint(mouse_pos)
-    lyrics_click = lyrics_hover and pygame.mouse.get_pressed()[0]
-    
-    if lyrics_click:
-        paper_icon_color = COLOR_SPOTIFY_GREEN
-    elif lyrics_hover:
-        paper_icon_color = COLOR_WHITE
-    else:
-        paper_icon_color = COLOR_TEXT_MUTED
-    draw_piece_of_paper_icon(virtual_surface, mediabar_lyrics_btn_rect, paper_icon_color)
+        center_x = WIDTH // 2
+        center_y = HEIGHT - (90 if is_portrait else 60)
+        btn_offset_x = center_x
 
-    add_hover = mediabar_add_btn_rect.collidepoint(mouse_pos)
-    add_click = add_hover and pygame.mouse.get_pressed()[0]
-    
-    if add_click:
-        pygame.draw.circle(virtual_surface, (20, 150, 65), mediabar_add_btn_rect.center, 13)
-        plus_color = COLOR_WHITE
-    elif add_hover:
-        pygame.draw.circle(virtual_surface, COLOR_WHITE, mediabar_add_btn_rect.center, 14)
-        plus_color = COLOR_BLACK
-    else:
-        pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, mediabar_add_btn_rect.center, 13, width=2)
-        plus_color = COLOR_TEXT_MUTED
-        
-    plus_surf = font_body.render("+", True, plus_color)
-    plus_x = mediabar_add_btn_rect.centerx - plus_surf.get_width() // 2
-    plus_y = mediabar_add_btn_rect.centery - plus_surf.get_height() // 2 - 2
-    virtual_surface.blit(plus_surf, (plus_x, plus_y))
+        star_btn_rect = pygame.Rect(btn_offset_x - 130, center_y - 10, 20, 20)
 
-    m10_hover = minus_10_btn_rect.collidepoint(mouse_pos)
-    m10_click = m10_hover and pygame.mouse.get_pressed()[0]
-    
-    if m10_click:
-        pygame.draw.circle(virtual_surface, (20, 150, 65), minus_10_btn_rect.center, 16)
-        pygame.draw.circle(virtual_surface, COLOR_WHITE, minus_10_btn_rect.center, 16, width=2)
-        m10_text_color = COLOR_WHITE
-    elif m10_hover:
-        pygame.draw.circle(virtual_surface, COLOR_HOVER, minus_10_btn_rect.center, 16)
-        pygame.draw.circle(virtual_surface, COLOR_WHITE, minus_10_btn_rect.center, 16, width=2)
-        m10_text_color = COLOR_WHITE
-    else:
-        pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, minus_10_btn_rect.center, 16, width=2)
-        m10_text_color = COLOR_TEXT_MUTED
-        
-    m10_surf = font_small.render("-10", True, m10_text_color)
-    virtual_surface.blit(m10_surf, (minus_10_btn_rect.centerx - m10_surf.get_width() // 2, minus_10_btn_rect.centery - m10_surf.get_height() // 2))
+        is_starred = current_track in liked_tracks
+        is_star_hovered = star_btn_rect.collidepoint(mouse_pos)
+        is_star_clicked = is_star_hovered and pygame.mouse.get_pressed()[0]
+        if is_star_clicked:
+            star_color = (20, 150, 65) if is_starred else COLOR_SPOTIFY_GREEN
+        elif is_star_hovered:
+            star_color = COLOR_WHITE if not is_starred else (40, 230, 110)
+        else:
+            star_color = COLOR_SPOTIFY_GREEN if is_starred else COLOR_TEXT_MUTED
+        draw_manual_thumbs_up(virtual_surface, star_btn_rect.x, star_btn_rect.y, star_btn_rect.width, star_btn_rect.height, star_color)
 
-    prev_hover = prev_btn_rect.collidepoint(mouse_pos)
-    prev_click = prev_hover and pygame.mouse.get_pressed()[0]
-    prev_color = COLOR_SPOTIFY_GREEN if prev_click else (COLOR_WHITE if prev_hover else COLOR_TEXT_MUTED)
-    pygame.draw.polygon(virtual_surface, prev_color, [(btn_offset_x - 15, center_y), (btn_offset_x, center_y - 9), (btn_offset_x, center_y + 9)])
-    
-    is_mb_play_hovered = play_btn_rect.collidepoint(mouse_pos)
-    is_mb_play_pressed = is_mb_play_hovered and pygame.mouse.get_pressed()[0] 
+        mediabar_lyrics_btn_rect = pygame.Rect(btn_offset_x - 165, center_y - 14, 28, 28)
+        mediabar_add_btn_rect    = pygame.Rect(btn_offset_x - 95, center_y - 14, 28, 28)
+        minus_10_btn_rect        = pygame.Rect(btn_offset_x - 55, center_y - 16, 32, 32)
+        prev_btn_rect            = pygame.Rect(btn_offset_x - 18, center_y - 18, 28, 36)
+        play_btn_rect            = pygame.Rect(btn_offset_x + 15, center_y - 18, 36, 36)
+        next_btn_rect            = pygame.Rect(btn_offset_x + 56, center_y - 18, 28, 36)
+        plus_10_btn_rect         = pygame.Rect(btn_offset_x + 90, center_y - 16, 32, 32)
+        shuffle_btn_rect         = pygame.Rect(btn_offset_x + 132, center_y - 16, 32, 32)
 
-    if is_mb_play_pressed:
-        pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, (btn_offset_x + 33, center_y), 16)
-    elif is_mb_play_hovered:
-        pygame.draw.circle(virtual_surface, COLOR_WHITE, (btn_offset_x + 33, center_y), 20)
-    else:
-        pygame.draw.circle(virtual_surface, COLOR_WHITE, (btn_offset_x + 33, center_y), 18)
-    
-    if not is_playing:
-        pygame.draw.polygon(virtual_surface, COLOR_BLACK, [(btn_offset_x + 30, center_y - 6), (btn_offset_x + 30, center_y + 6), (btn_offset_x + 40, center_y)])
-    else:
-        pygame.draw.rect(virtual_surface, COLOR_BLACK, (btn_offset_x + 29, center_y - 6, 3, 12))
-        pygame.draw.rect(virtual_surface, COLOR_BLACK, (btn_offset_x + 35, center_y - 6, 3, 12))
+        lyrics_hover = mediabar_lyrics_btn_rect.collidepoint(mouse_pos)
+        lyrics_click = lyrics_hover and pygame.mouse.get_pressed()[0]
+        if lyrics_click:
+            paper_icon_color = COLOR_SPOTIFY_GREEN
+        elif lyrics_hover:
+            paper_icon_color = COLOR_WHITE
+        else:
+            paper_icon_color = COLOR_TEXT_MUTED
+        draw_piece_of_paper_icon(virtual_surface, mediabar_lyrics_btn_rect, paper_icon_color)
 
-    next_hover = next_btn_rect.collidepoint(mouse_pos)
-    next_click = next_hover and pygame.mouse.get_pressed()[0]
-    next_color = COLOR_SPOTIFY_GREEN if next_click else (COLOR_WHITE if next_hover else COLOR_TEXT_MUTED)
-    pygame.draw.polygon(virtual_surface, next_color, [(btn_offset_x + 80, center_y), (btn_offset_x + 65, center_y - 9), (btn_offset_x + 65, center_y + 9)])
-    
-    p10_hover = plus_10_btn_rect.collidepoint(mouse_pos)
-    p10_click = p10_hover and pygame.mouse.get_pressed()[0]
-    
-    if p10_click:
-        pygame.draw.circle(virtual_surface, (20, 150, 65), plus_10_btn_rect.center, 16)
-        pygame.draw.circle(virtual_surface, COLOR_WHITE, plus_10_btn_rect.center, 16, width=2)
-        p10_text_color = COLOR_WHITE
-    elif p10_hover:
-        pygame.draw.circle(virtual_surface, COLOR_HOVER, plus_10_btn_rect.center, 16)
-        pygame.draw.circle(virtual_surface, COLOR_WHITE, plus_10_btn_rect.center, 16, width=2)
-        p10_text_color = COLOR_WHITE
-    else:
-        pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, plus_10_btn_rect.center, 16, width=2)
-        p10_text_color = COLOR_TEXT_MUTED
-        
-    p10_surf = font_small.render("+10", True, p10_text_color)
-    virtual_surface.blit(p10_surf, (plus_10_btn_rect.centerx - p10_surf.get_width() // 2, plus_10_btn_rect.centery - p10_surf.get_height() // 2))
+        add_hover = mediabar_add_btn_rect.collidepoint(mouse_pos)
+        add_click = add_hover and pygame.mouse.get_pressed()[0]
+        if add_click:
+            pygame.draw.circle(virtual_surface, (20, 150, 65), mediabar_add_btn_rect.center, 13)
+            plus_color = COLOR_WHITE
+        elif add_hover:
+            pygame.draw.circle(virtual_surface, COLOR_WHITE, mediabar_add_btn_rect.center, 14)
+            plus_color = COLOR_BLACK
+        else:
+            pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, mediabar_add_btn_rect.center, 13, width=2)
+            plus_color = COLOR_TEXT_MUTED
+        plus_surf = font_body.render("+", True, plus_color)
+        plus_x = mediabar_add_btn_rect.centerx - plus_surf.get_width() // 2
+        plus_y = mediabar_add_btn_rect.centery - plus_surf.get_height() // 2 - 2
+        virtual_surface.blit(plus_surf, (plus_x, plus_y))
 
-    sh_hover = shuffle_btn_rect.collidepoint(mouse_pos)
-    if is_shuffle:
-        sh_icon_color = COLOR_SPOTIFY_GREEN
-        pygame.draw.circle(virtual_surface, COLOR_SPOTIFY_GREEN, (shuffle_btn_rect.centerx, shuffle_btn_rect.centery + 12), 2)
-    else:
-        sh_icon_color = COLOR_WHITE if sh_hover else COLOR_TEXT_MUTED
-    draw_spotify_shuffle_icon(virtual_surface, shuffle_btn_rect, sh_icon_color)
+        m10_hover = minus_10_btn_rect.collidepoint(mouse_pos)
+        m10_click = m10_hover and pygame.mouse.get_pressed()[0]
+        if m10_click:
+            pygame.draw.circle(virtual_surface, (20, 150, 65), minus_10_btn_rect.center, 16)
+            pygame.draw.circle(virtual_surface, COLOR_WHITE, minus_10_btn_rect.center, 16, width=2)
+            m10_text_color = COLOR_WHITE
+        elif m10_hover:
+            pygame.draw.circle(virtual_surface, COLOR_HOVER, minus_10_btn_rect.center, 16)
+            pygame.draw.circle(virtual_surface, COLOR_WHITE, minus_10_btn_rect.center, 16, width=2)
+            m10_text_color = COLOR_WHITE
+        else:
+            pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, minus_10_btn_rect.center, 16, width=2)
+            m10_text_color = COLOR_TEXT_MUTED
+        m10_surf = font_small.render("-10", True, m10_text_color)
+        virtual_surface.blit(m10_surf, (minus_10_btn_rect.centerx - m10_surf.get_width() // 2, minus_10_btn_rect.centery - m10_surf.get_height() // 2))
 
-    progress_bar_width = min(400, WIDTH - 40) if is_portrait else 400
-    progress_bar_x = center_x - (progress_bar_width // 2) if is_portrait else btn_offset_x - (progress_bar_width // 2) + 20
-    progress_bar_y = HEIGHT - (50 if is_portrait else 25)
-    progress_bar_rect = pygame.Rect(progress_bar_x, progress_bar_y - 10, progress_bar_width, 24)
+        prev_hover = prev_btn_rect.collidepoint(mouse_pos)
+        prev_click = prev_hover and pygame.mouse.get_pressed()[0]
+        prev_color = COLOR_SPOTIFY_GREEN if prev_click else (COLOR_WHITE if prev_hover else COLOR_TEXT_MUTED)
+        pygame.draw.polygon(virtual_surface, prev_color, [(btn_offset_x - 15, center_y), (btn_offset_x, center_y - 9), (btn_offset_x, center_y + 9)])
+
+        is_mb_play_hovered = play_btn_rect.collidepoint(mouse_pos)
+        is_mb_play_pressed = is_mb_play_hovered and pygame.mouse.get_pressed()[0]
+        if is_mb_play_pressed:
+            pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, (btn_offset_x + 33, center_y), 16)
+        elif is_mb_play_hovered:
+            pygame.draw.circle(virtual_surface, COLOR_WHITE, (btn_offset_x + 33, center_y), 20)
+        else:
+            pygame.draw.circle(virtual_surface, COLOR_WHITE, (btn_offset_x + 33, center_y), 18)
+        if not is_playing:
+            pygame.draw.polygon(virtual_surface, COLOR_BLACK, [(btn_offset_x + 30, center_y - 6), (btn_offset_x + 30, center_y + 6), (btn_offset_x + 40, center_y)])
+        else:
+            pygame.draw.rect(virtual_surface, COLOR_BLACK, (btn_offset_x + 29, center_y - 6, 3, 12))
+            pygame.draw.rect(virtual_surface, COLOR_BLACK, (btn_offset_x + 35, center_y - 6, 3, 12))
+
+        next_hover = next_btn_rect.collidepoint(mouse_pos)
+        next_click = next_hover and pygame.mouse.get_pressed()[0]
+        next_color = COLOR_SPOTIFY_GREEN if next_click else (COLOR_WHITE if next_hover else COLOR_TEXT_MUTED)
+        pygame.draw.polygon(virtual_surface, next_color, [(btn_offset_x + 80, center_y), (btn_offset_x + 65, center_y - 9), (btn_offset_x + 65, center_y + 9)])
+
+        p10_hover = plus_10_btn_rect.collidepoint(mouse_pos)
+        p10_click = p10_hover and pygame.mouse.get_pressed()[0]
+        if p10_click:
+            pygame.draw.circle(virtual_surface, (20, 150, 65), plus_10_btn_rect.center, 16)
+            pygame.draw.circle(virtual_surface, COLOR_WHITE, plus_10_btn_rect.center, 16, width=2)
+            p10_text_color = COLOR_WHITE
+        elif p10_hover:
+            pygame.draw.circle(virtual_surface, COLOR_HOVER, plus_10_btn_rect.center, 16)
+            pygame.draw.circle(virtual_surface, COLOR_WHITE, plus_10_btn_rect.center, 16, width=2)
+            p10_text_color = COLOR_WHITE
+        else:
+            pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, plus_10_btn_rect.center, 16, width=2)
+            p10_text_color = COLOR_TEXT_MUTED
+        p10_surf = font_small.render("+10", True, p10_text_color)
+        virtual_surface.blit(p10_surf, (plus_10_btn_rect.centerx - p10_surf.get_width() // 2, plus_10_btn_rect.centery - p10_surf.get_height() // 2))
+
+        sh_hover = shuffle_btn_rect.collidepoint(mouse_pos)
+        if is_shuffle:
+            sh_icon_color = COLOR_SPOTIFY_GREEN
+            pygame.draw.circle(virtual_surface, COLOR_SPOTIFY_GREEN, (shuffle_btn_rect.centerx, shuffle_btn_rect.centery + 12), 2)
+        else:
+            sh_icon_color = COLOR_WHITE if sh_hover else COLOR_TEXT_MUTED
+        draw_spotify_shuffle_icon(virtual_surface, shuffle_btn_rect, sh_icon_color)
+
+        progress_bar_width = min(400, WIDTH - 40) if is_portrait else 400
+        progress_bar_x = center_x - (progress_bar_width // 2) if is_portrait else btn_offset_x - (progress_bar_width // 2) + 20
+        progress_bar_y = HEIGHT - (50 if is_portrait else 25)
+        progress_bar_rect = pygame.Rect(progress_bar_x, progress_bar_y - 10, progress_bar_width, 24)
     
     elapsed_sec = 0.0
     remaining_sec = 0.0
@@ -2332,7 +2501,7 @@ while running:
                                 main_x = 0 if is_portrait else 230
                                 main_w = WIDTH - main_x
                                 
-                                event_margin = (130 if is_portrait else 90) if current_track["title"] != "Select a song" else 0
+                                event_margin = (160 if (is_portrait and layout_mode == "phone") else (130 if is_portrait else 90)) if current_track["title"] != "Select a song" else 0
                                 main_h_event = HEIGHT - event_margin - portrait_sidebar_h
                                 
                                 if current_page == "Your Library" and (viewing_liked_playlist or selected_custom_playlist_name):
