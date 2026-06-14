@@ -35,8 +35,16 @@ except:
     pass
 
 is_portrait = REAL_HEIGHT > REAL_WIDTH
-WIDTH = 700 if is_portrait else 1100
-HEIGHT = 1100 if is_portrait else 700
+
+def compute_virtual_size(real_w, real_h, portrait, _layout_mode="desktop"):
+    if portrait and _layout_mode == "phone":
+        # Match phone aspect ratio exactly so there are no black bars
+        vw = 700
+        vh = int(real_h * (700 / real_w)) if real_w > 0 else 1100
+        return vw, vh
+    return (700, 1100) if portrait else (1100, 700)
+
+WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, "desktop")
 
 screen = pygame.display.set_mode((REAL_WIDTH, REAL_HEIGHT), pygame.FULLSCREEN | pygame.RESIZABLE)
 virtual_surface = pygame.Surface((WIDTH, HEIGHT))
@@ -495,20 +503,10 @@ def scan_confirmed_directory(target_dir):
     
 def get_virtual_mouse_pos():
     real_x, real_y = pygame.mouse.get_pos()
-    if is_portrait and layout_mode == "phone":
-        # Phone mode uses letterbox scaling — must account for offset
-        scale_factor = min(REAL_WIDTH / WIDTH, REAL_HEIGHT / HEIGHT)
-        scaled_w = int(WIDTH * scale_factor)
-        scaled_h = int(HEIGHT * scale_factor)
-        offset_x = (REAL_WIDTH - scaled_w) // 2
-        offset_y = (REAL_HEIGHT - scaled_h) // 2
-        virtual_x = int((real_x - offset_x) / scale_factor)
-        virtual_y = int((real_y - offset_y) / scale_factor)
-    else:
-        scale_x = REAL_WIDTH / WIDTH
-        scale_y = REAL_HEIGHT / HEIGHT
-        virtual_x = int(real_x / scale_x)
-        virtual_y = int(real_y / scale_y)
+    scale_x = REAL_WIDTH / WIDTH
+    scale_y = REAL_HEIGHT / HEIGHT
+    virtual_x = int(real_x / scale_x)
+    virtual_y = int(real_y / scale_y)
     return (virtual_x, virtual_y)
 
 
@@ -2065,7 +2063,7 @@ while running:
             REAL_WIDTH, REAL_HEIGHT = event.w, event.h
             screen = pygame.display.set_mode((REAL_WIDTH, REAL_HEIGHT), pygame.FULLSCREEN | pygame.RESIZABLE)
             is_portrait = REAL_HEIGHT > REAL_WIDTH
-            WIDTH, HEIGHT = (700, 1100) if is_portrait else (1100, 700)
+            WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, layout_mode)
             virtual_surface = pygame.Surface((WIDTH, HEIGHT))
             
         elif event.type == pygame.TEXTINPUT:
@@ -2396,8 +2394,12 @@ while running:
                     if current_page == "Settings":
                         if desktop_btn_rect.collidepoint(mouse_pos):
                             layout_mode = "desktop"
+                            WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, "desktop")
+                            virtual_surface = pygame.Surface((WIDTH, HEIGHT))
                         elif phone_btn_rect.collidepoint(mouse_pos):
                             layout_mode = "phone"
+                            WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, "phone")
+                            virtual_surface = pygame.Surface((WIDTH, HEIGHT))
 
                     if is_browsing_for_cover and current_page == "Your Library":
                         if cancel_browser_btn_rect.collidepoint(mouse_pos):
@@ -2636,18 +2638,10 @@ while running:
     draw_modals()
     
     # Accurate Letterbox/Pillarbox Screen Scaling
-    scale_x = REAL_WIDTH / WIDTH
-    scale_y = REAL_HEIGHT / HEIGHT
     if is_portrait and layout_mode == "phone":
-        # Phone mode: proper aspect-ratio-preserving scale — no stretch
-        scale_factor = min(scale_x, scale_y)
-        scaled_w = int(WIDTH * scale_factor)
-        scaled_h = int(HEIGHT * scale_factor)
-        offset_x = (REAL_WIDTH - scaled_w) // 2
-        offset_y = (REAL_HEIGHT - scaled_h) // 2
-        screen.fill(COLOR_BLACK)
-        scaled_frame = pygame.transform.scale(virtual_surface, (scaled_w, scaled_h))
-        screen.blit(scaled_frame, (offset_x, offset_y))
+        # Phone mode: virtual surface matches phone aspect ratio exactly — scale to fill edge-to-edge
+        scaled_frame = pygame.transform.scale(virtual_surface, (REAL_WIDTH, REAL_HEIGHT))
+        screen.blit(scaled_frame, (0, 0))
     else:
         # Desktop/tablet: original stretch-to-fill behaviour unchanged
         scaled_frame = pygame.transform.scale(virtual_surface, (REAL_WIDTH, REAL_HEIGHT))
