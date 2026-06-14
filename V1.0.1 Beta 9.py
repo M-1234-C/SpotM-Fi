@@ -986,60 +986,121 @@ def draw_main_content():
     elif current_page == "Search":
         search_title = font_title.render("Search Results", True, COLOR_WHITE)
         virtual_surface.blit(search_title, (content_pad_x, 40))
-        
-        if not is_portrait:
-            add_folder_btn_rect = pygame.Rect(content_pad_x + 520, 80, 150, 40)
-        else:
-            add_folder_btn_rect = pygame.Rect(main_x + main_w - 220, 80, 150, 40)
-            
-        is_af_hovered = add_folder_btn_rect.collidepoint(mouse_pos)
-        is_af_clicked = is_af_hovered and pygame.mouse.get_pressed()[0]
-        
-        if is_af_clicked:
-            pygame.draw.rect(virtual_surface, (20, 150, 65), add_folder_btn_rect, border_radius=20)
-            btn_color = COLOR_WHITE
-        elif is_af_hovered:
-            pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, add_folder_btn_rect, border_radius=20)
-            btn_color = COLOR_BLACK
-        else:
-            pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, add_folder_btn_rect, border_radius=20)
-            btn_color = COLOR_WHITE
-            
-        btn_txt = font_small.render("+ Add Folder", True, btn_color)
-        virtual_surface.blit(btn_txt, (add_folder_btn_rect.x + 38, 92))
 
-        if saved_directories:
+        # --- PHONE PORTRAIT LAYOUT: search bar full-width on row 1, buttons on row 2 ---
+        if is_portrait and layout_mode == "phone":
+            ph_pad = 20  # horizontal padding from content_pad_x
+            btn_row_y = 80   # row 1: buttons (+ Add Folder, cog)
+            search_row_y = 130  # row 2: full-width search bar
+
+            # --- Button row (top) ---
+            ph_add_w = 160
+            ph_btn_h = 40
+            if saved_directories:
+                # + Add Folder button left-aligned, cog to its right
+                add_folder_btn_rect = pygame.Rect(content_pad_x, btn_row_y, ph_add_w, ph_btn_h)
+                settings_btn_rect   = pygame.Rect(content_pad_x + ph_add_w + 12, btn_row_y, ph_btn_h, ph_btn_h)
+            else:
+                # Only + Add Folder, stretch it slightly
+                add_folder_btn_rect = pygame.Rect(content_pad_x, btn_row_y, ph_add_w, ph_btn_h)
+                settings_btn_rect   = pygame.Rect(0, 0, 0, 0)  # hidden
+
+            # Draw + Add Folder
+            is_af_hovered = add_folder_btn_rect.collidepoint(mouse_pos)
+            is_af_clicked = is_af_hovered and pygame.mouse.get_pressed()[0]
+            if is_af_clicked:
+                pygame.draw.rect(virtual_surface, (20, 150, 65), add_folder_btn_rect, border_radius=20)
+                btn_color = COLOR_WHITE
+            elif is_af_hovered:
+                pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, add_folder_btn_rect, border_radius=20)
+                btn_color = COLOR_BLACK
+            else:
+                pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, add_folder_btn_rect, border_radius=20)
+                btn_color = COLOR_WHITE
+            btn_txt = font_small.render("+ Add Folder", True, btn_color)
+            virtual_surface.blit(btn_txt, (add_folder_btn_rect.x + (ph_add_w - btn_txt.get_width()) // 2,
+                                           add_folder_btn_rect.y + (ph_btn_h - btn_txt.get_height()) // 2))
+
+            # Draw settings cog (only when directories exist)
+            if saved_directories:
+                is_st_hovered = settings_btn_rect.collidepoint(mouse_pos)
+                is_st_clicked = is_st_hovered and pygame.mouse.get_pressed()[0]
+                if is_st_clicked:
+                    box_bg_color = (20, 150, 65); st_color = COLOR_WHITE
+                elif is_st_hovered:
+                    box_bg_color = COLOR_SPOTIFY_GREEN; st_color = COLOR_BLACK
+                else:
+                    box_bg_color = COLOR_LIGHT_GREY; st_color = COLOR_WHITE
+                pygame.draw.rect(virtual_surface, box_bg_color, settings_btn_rect, border_radius=20)
+                draw_solid_cog_wheel(virtual_surface, settings_btn_rect.x + 10, settings_btn_rect.y + 10, 20, 20, st_color)
+
+            # --- Full-width search bar (bottom row) ---
+            search_box_rect = pygame.Rect(content_pad_x, search_row_y, main_w - (content_pad_x - main_x) * 2, 44)
+            pygame.draw.rect(virtual_surface, COLOR_WHITE, search_box_rect, border_radius=22)
+            if search_input_active and not show_create_playlist_modal:
+                pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, search_box_rect, width=2, border_radius=22)
+
+            if search_query != "":
+                search_text_surf = font_small.render(f"  {search_query}", True, COLOR_BLACK)
+            else:
+                search_text_surf = font_small.render(f"  {search_message}", True, COLOR_LIGHT_GREY)
+            # clip long text inside the box
+            clip_surf = pygame.Surface((search_box_rect.width - 30, search_text_surf.get_height()), pygame.SRCALPHA)
+            clip_surf.blit(search_text_surf, (0, 0))
+            virtual_surface.blit(clip_surf, (search_box_rect.x + 15, search_box_rect.y + (44 - search_text_surf.get_height()) // 2))
+
+            grid_start_y = search_row_y + 60
+
+        else:
+            # --- DESKTOP / TABLET PORTRAIT LAYOUT (unchanged) ---
             if not is_portrait:
-                settings_btn_rect = pygame.Rect(content_pad_x + 680, 80, 40, 40)
+                add_folder_btn_rect = pygame.Rect(content_pad_x + 520, 80, 150, 40)
             else:
-                settings_btn_rect = pygame.Rect(main_x + main_w - 55, 80, 40, 40)
-                
-            is_st_hovered = settings_btn_rect.collidepoint(mouse_pos)
-            is_st_clicked = is_st_hovered and pygame.mouse.get_pressed()[0]
-            
-            if is_st_clicked:
-                box_bg_color = (20, 150, 65)
-                st_color = COLOR_WHITE
-            elif is_st_hovered:
-                box_bg_color = COLOR_SPOTIFY_GREEN
-                st_color = COLOR_BLACK
-            else:
-                box_bg_color = COLOR_LIGHT_GREY
-                st_color = COLOR_WHITE
-                
-            pygame.draw.rect(virtual_surface, box_bg_color, settings_btn_rect, border_radius=20)
-            draw_solid_cog_wheel(virtual_surface, settings_btn_rect.x + 10, settings_btn_rect.y + 10, 20, 20, st_color)
+                add_folder_btn_rect = pygame.Rect(main_x + main_w - 220, 80, 150, 40)
 
-        search_box_rect = pygame.Rect(content_pad_x, 80, 500 if not is_portrait else main_w - 280, 40)
-        pygame.draw.rect(virtual_surface, COLOR_WHITE, search_box_rect, border_radius=20)
-        if search_input_active and not show_create_playlist_modal:
-            pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, search_box_rect, width=2, border_radius=20)
-            
-        if search_query != "":
-            search_text = font_small.render(f"  {search_query}", True, COLOR_BLACK)
-        else:
-            search_text = font_small.render(f"  {search_message}", True, COLOR_LIGHT_GREY)
-        virtual_surface.blit(search_text, (content_pad_x + 15, 92))
+            is_af_hovered = add_folder_btn_rect.collidepoint(mouse_pos)
+            is_af_clicked = is_af_hovered and pygame.mouse.get_pressed()[0]
+            if is_af_clicked:
+                pygame.draw.rect(virtual_surface, (20, 150, 65), add_folder_btn_rect, border_radius=20)
+                btn_color = COLOR_WHITE
+            elif is_af_hovered:
+                pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, add_folder_btn_rect, border_radius=20)
+                btn_color = COLOR_BLACK
+            else:
+                pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, add_folder_btn_rect, border_radius=20)
+                btn_color = COLOR_WHITE
+            btn_txt = font_small.render("+ Add Folder", True, btn_color)
+            virtual_surface.blit(btn_txt, (add_folder_btn_rect.x + 38, 92))
+
+            if saved_directories:
+                if not is_portrait:
+                    settings_btn_rect = pygame.Rect(content_pad_x + 680, 80, 40, 40)
+                else:
+                    settings_btn_rect = pygame.Rect(main_x + main_w - 55, 80, 40, 40)
+
+                is_st_hovered = settings_btn_rect.collidepoint(mouse_pos)
+                is_st_clicked = is_st_hovered and pygame.mouse.get_pressed()[0]
+                if is_st_clicked:
+                    box_bg_color = (20, 150, 65); st_color = COLOR_WHITE
+                elif is_st_hovered:
+                    box_bg_color = COLOR_SPOTIFY_GREEN; st_color = COLOR_BLACK
+                else:
+                    box_bg_color = COLOR_LIGHT_GREY; st_color = COLOR_WHITE
+                pygame.draw.rect(virtual_surface, box_bg_color, settings_btn_rect, border_radius=20)
+                draw_solid_cog_wheel(virtual_surface, settings_btn_rect.x + 10, settings_btn_rect.y + 10, 20, 20, st_color)
+
+            search_box_rect = pygame.Rect(content_pad_x, 80, 500 if not is_portrait else main_w - 280, 40)
+            pygame.draw.rect(virtual_surface, COLOR_WHITE, search_box_rect, border_radius=20)
+            if search_input_active and not show_create_playlist_modal:
+                pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, search_box_rect, width=2, border_radius=20)
+
+            if search_query != "":
+                search_text_surf = font_small.render(f"  {search_query}", True, COLOR_BLACK)
+            else:
+                search_text_surf = font_small.render(f"  {search_message}", True, COLOR_LIGHT_GREY)
+            virtual_surface.blit(search_text_surf, (content_pad_x + 15, 92))
+
+            grid_start_y = 150
 
         filtered_tracks = []
         cleaned_query = search_query.strip().lower()
@@ -1049,42 +1110,52 @@ def draw_main_content():
 
         if not imported_tracks:
             empty_surf = font_body.render("No local music loaded. Tap '+ Add Folder' above to explore your storage!", True, COLOR_TEXT_MUTED)
-            virtual_surface.blit(empty_surf, (content_pad_x, 160))
+            virtual_surface.blit(empty_surf, (content_pad_x, grid_start_y + 10))
         elif not filtered_tracks:
             no_match_surf = font_body.render(f"No results match your search query for '{search_query}'.", True, COLOR_TEXT_MUTED)
-            virtual_surface.blit(no_match_surf, (content_pad_x, 160))
+            virtual_surface.blit(no_match_surf, (content_pad_x, grid_start_y + 10))
         else:
-            start_y = 150
+            start_y = grid_start_y
             if layout_mode == "phone":
-                card_width = 200
+                # Always 2 cards side by side — size them to fill the available width
+                cols = 2
+                gap_x = 16
+                side_pad = 16
+                card_width = (main_w - side_pad * 2 - gap_x) // 2
                 # Compensate for vertical stretch between virtual surface and real screen
                 # so cards appear square on the actual device display
                 stretch_ratio = (REAL_WIDTH * HEIGHT) / (REAL_HEIGHT * WIDTH)
                 card_height = int(card_width * max(0.65, min(1.0, stretch_ratio)))
-                gap_x = 20
                 gap_y = 65
             else:
                 card_width = 140
                 card_height = 140
                 gap_x = 14
                 gap_y = 55
-            
-            cols = (main_w - 20) // (card_width + gap_x)
-            if cols < 1: cols = 1
-            
-            actual_grid_w = (cols * card_width) + ((cols - 1) * gap_x)
-            if is_portrait:
-                # Portrait: keep grid centred
+                side_pad = 0
+
+            if layout_mode == "phone":
+                # Phone: 2-column grid, flush left with side padding
+                actual_grid_w = (cols * card_width) + ((cols - 1) * gap_x)
+                start_x = main_x + side_pad
+            elif is_portrait:
+                # Portrait desktop: keep grid centred
+                cols = (main_w - 20) // (card_width + gap_x)
+                if cols < 1: cols = 1
+                actual_grid_w = (cols * card_width) + ((cols - 1) * gap_x)
                 start_x = main_x + (main_w - actual_grid_w) // 2
             else:
+                cols = (main_w - 20) // (card_width + gap_x)
+                if cols < 1: cols = 1
+                actual_grid_w = (cols * card_width) + ((cols - 1) * gap_x)
                 # Landscape: left edge lines up with search bar / content padding
                 start_x = content_pad_x
 
             rows = (len(filtered_tracks) + cols - 1) // cols if cols > 0 else 0
             total_content_height = rows * (card_height + gap_y)
-            max_music_scroll = max(0, total_content_height - (main_h - 140) + 50)
-            
-            clip_rect = pygame.Rect(main_x, 140, main_w, main_h - 140)
+            max_music_scroll = max(0, total_content_height - (main_h - grid_start_y) + 50)
+
+            clip_rect = pygame.Rect(main_x, grid_start_y, main_w, main_h - grid_start_y)
             virtual_surface.set_clip(clip_rect)
             
             for index, track in enumerate(filtered_tracks):
@@ -2267,7 +2338,8 @@ while running:
                                 if current_page == "Your Library" and (viewing_liked_playlist or selected_custom_playlist_name):
                                     clip_rect_bounds = pygame.Rect(main_x, 315, main_w, main_h_event - 315)
                                 else:
-                                    clip_rect_bounds = pygame.Rect(main_x, 140, main_w, main_h_event - 140)
+                                    search_clip_top = 190 if (is_portrait and layout_mode == "phone") else 140
+                                    clip_rect_bounds = pygame.Rect(main_x, search_clip_top, main_w, main_h_event - search_clip_top)
                                     
                                 if clip_rect_bounds.collidepoint(mouse_pos) and rect.collidepoint(mouse_pos):
                                     current_track = track
