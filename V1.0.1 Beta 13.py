@@ -25,14 +25,16 @@ except:
 
 # --- PORTRAIT & SENSOR ORIENTATION ENGINE ---
 # Enable device sensor auto-rotation on Android devices via jnius
-try:
-    from jnius import autoclass
-    PythonActivity = autoclass('org.kivy.android.PythonActivity')
-    ActivityInfo = autoclass('android.content.pm.ActivityInfo')
-    # SCREEN_ORIENTATION_SENSOR = 4
-    PythonActivity.mActivity.setRequestedOrientation(4)
-except:
-    pass
+def set_android_orientation(portrait_locked):
+    try:
+        from jnius import autoclass
+        PythonActivity = autoclass('org.kivy.android.PythonActivity')
+        # 1 = SCREEN_ORIENTATION_PORTRAIT (locked), 4 = SCREEN_ORIENTATION_SENSOR (auto-rotate)
+        PythonActivity.mActivity.setRequestedOrientation(1 if portrait_locked else 4)
+    except:
+        pass
+
+set_android_orientation(False)  # default: sensor/auto-rotate
 
 is_portrait = REAL_HEIGHT > REAL_WIDTH
 
@@ -248,7 +250,8 @@ def save_app_data():
         "liked_songs_custom_cover": {"image_path": liked_songs_custom_cover.get("image_path")},
         "custom_playlists": {},
         "song_lyrics_database": song_lyrics_database,
-        "green_toggled_tracks": list(green_toggled_tracks)
+        "green_toggled_tracks": list(green_toggled_tracks),
+        "layout_mode": layout_mode
     }
     
     for p_name, p_data in custom_playlists.items():
@@ -266,7 +269,7 @@ def save_app_data():
 
 def load_app_data():
     global saved_directories, liked_tracks, liked_songs_custom_cover
-    global custom_playlists, song_lyrics_database, green_toggled_tracks
+    global custom_playlists, song_lyrics_database, green_toggled_tracks, layout_mode
     
     if not os.path.exists(DATA_FILE):
         return
@@ -277,6 +280,7 @@ def load_app_data():
             
         saved_directories = data.get("saved_directories", [])
         liked_tracks = data.get("liked_tracks", [])
+        layout_mode = data.get("layout_mode", layout_mode)
         
         lsc = data.get("liked_songs_custom_cover", {})
         liked_songs_custom_cover["image_path"] = lsc.get("image_path")
@@ -1002,16 +1006,21 @@ def draw_main_content():
             btn_row_y = 80   # row 1: buttons (+ Add Folder, cog)
             search_row_y = 130  # row 2: full-width search bar
 
-            # --- Button row (top) ---
+            # --- Button row: centred under search bar ---
             ph_add_w = 160
             ph_btn_h = 40
+            ph_cog_w = 40
+            ph_gap   = 12
             if saved_directories:
-                # + Add Folder button left-aligned, cog to its right
-                add_folder_btn_rect = pygame.Rect(content_pad_x, btn_row_y, ph_add_w, ph_btn_h)
-                settings_btn_rect   = pygame.Rect(content_pad_x + ph_add_w + 12, btn_row_y, ph_btn_h, ph_btn_h)
+                # Total group width = add_folder + gap + cog
+                total_btns_w = ph_add_w + ph_gap + ph_cog_w
+                btn_group_x = (main_w - total_btns_w) // 2
+                add_folder_btn_rect = pygame.Rect(main_x + btn_group_x, btn_row_y, ph_add_w, ph_btn_h)
+                settings_btn_rect   = pygame.Rect(main_x + btn_group_x + ph_add_w + ph_gap, btn_row_y, ph_cog_w, ph_btn_h)
             else:
-                # Only + Add Folder, stretch it slightly
-                add_folder_btn_rect = pygame.Rect(content_pad_x, btn_row_y, ph_add_w, ph_btn_h)
+                # Only + Add Folder, centred
+                btn_group_x = (main_w - ph_add_w) // 2
+                add_folder_btn_rect = pygame.Rect(main_x + btn_group_x, btn_row_y, ph_add_w, ph_btn_h)
                 settings_btn_rect   = pygame.Rect(0, 0, 0, 0)  # hidden
 
             # Draw + Add Folder
@@ -1732,20 +1741,17 @@ def draw_media_bar():
             paper_icon_color = COLOR_TEXT_MUTED
         draw_piece_of_paper_icon(virtual_surface, mediabar_lyrics_btn_rect, paper_icon_color)
 
-        # --- Row 2: playback controls centred across full width ---
-        # Layout: -10  ◀  [PLAY]  ▶  +10  shuffle
-        # Gaps chosen so 6 items sit comfortably across 700px
-        ctrl_y = bar_y + 72        # vertical centre of control row
-        cx = WIDTH // 2            # screen centre
-
-        # Spacing: play circle r=18, each flanking btn r=16, gaps=14px
-        play_cx = cx
-        prev_cx = cx - 44
-        next_cx = cx + 44
-        m10_cx  = cx - 90
-        p10_cx  = cx + 90
-        sh_cx   = cx + 136
-        # lyrics/add/star already placed above, so no need here
+        # --- Row 2: playback controls evenly spaced across full WIDTH ---
+        # 6 items: -10  ◀  [PLAY]  ▶  +10  shuffle
+        # Divide WIDTH into 6 equal slots and place each button at slot centre
+        ctrl_y = bar_y + 72
+        slot = WIDTH / 6
+        m10_cx  = int(slot * 0.5)
+        prev_cx = int(slot * 1.5)
+        play_cx = int(slot * 2.5)
+        next_cx = int(slot * 3.5)
+        p10_cx  = int(slot * 4.5)
+        sh_cx   = int(slot * 5.5)
 
         minus_10_btn_rect = pygame.Rect(m10_cx - 16, ctrl_y - 16, 32, 32)
         prev_btn_rect     = pygame.Rect(prev_cx - 14, ctrl_y - 18, 28, 36)
@@ -2034,6 +2040,8 @@ def draw_media_bar():
 
 # --- MAIN LOOP ---
 load_app_data()
+WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, layout_mode)
+virtual_surface = pygame.Surface((WIDTH, HEIGHT))
 running = True
 
 virtual_keyboard_active = False
@@ -2396,10 +2404,12 @@ while running:
                             layout_mode = "desktop"
                             WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, "desktop")
                             virtual_surface = pygame.Surface((WIDTH, HEIGHT))
+                            save_app_data()
                         elif phone_btn_rect.collidepoint(mouse_pos):
                             layout_mode = "phone"
                             WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, "phone")
                             virtual_surface = pygame.Surface((WIDTH, HEIGHT))
+                            save_app_data()
 
                     if is_browsing_for_cover and current_page == "Your Library":
                         if cancel_browser_btn_rect.collidepoint(mouse_pos):
