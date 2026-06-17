@@ -50,6 +50,36 @@ set_android_orientation(False)  # default: sensor/auto-rotate
 
 is_portrait = REAL_HEIGHT > REAL_WIDTH
 
+# --- AUTOMATIC DEVICE TYPE DETECTION ---
+# Determines whether the current device is a phone or a tablet/desktop, so a sensible
+# default layout_mode can be picked automatically on first launch (before any saved
+# preference exists). Uses physical screen diagonal (inches) via Android DisplayMetrics
+# when available; falls back to a pixel-resolution heuristic otherwise.
+def detect_device_layout_mode():
+    try:
+        from jnius import autoclass
+        DisplayMetrics = autoclass('android.util.DisplayMetrics')
+        try:
+            SDLActivity = autoclass('org.libsdl.app.SDLActivity')
+            activity = SDLActivity.mSingleton if hasattr(SDLActivity, 'mSingleton') else SDLActivity.mActivity
+        except Exception:
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            activity = PythonActivity.mActivity
+        metrics = DisplayMetrics()
+        activity.getWindowManager().getDefaultDisplay().getMetrics(metrics)
+        width_inches = metrics.widthPixels / metrics.xdpi
+        height_inches = metrics.heightPixels / metrics.ydpi
+        diagonal_inches = math.sqrt(width_inches ** 2 + height_inches ** 2)
+        # Common phone/tablet cutoff: devices under ~6.9" diagonal are phones
+        return "phone" if diagonal_inches < 6.9 else "desktop"
+    except Exception:
+        pass
+    # Fallback heuristic for non-Android environments (e.g. desktop testing in Pydroid
+    # window mode): treat smaller pixel resolutions as phone-sized
+    smaller_dim = min(REAL_WIDTH, REAL_HEIGHT)
+    larger_dim = max(REAL_WIDTH, REAL_HEIGHT)
+    return "phone" if smaller_dim <= 500 and larger_dim <= 1000 else "desktop"
+
 def compute_virtual_size(real_w, real_h, portrait, _layout_mode="desktop"):
     if portrait and _layout_mode == "phone":
         # Match phone aspect ratio exactly so there are no black bars
@@ -284,6 +314,7 @@ def load_app_data():
     global custom_playlists, song_lyrics_database, green_toggled_tracks, layout_mode
     
     if not os.path.exists(DATA_FILE):
+        layout_mode = detect_device_layout_mode()
         return
         
     try:
@@ -292,7 +323,7 @@ def load_app_data():
             
         saved_directories = data.get("saved_directories", [])
         liked_tracks = data.get("liked_tracks", [])
-        layout_mode = data.get("layout_mode", layout_mode)
+        layout_mode = data.get("layout_mode", detect_device_layout_mode())
         
         lsc = data.get("liked_songs_custom_cover", {})
         liked_songs_custom_cover["image_path"] = lsc.get("image_path")
@@ -2390,8 +2421,8 @@ while running:
                                     break
                         continue
 
+                    clicked_panel_item = False
                     if current_page == "Search" and viewing_settings_page and saved_directories:
-                        clicked_panel_item = False
                         for rect, d_path in settings_dir_rects:
                             if rect.collidepoint(mouse_pos):
                                 saved_directories.remove(d_path)
@@ -2420,6 +2451,10 @@ while running:
                             target_browser_scroll = 0.0
                             target_settings_scroll = 0.0
                             target_lyrics_scroll = 0.0
+                            clicked_panel_item = True
+                            break
+                    if clicked_panel_item:
+                        continue
 
                     if current_page == "Settings":
                         if desktop_btn_rect.collidepoint(mouse_pos):
