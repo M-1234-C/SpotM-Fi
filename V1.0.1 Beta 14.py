@@ -24,14 +24,26 @@ except:
     DEVICE_REFRESH_RATE = 60
 
 # --- PORTRAIT & SENSOR ORIENTATION ENGINE ---
-# Enable device sensor auto-rotation on Android devices via jnius
+# Lock/unlock device orientation on Android. Pygame on Android (incl. Pydroid 3) runs
+# on top of SDL2, whose activity class is org.libsdl.app.SDLActivity — not Kivy's
+# PythonActivity. We try SDLActivity first (correct for pygame/Pydroid), then fall
+# back to PythonActivity in case of a Kivy/python-for-android build.
 def set_android_orientation(portrait_locked):
+    # 1 = SCREEN_ORIENTATION_PORTRAIT (locked), 4 = SCREEN_ORIENTATION_SENSOR (auto-rotate)
+    target = 1 if portrait_locked else 4
+    try:
+        from jnius import autoclass
+        SDLActivity = autoclass('org.libsdl.app.SDLActivity')
+        activity = SDLActivity.mSingleton if hasattr(SDLActivity, 'mSingleton') else SDLActivity.mActivity
+        activity.setRequestedOrientation(target)
+        return
+    except Exception:
+        pass
     try:
         from jnius import autoclass
         PythonActivity = autoclass('org.kivy.android.PythonActivity')
-        # 1 = SCREEN_ORIENTATION_PORTRAIT (locked), 4 = SCREEN_ORIENTATION_SENSOR (auto-rotate)
-        PythonActivity.mActivity.setRequestedOrientation(1 if portrait_locked else 4)
-    except:
+        PythonActivity.mActivity.setRequestedOrientation(target)
+    except Exception:
         pass
 
 set_android_orientation(False)  # default: sensor/auto-rotate
@@ -1684,36 +1696,56 @@ def draw_media_bar():
         bar_rect = pygame.Rect(0, bar_y, WIDTH, bar_height)
         pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, bar_rect)
 
-        # --- Row 1: track info (left) + accessory buttons (right) ---
-        info_y = bar_y + 10
+        # --- Single control row: title/artist  lyrics  add  star  -10  prev  play  next  +10  shuffle ---
+        # Song title+artist sits far left, icons clustered together with a small gap, all on one line
+        ctrl_y = bar_y + 40
         now_playing_title = font_body.render(
-            current_track["title"] if len(current_track["title"]) < 22 else current_track["title"][:19] + "...",
+            current_track["title"] if len(current_track["title"]) < 16 else current_track["title"][:13] + "...",
             True, COLOR_WHITE)
         now_playing_artist = font_small.render(
-            current_track["artist"] if len(current_track["artist"]) < 22 else current_track["artist"][:19] + "...",
+            current_track["artist"] if len(current_track["artist"]) < 16 else current_track["artist"][:13] + "...",
             True, COLOR_TEXT_MUTED)
-        virtual_surface.blit(now_playing_title, (20, info_y))
-        virtual_surface.blit(now_playing_artist, (20, info_y + 22))
+        title_block_h = now_playing_title.get_height() + now_playing_artist.get_height()
+        virtual_surface.blit(now_playing_title, (20, ctrl_y - title_block_h // 2))
+        virtual_surface.blit(now_playing_artist, (20, ctrl_y - title_block_h // 2 + now_playing_title.get_height()))
 
-        # Accessory buttons: lyrics | add | star — right side, vertically centred in row 1
-        acc_y = info_y + 16   # vertical centre of row 1
-        acc_right = WIDTH - 16
+        icon_gap = 38   # small gap between each icon
+        # Total span of the 9-icon cluster, centred independently within WIDTH
+        cluster_span = icon_gap * 8 + 6 + 4 + 4 + 6
+        icons_start_x = (WIDTH - cluster_span) // 2
 
-        # Star (like) button — rightmost
-        star_btn_rect = pygame.Rect(acc_right - 24, acc_y - 12, 24, 24)
-        is_starred = current_track in liked_tracks
-        is_star_hovered = star_btn_rect.collidepoint(mouse_pos)
-        is_star_clicked = is_star_hovered and pygame.mouse.get_pressed()[0]
-        if is_star_clicked:
-            star_color = (20, 150, 65) if is_starred else COLOR_SPOTIFY_GREEN
-        elif is_star_hovered:
-            star_color = COLOR_WHITE if not is_starred else (40, 230, 110)
+        lyrics_cx = icons_start_x
+        add_cx    = lyrics_cx + icon_gap
+        star_cx   = add_cx + icon_gap
+        m10_cx    = star_cx + icon_gap + 6
+        prev_cx   = m10_cx + icon_gap
+        play_cx   = prev_cx + icon_gap + 4
+        next_cx   = play_cx + icon_gap + 4
+        p10_cx    = next_cx + icon_gap
+        sh_cx     = p10_cx + icon_gap + 6
+
+        mediabar_lyrics_btn_rect = pygame.Rect(lyrics_cx - 14, ctrl_y - 14, 28, 28)
+        mediabar_add_btn_rect    = pygame.Rect(add_cx - 14, ctrl_y - 14, 28, 28)
+        star_btn_rect            = pygame.Rect(star_cx - 12, ctrl_y - 12, 24, 24)
+        minus_10_btn_rect        = pygame.Rect(m10_cx - 16, ctrl_y - 16, 32, 32)
+        prev_btn_rect            = pygame.Rect(prev_cx - 14, ctrl_y - 18, 28, 36)
+        play_btn_rect            = pygame.Rect(play_cx - 18, ctrl_y - 18, 36, 36)
+        next_btn_rect            = pygame.Rect(next_cx - 14, ctrl_y - 18, 28, 36)
+        plus_10_btn_rect         = pygame.Rect(p10_cx - 16, ctrl_y - 16, 32, 32)
+        shuffle_btn_rect         = pygame.Rect(sh_cx - 16, ctrl_y - 16, 32, 32)
+
+        # Lyrics button
+        lyrics_hover = mediabar_lyrics_btn_rect.collidepoint(mouse_pos)
+        lyrics_click = lyrics_hover and pygame.mouse.get_pressed()[0]
+        if lyrics_click:
+            paper_icon_color = COLOR_SPOTIFY_GREEN
+        elif lyrics_hover:
+            paper_icon_color = COLOR_WHITE
         else:
-            star_color = COLOR_SPOTIFY_GREEN if is_starred else COLOR_TEXT_MUTED
-        draw_manual_thumbs_up(virtual_surface, star_btn_rect.x, star_btn_rect.y, star_btn_rect.width, star_btn_rect.height, star_color)
+            paper_icon_color = COLOR_TEXT_MUTED
+        draw_piece_of_paper_icon(virtual_surface, mediabar_lyrics_btn_rect, paper_icon_color)
 
         # Add-to-playlist button
-        mediabar_add_btn_rect = pygame.Rect(acc_right - 62, acc_y - 14, 28, 28)
         add_hover = mediabar_add_btn_rect.collidepoint(mouse_pos)
         add_click = add_hover and pygame.mouse.get_pressed()[0]
         if add_click:
@@ -1729,36 +1761,17 @@ def draw_media_bar():
         virtual_surface.blit(plus_surf, (mediabar_add_btn_rect.centerx - plus_surf.get_width() // 2,
                                           mediabar_add_btn_rect.centery - plus_surf.get_height() // 2 - 2))
 
-        # Lyrics button
-        mediabar_lyrics_btn_rect = pygame.Rect(acc_right - 100, acc_y - 14, 28, 28)
-        lyrics_hover = mediabar_lyrics_btn_rect.collidepoint(mouse_pos)
-        lyrics_click = lyrics_hover and pygame.mouse.get_pressed()[0]
-        if lyrics_click:
-            paper_icon_color = COLOR_SPOTIFY_GREEN
-        elif lyrics_hover:
-            paper_icon_color = COLOR_WHITE
+        # Star (like) button
+        is_starred = current_track in liked_tracks
+        is_star_hovered = star_btn_rect.collidepoint(mouse_pos)
+        is_star_clicked = is_star_hovered and pygame.mouse.get_pressed()[0]
+        if is_star_clicked:
+            star_color = (20, 150, 65) if is_starred else COLOR_SPOTIFY_GREEN
+        elif is_star_hovered:
+            star_color = COLOR_WHITE if not is_starred else (40, 230, 110)
         else:
-            paper_icon_color = COLOR_TEXT_MUTED
-        draw_piece_of_paper_icon(virtual_surface, mediabar_lyrics_btn_rect, paper_icon_color)
-
-        # --- Row 2: playback controls evenly spaced across full WIDTH ---
-        # 6 items: -10  ◀  [PLAY]  ▶  +10  shuffle
-        # Divide WIDTH into 6 equal slots and place each button at slot centre
-        ctrl_y = bar_y + 72
-        slot = WIDTH / 6
-        m10_cx  = int(slot * 0.5)
-        prev_cx = int(slot * 1.5)
-        play_cx = int(slot * 2.5)
-        next_cx = int(slot * 3.5)
-        p10_cx  = int(slot * 4.5)
-        sh_cx   = int(slot * 5.5)
-
-        minus_10_btn_rect = pygame.Rect(m10_cx - 16, ctrl_y - 16, 32, 32)
-        prev_btn_rect     = pygame.Rect(prev_cx - 14, ctrl_y - 18, 28, 36)
-        play_btn_rect     = pygame.Rect(play_cx - 18, ctrl_y - 18, 36, 36)
-        next_btn_rect     = pygame.Rect(next_cx - 14, ctrl_y - 18, 28, 36)
-        plus_10_btn_rect  = pygame.Rect(p10_cx - 16, ctrl_y - 16, 32, 32)
-        shuffle_btn_rect  = pygame.Rect(sh_cx - 16, ctrl_y - 16, 32, 32)
+            star_color = COLOR_SPOTIFY_GREEN if is_starred else COLOR_TEXT_MUTED
+        draw_manual_thumbs_up(virtual_surface, star_btn_rect.x, star_btn_rect.y, star_btn_rect.width, star_btn_rect.height, star_color)
 
         # -10
         m10_hover = minus_10_btn_rect.collidepoint(mouse_pos)
@@ -2040,6 +2053,9 @@ def draw_media_bar():
 
 # --- MAIN LOOP ---
 load_app_data()
+set_android_orientation(layout_mode == "phone")
+if layout_mode == "phone":
+    is_portrait = True
 WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, layout_mode)
 virtual_surface = pygame.Surface((WIDTH, HEIGHT))
 running = True
@@ -2070,8 +2086,14 @@ while running:
         elif event.type == pygame.VIDEORESIZE:
             REAL_WIDTH, REAL_HEIGHT = event.w, event.h
             screen = pygame.display.set_mode((REAL_WIDTH, REAL_HEIGHT), pygame.FULLSCREEN | pygame.RESIZABLE)
-            is_portrait = REAL_HEIGHT > REAL_WIDTH
-            WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, layout_mode)
+            if layout_mode == "phone":
+                # Phone mode is locked to portrait — never fall back to landscape/desktop layout
+                is_portrait = True
+                _calc_w, _calc_h = (REAL_WIDTH, REAL_HEIGHT) if REAL_HEIGHT >= REAL_WIDTH else (REAL_HEIGHT, REAL_WIDTH)
+                WIDTH, HEIGHT = compute_virtual_size(_calc_w, _calc_h, is_portrait, layout_mode)
+            else:
+                is_portrait = REAL_HEIGHT > REAL_WIDTH
+                WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, layout_mode)
             virtual_surface = pygame.Surface((WIDTH, HEIGHT))
             
         elif event.type == pygame.TEXTINPUT:
@@ -2402,11 +2424,14 @@ while running:
                     if current_page == "Settings":
                         if desktop_btn_rect.collidepoint(mouse_pos):
                             layout_mode = "desktop"
+                            set_android_orientation(False)
                             WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, "desktop")
                             virtual_surface = pygame.Surface((WIDTH, HEIGHT))
                             save_app_data()
                         elif phone_btn_rect.collidepoint(mouse_pos):
                             layout_mode = "phone"
+                            set_android_orientation(True)
+                            is_portrait = True
                             WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, "phone")
                             virtual_surface = pygame.Surface((WIDTH, HEIGHT))
                             save_app_data()
