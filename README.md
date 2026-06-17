@@ -24,7 +24,7 @@ This is an offline music player that recreates the popular online music service 
 <img width="2880" height="1800" alt="1001160829" src="https://github.com/user-attachments/assets/4d1f9b20-868e-44ea-8997-04517ea6bfc9" />
 
 ​Default Icons: If no image is found, the app will use a default grey placeholder with a music note.
-​Song Art: The app tries to read metadata. If your MP3 already has an album cover attached to it, SpotM-Fi will attempt to display it in the song box.(custom icon support will be added in future version)
+​Song Art: Not added yet (custom icon support will be added in future version)
 
 Lyrics And Syncing: Open the Editor While a song is playing, look for the small paper icon
 ​a window will pop up. You can type directly into it or Paste lyrics you copied from the web.
