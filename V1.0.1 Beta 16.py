@@ -133,6 +133,7 @@ is_playing = False
 is_shuffle = False  
 
 green_toggled_tracks = set()
+track_covers = {}  # { track_path: {"image_path": str, "surface": pygame.Surface} }
 
 # --- AUDIO TRACKING STATE ---
 track_duration = 0.0          
@@ -262,6 +263,7 @@ plus_10_btn_rect = pygame.Rect(0, 0, 0, 0)
 shuffle_btn_rect = pygame.Rect(0, 0, 0, 0)
 mediabar_add_btn_rect = pygame.Rect(0, 0, 0, 0)
 mediabar_lyrics_btn_rect = pygame.Rect(0, 0, 0, 0)
+mediabar_cover_btn_rect = pygame.Rect(0, 0, 0, 0)
 star_btn_rect = pygame.Rect(0, 0, 0, 0)
 playlist_play_btn_rect = pygame.Rect(0, 0, 0, 0)
 playlist_random_btn_rect = pygame.Rect(0, 0, 0, 0) 
@@ -293,7 +295,8 @@ def save_app_data():
         "custom_playlists": {},
         "song_lyrics_database": song_lyrics_database,
         "green_toggled_tracks": list(green_toggled_tracks),
-        "layout_mode": layout_mode
+        "layout_mode": layout_mode,
+        "track_covers": {p: {"image_path": v.get("image_path")} for p, v in track_covers.items()}
     }
     
     for p_name, p_data in custom_playlists.items():
@@ -311,7 +314,7 @@ def save_app_data():
 
 def load_app_data():
     global saved_directories, liked_tracks, liked_songs_custom_cover
-    global custom_playlists, song_lyrics_database, green_toggled_tracks, layout_mode
+    global custom_playlists, song_lyrics_database, green_toggled_tracks, layout_mode, track_covers
     
     if not os.path.exists(DATA_FILE):
         layout_mode = detect_device_layout_mode()
@@ -336,6 +339,18 @@ def load_app_data():
                 
         song_lyrics_database = data.get("song_lyrics_database", {})
         green_toggled_tracks = set(data.get("green_toggled_tracks", []))
+        
+        loaded_track_covers = data.get("track_covers", {})
+        track_covers = {}
+        for t_path, t_cover in loaded_track_covers.items():
+            img_path = t_cover.get("image_path")
+            if img_path and os.path.exists(img_path):
+                try:
+                    raw_img = pygame.image.load(img_path)
+                    cover_surf = pygame.transform.smoothscale(raw_img, (130, 130))
+                    track_covers[t_path] = {"image_path": img_path, "surface": cover_surf}
+                except:
+                    pass
         
         loaded_playlists = data.get("custom_playlists", {})
         for p_name, p_data in loaded_playlists.items():
@@ -524,6 +539,9 @@ def rebuild_imported_tracks():
                         "duration": "Media",
                         "path": os.path.join(directory, file) 
                     }
+                    full_track_path = track_data["path"]
+                    if full_track_path in track_covers and track_covers[full_track_path].get("surface"):
+                        track_data["cover_surface"] = track_covers[full_track_path]["surface"]
                     imported_tracks.append(track_data)
                     track_counter += 1
                     new_songs_found += 1
@@ -573,6 +591,23 @@ def draw_piece_of_paper_icon(surface, rect, color):
     pygame.draw.line(surface, color, (px + 4, py + 4), (px + pw - 4, py + 4), 2)
     pygame.draw.line(surface, color, (px + 4, py + 9), (px + pw - 4, py + 9), 2)
     pygame.draw.line(surface, color, (px + 4, py + 14), (px + pw - 4, py + 14), 2)
+
+def draw_picture_frame_icon(surface, rect, color):
+    x, y, w, h = rect.x, rect.y, rect.width, rect.height
+    px = x + 4
+    py = y + 4
+    pw = w - 8
+    ph = h - 8
+    pygame.draw.rect(surface, color, (px, py, pw, ph), width=2, border_radius=2)
+    # small "mountain" glyph to suggest an image
+    pygame.draw.circle(surface, color, (px + 6, py + 6), 2)
+    pygame.draw.lines(surface, color, False, [
+        (px + 2, py + ph - 4),
+        (px + pw * 0.4, py + ph * 0.45),
+        (px + pw * 0.62, py + ph * 0.68),
+        (px + pw * 0.78, py + ph * 0.42),
+        (px + pw - 2, py + ph - 4)
+    ], 2)
 
 def draw_spotify_shuffle_icon(surface, rect, color):
     cx, cy = rect.centerx, rect.centery
@@ -925,7 +960,7 @@ def draw_main_content():
         virtual_surface.set_clip(None)
 
     # --- STORAGE BROWSER ---
-    elif (is_browsing_storage or is_browsing_for_cover) and current_page in ["Search", "Your Library"]:
+    elif (is_browsing_storage or is_browsing_for_cover) and (current_page in ["Search", "Your Library"] or browsing_cover_target == "track_cover"):
         title_string = "Import custom cover picture (.png, .jpg)" if is_browsing_for_cover else "Device Storage Explorer"
         browser_title = font_title.render(title_string, True, COLOR_WHITE)
         virtual_surface.blit(browser_title, (content_pad_x, 40))
@@ -1245,6 +1280,12 @@ def draw_main_content():
                     
                     cover_rect = pygame.Rect(box_x + 12, box_y + 12, card_width - 24, card_height - 24)
                     pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, border_radius=6)
+                    if track.get("cover_surface"):
+                        scaled_cover = pygame.transform.smoothscale(track["cover_surface"], (cover_rect.width, cover_rect.height))
+                        mask_surf = pygame.Surface((cover_rect.width, cover_rect.height), pygame.SRCALPHA)
+                        pygame.draw.rect(mask_surf, (255, 255, 255), mask_surf.get_rect(), border_radius=6)
+                        scaled_cover.blit(mask_surf, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+                        virtual_surface.blit(scaled_cover, (cover_rect.x, cover_rect.y))
                     
                     if track["title"] == current_track["title"]:
                         title_color = COLOR_SPOTIFY_GREEN
@@ -1709,7 +1750,7 @@ def draw_modals():
             virtual_surface.set_clip(None)
 
 def draw_media_bar():
-    global play_btn_rect, prev_btn_rect, next_btn_rect, minus_10_btn_rect, plus_10_btn_rect, mediabar_add_btn_rect, mediabar_lyrics_btn_rect, star_btn_rect, shuffle_btn_rect, progress_bar_rect
+    global play_btn_rect, prev_btn_rect, next_btn_rect, minus_10_btn_rect, plus_10_btn_rect, mediabar_add_btn_rect, mediabar_lyrics_btn_rect, star_btn_rect, shuffle_btn_rect, progress_bar_rect, mediabar_cover_btn_rect
     
     if current_track["title"] == "Select a song" or show_lyrics_editor_view or show_create_playlist_modal:
         return
@@ -1741,8 +1782,8 @@ def draw_media_bar():
         virtual_surface.blit(now_playing_artist, (20, ctrl_y - title_block_h // 2 + now_playing_title.get_height()))
 
         icon_gap = 38   # small gap between each icon
-        # Total span of the 9-icon cluster, centred independently within WIDTH
-        cluster_span = icon_gap * 8 + 6 + 4 + 4 + 6
+        # Total span of the 10-icon cluster, centred independently within WIDTH
+        cluster_span = icon_gap * 9 + 6 + 4 + 4 + 6
         icons_start_x = (WIDTH - cluster_span) // 2
 
         lyrics_cx = icons_start_x
@@ -1754,6 +1795,7 @@ def draw_media_bar():
         next_cx   = play_cx + icon_gap + 4
         p10_cx    = next_cx + icon_gap
         sh_cx     = p10_cx + icon_gap + 6
+        cover_cx  = sh_cx + icon_gap
 
         mediabar_lyrics_btn_rect = pygame.Rect(lyrics_cx - 14, ctrl_y - 14, 28, 28)
         mediabar_add_btn_rect    = pygame.Rect(add_cx - 14, ctrl_y - 14, 28, 28)
@@ -1764,6 +1806,7 @@ def draw_media_bar():
         next_btn_rect            = pygame.Rect(next_cx - 14, ctrl_y - 18, 28, 36)
         plus_10_btn_rect         = pygame.Rect(p10_cx - 16, ctrl_y - 16, 32, 32)
         shuffle_btn_rect         = pygame.Rect(sh_cx - 16, ctrl_y - 16, 32, 32)
+        mediabar_cover_btn_rect  = pygame.Rect(cover_cx - 14, ctrl_y - 14, 28, 28)
 
         # Lyrics button
         lyrics_hover = mediabar_lyrics_btn_rect.collidepoint(mouse_pos)
@@ -1880,6 +1923,17 @@ def draw_media_bar():
             sh_icon_color = COLOR_WHITE if sh_hover else COLOR_TEXT_MUTED
         draw_spotify_shuffle_icon(virtual_surface, shuffle_btn_rect, sh_icon_color)
 
+        # Picture frame (set song cover) button
+        cover_hover = mediabar_cover_btn_rect.collidepoint(mouse_pos)
+        cover_click = cover_hover and pygame.mouse.get_pressed()[0]
+        if cover_click:
+            cover_icon_color = COLOR_SPOTIFY_GREEN
+        elif cover_hover:
+            cover_icon_color = COLOR_WHITE
+        else:
+            cover_icon_color = COLOR_TEXT_MUTED
+        draw_picture_frame_icon(virtual_surface, mediabar_cover_btn_rect, cover_icon_color)
+
         # --- Row 3: progress bar ---
         progress_bar_width = WIDTH - 80
         progress_bar_x = 40
@@ -1924,6 +1978,7 @@ def draw_media_bar():
         next_btn_rect            = pygame.Rect(btn_offset_x + 56, center_y - 18, 28, 36)
         plus_10_btn_rect         = pygame.Rect(btn_offset_x + 90, center_y - 16, 32, 32)
         shuffle_btn_rect         = pygame.Rect(btn_offset_x + 132, center_y - 16, 32, 32)
+        mediabar_cover_btn_rect  = pygame.Rect(btn_offset_x + 174, center_y - 14, 28, 28)
 
         lyrics_hover = mediabar_lyrics_btn_rect.collidepoint(mouse_pos)
         lyrics_click = lyrics_hover and pygame.mouse.get_pressed()[0]
@@ -2014,6 +2069,16 @@ def draw_media_bar():
         else:
             sh_icon_color = COLOR_WHITE if sh_hover else COLOR_TEXT_MUTED
         draw_spotify_shuffle_icon(virtual_surface, shuffle_btn_rect, sh_icon_color)
+
+        cover_hover = mediabar_cover_btn_rect.collidepoint(mouse_pos)
+        cover_click = cover_hover and pygame.mouse.get_pressed()[0]
+        if cover_click:
+            cover_icon_color = COLOR_SPOTIFY_GREEN
+        elif cover_hover:
+            cover_icon_color = COLOR_WHITE
+        else:
+            cover_icon_color = COLOR_TEXT_MUTED
+        draw_picture_frame_icon(virtual_surface, mediabar_cover_btn_rect, cover_icon_color)
 
         progress_bar_width = min(400, WIDTH - 40) if is_portrait else 400
         progress_bar_x = center_x - (progress_bar_width // 2) if is_portrait else btn_offset_x - (progress_bar_width // 2) + 20
@@ -2471,7 +2536,7 @@ while running:
                             virtual_surface = pygame.Surface((WIDTH, HEIGHT))
                             save_app_data()
 
-                    if is_browsing_for_cover and current_page == "Your Library":
+                    if is_browsing_for_cover and (current_page == "Your Library" or browsing_cover_target == "track_cover"):
                         if cancel_browser_btn_rect.collidepoint(mouse_pos):
                             is_browsing_for_cover = False
                         else:
@@ -2490,6 +2555,20 @@ while running:
                                             elif browsing_cover_target == "liked_view":
                                                 liked_songs_custom_cover["image_path"] = item["path"]
                                                 liked_songs_custom_cover["surface"] = scaled_surf
+                                            elif browsing_cover_target == "track_cover":
+                                                grid_cover_surf = pygame.transform.smoothscale(raw_img, (130, 130))
+                                                track_covers[current_track["path"]] = {"image_path": item["path"], "surface": grid_cover_surf}
+                                                current_track["cover_surface"] = grid_cover_surf
+                                                for t in imported_tracks:
+                                                    if t["path"] == current_track["path"]:
+                                                        t["cover_surface"] = grid_cover_surf
+                                                for t in liked_tracks:
+                                                    if t["path"] == current_track["path"]:
+                                                        t["cover_surface"] = grid_cover_surf
+                                                for p_data in custom_playlists.values():
+                                                    for t in p_data["tracks"]:
+                                                        if t["path"] == current_track["path"]:
+                                                            t["cover_surface"] = grid_cover_surf
                                             save_app_data()
                                         except Exception as image_err:
                                             print(f"Error importing cover layout graphics: {image_err}")
@@ -2613,6 +2692,12 @@ while running:
                                 track_to_add_to_playlist = current_track
                                 show_add_to_playlist_modal = True
                                 target_music_scroll = 0.0
+
+                            if mediabar_cover_btn_rect.collidepoint(mouse_pos):
+                                is_browsing_for_cover = True
+                                browsing_cover_target = "track_cover"
+                                update_browser_contents()
+                                continue
 
                             if minus_10_btn_rect.collidepoint(mouse_pos) and track_duration > 0 and music_loaded:
                                 current_track["_has_started"] = False
