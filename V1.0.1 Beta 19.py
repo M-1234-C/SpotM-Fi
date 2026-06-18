@@ -793,7 +793,7 @@ def draw_sidebar():
             virtual_surface.blit(text_surf, (tx, ty))
 
 def draw_main_content():
-    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction, desktop_btn_rect, phone_btn_rect
+    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction, desktop_btn_rect, phone_btn_rect, search_box_rect
     track_rects = []
     browser_rects = []
     settings_dir_rects = []
@@ -1089,8 +1089,23 @@ def draw_main_content():
         # --- PHONE PORTRAIT LAYOUT: search bar full-width on row 1, buttons on row 2 ---
         if is_portrait and layout_mode == "phone":
             ph_pad = 20  # horizontal padding from content_pad_x
-            btn_row_y = 80   # row 1: buttons (+ Add Folder, cog)
-            search_row_y = 130  # row 2: full-width search bar
+            search_row_y = 80   # row 1: full-width search bar
+            btn_row_y = 140      # row 2: buttons (+ Add Folder, cog)
+
+            # --- Full-width search bar (top row) ---
+            search_box_rect = pygame.Rect(content_pad_x, search_row_y, main_w - (content_pad_x - main_x) * 2, 44)
+            pygame.draw.rect(virtual_surface, COLOR_WHITE, search_box_rect, border_radius=22)
+            if search_input_active and not show_create_playlist_modal:
+                pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, search_box_rect, width=2, border_radius=22)
+
+            if search_query != "":
+                search_text_surf = font_small.render(f"  {search_query}", True, COLOR_BLACK)
+            else:
+                search_text_surf = font_small.render(f"  {search_message}", True, COLOR_LIGHT_GREY)
+            # clip long text inside the box
+            clip_surf = pygame.Surface((search_box_rect.width - 30, search_text_surf.get_height()), pygame.SRCALPHA)
+            clip_surf.blit(search_text_surf, (0, 0))
+            virtual_surface.blit(clip_surf, (search_box_rect.x + 15, search_box_rect.y + (44 - search_text_surf.get_height()) // 2))
 
             # --- Button row: centred under search bar ---
             ph_add_w = 160
@@ -1138,22 +1153,7 @@ def draw_main_content():
                 pygame.draw.rect(virtual_surface, box_bg_color, settings_btn_rect, border_radius=20)
                 draw_solid_cog_wheel(virtual_surface, settings_btn_rect.x + 10, settings_btn_rect.y + 10, 20, 20, st_color)
 
-            # --- Full-width search bar (bottom row) ---
-            search_box_rect = pygame.Rect(content_pad_x, search_row_y, main_w - (content_pad_x - main_x) * 2, 44)
-            pygame.draw.rect(virtual_surface, COLOR_WHITE, search_box_rect, border_radius=22)
-            if search_input_active and not show_create_playlist_modal:
-                pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, search_box_rect, width=2, border_radius=22)
-
-            if search_query != "":
-                search_text_surf = font_small.render(f"  {search_query}", True, COLOR_BLACK)
-            else:
-                search_text_surf = font_small.render(f"  {search_message}", True, COLOR_LIGHT_GREY)
-            # clip long text inside the box
-            clip_surf = pygame.Surface((search_box_rect.width - 30, search_text_surf.get_height()), pygame.SRCALPHA)
-            clip_surf.blit(search_text_surf, (0, 0))
-            virtual_surface.blit(clip_surf, (search_box_rect.x + 15, search_box_rect.y + (44 - search_text_surf.get_height()) // 2))
-
-            grid_start_y = search_row_y + 60
+            grid_start_y = btn_row_y + 60
 
         else:
             # --- DESKTOP / TABLET PORTRAIT LAYOUT (unchanged) ---
@@ -2677,7 +2677,7 @@ while running:
                                 if current_page == "Your Library" and (viewing_liked_playlist or selected_custom_playlist_name):
                                     clip_rect_bounds = pygame.Rect(main_x, 315, main_w, main_h_event - 315)
                                 else:
-                                    search_clip_top = 190 if (is_portrait and layout_mode == "phone") else 140
+                                    search_clip_top = 200 if (is_portrait and layout_mode == "phone") else 140
                                     clip_rect_bounds = pygame.Rect(main_x, search_clip_top, main_w, main_h_event - search_clip_top)
                                     
                                 if clip_rect_bounds.collidepoint(mouse_pos) and rect.collidepoint(mouse_pos):
