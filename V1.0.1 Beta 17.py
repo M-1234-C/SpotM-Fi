@@ -361,12 +361,20 @@ def load_app_data():
                     surface = pygame.transform.smoothscale(raw_img, (130, 110))
                 except:
                     pass
+            playlist_tracks = p_data.get("tracks", [])
+            for t in playlist_tracks:
+                if t.get("path") in track_covers:
+                    t["cover_surface"] = track_covers[t["path"]]["surface"]
             custom_playlists[p_name] = {
-                "tracks": p_data.get("tracks", []),
+                "tracks": playlist_tracks,
                 "image_path": p_data.get("image_path"),
                 "description": p_data.get("description", ""),
                 "surface": surface
             }
+            
+        for t in liked_tracks:
+            if t.get("path") in track_covers:
+                t["cover_surface"] = track_covers[t["path"]]["surface"]
             
         rebuild_imported_tracks()
     except Exception as e:
@@ -1934,10 +1942,10 @@ def draw_media_bar():
             cover_icon_color = COLOR_TEXT_MUTED
         draw_picture_frame_icon(virtual_surface, mediabar_cover_btn_rect, cover_icon_color)
 
-        # --- Row 3: progress bar ---
-        progress_bar_width = WIDTH - 80
-        progress_bar_x = 40
-        progress_bar_y = HEIGHT - 28
+        # --- Row 3: progress bar (shortened to fit time labels, raised closer to buttons) ---
+        progress_bar_width = WIDTH - 140
+        progress_bar_x = 70
+        progress_bar_y = ctrl_y + 36
         progress_bar_rect = pygame.Rect(progress_bar_x, progress_bar_y - 10, progress_bar_width, 24)
 
     else:
