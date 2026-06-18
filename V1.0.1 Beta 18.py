@@ -723,7 +723,7 @@ def draw_sidebar():
     sidebar_rects = [] 
     
     _phone = is_portrait and layout_mode == "phone"
-    content_bottom_margin = (160 if _phone else (130 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
+    content_bottom_margin = (100 if _phone else (104 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
     
     if not is_portrait:
         sidebar_rect = pygame.Rect(0, 0, 230, HEIGHT - content_bottom_margin)
@@ -756,7 +756,7 @@ def draw_sidebar():
             y_offset += 40
     else:
         sidebar_height = 65
-        sidebar_rect = pygame.Rect(0, HEIGHT - content_bottom_margin - sidebar_height, WIDTH, sidebar_height)
+        sidebar_rect = pygame.Rect(0, HEIGHT - sidebar_height, WIDTH, sidebar_height)
         pygame.draw.rect(virtual_surface, COLOR_DARK_GREY, sidebar_rect)
         
         mouse_pos = get_virtual_mouse_pos()
@@ -800,7 +800,7 @@ def draw_main_content():
     custom_playlist_rects = []
     
     _phone = is_portrait and layout_mode == "phone"
-    content_bottom_margin = (160 if _phone else (130 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
+    content_bottom_margin = (100 if _phone else (104 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
     portrait_sidebar_h = 65 if is_portrait else 0
     
     main_x = 0 if is_portrait else 230
@@ -1460,7 +1460,7 @@ def draw_modals():
     main_x = 0 if is_portrait else 230
     main_w = WIDTH - main_x
     _phone = is_portrait and layout_mode == "phone"
-    content_bottom_margin = (160 if _phone else (130 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
+    content_bottom_margin = (100 if _phone else (104 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
     main_h = HEIGHT - content_bottom_margin - portrait_sidebar_h
     content_pad_x = main_x + 30
     
@@ -1771,8 +1771,8 @@ def draw_media_bar():
     # Row 2 (mid): -10  ◀  ▶  ▶  +10  shuffle  — all centred
     # Row 3 (bot): progress bar spanning full width
     if is_phone_mode:
-        bar_height = 160
-        bar_y = HEIGHT - bar_height
+        bar_height = 100
+        bar_y = HEIGHT - bar_height - 65   # sit just above the bottom tab bar
         bar_rect = pygame.Rect(0, bar_y, WIDTH, bar_height)
         pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, bar_rect)
 
@@ -1952,20 +1952,22 @@ def draw_media_bar():
         # -----------------------------------------------------------------------
         # ORIGINAL non-phone layout (desktop / tablet portrait) — UNCHANGED
         # -----------------------------------------------------------------------
-        bar_height = 130 if is_portrait else 90
-        bar_rect = pygame.Rect(0, HEIGHT - bar_height, WIDTH, bar_height)
+        bar_height = 104 if is_portrait else 90
+        bar_y = HEIGHT - bar_height - (65 if is_portrait else 0)   # sit above bottom tab bar in portrait
+        bar_rect = pygame.Rect(0, bar_y, WIDTH, bar_height)
         pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, bar_rect)
 
         now_playing_title = font_body.render(current_track["title"] if len(current_track["title"]) < 20 else current_track["title"][:17] + "...", True, COLOR_WHITE)
         now_playing_artist = font_small.render(current_track["artist"] if len(current_track["artist"]) < 20 else current_track["artist"][:17] + "...", True, COLOR_TEXT_MUTED)
-        virtual_surface.blit(now_playing_title, (20, HEIGHT - bar_height + 25))
-        virtual_surface.blit(now_playing_artist, (20, HEIGHT - bar_height + 45))
+        virtual_surface.blit(now_playing_title, (20, bar_y + 25))
+        virtual_surface.blit(now_playing_artist, (20, bar_y + 45))
 
         center_x = WIDTH // 2
-        center_y = HEIGHT - (90 if is_portrait else 60)
+        center_y = (bar_y + 40) if is_portrait else (HEIGHT - 60)
         btn_offset_x = center_x
 
-        star_btn_rect = pygame.Rect(btn_offset_x - 130, center_y - 10, 20, 20)
+        _btn_center_shift = -18 if is_portrait else 0
+        star_btn_rect = pygame.Rect(btn_offset_x - 130 + _btn_center_shift, center_y - 10, 20, 20)
 
         is_starred = current_track in liked_tracks
         is_star_hovered = star_btn_rect.collidepoint(mouse_pos)
@@ -1978,15 +1980,15 @@ def draw_media_bar():
             star_color = COLOR_SPOTIFY_GREEN if is_starred else COLOR_TEXT_MUTED
         draw_manual_thumbs_up(virtual_surface, star_btn_rect.x, star_btn_rect.y, star_btn_rect.width, star_btn_rect.height, star_color)
 
-        mediabar_lyrics_btn_rect = pygame.Rect(btn_offset_x - 165, center_y - 14, 28, 28)
-        mediabar_add_btn_rect    = pygame.Rect(btn_offset_x - 95, center_y - 14, 28, 28)
-        minus_10_btn_rect        = pygame.Rect(btn_offset_x - 55, center_y - 16, 32, 32)
-        prev_btn_rect            = pygame.Rect(btn_offset_x - 18, center_y - 18, 28, 36)
-        play_btn_rect            = pygame.Rect(btn_offset_x + 15, center_y - 18, 36, 36)
-        next_btn_rect            = pygame.Rect(btn_offset_x + 56, center_y - 18, 28, 36)
-        plus_10_btn_rect         = pygame.Rect(btn_offset_x + 90, center_y - 16, 32, 32)
-        shuffle_btn_rect         = pygame.Rect(btn_offset_x + 132, center_y - 16, 32, 32)
-        mediabar_cover_btn_rect  = pygame.Rect(btn_offset_x + 174, center_y - 14, 28, 28)
+        mediabar_lyrics_btn_rect = pygame.Rect(btn_offset_x - 165 + _btn_center_shift, center_y - 14, 28, 28)
+        mediabar_add_btn_rect    = pygame.Rect(btn_offset_x - 95 + _btn_center_shift, center_y - 14, 28, 28)
+        minus_10_btn_rect        = pygame.Rect(btn_offset_x - 55 + _btn_center_shift, center_y - 16, 32, 32)
+        prev_btn_rect            = pygame.Rect(btn_offset_x - 18 + _btn_center_shift, center_y - 18, 28, 36)
+        play_btn_rect            = pygame.Rect(btn_offset_x + 15 + _btn_center_shift, center_y - 18, 36, 36)
+        next_btn_rect            = pygame.Rect(btn_offset_x + 56 + _btn_center_shift, center_y - 18, 28, 36)
+        plus_10_btn_rect         = pygame.Rect(btn_offset_x + 90 + _btn_center_shift, center_y - 16, 32, 32)
+        shuffle_btn_rect         = pygame.Rect(btn_offset_x + 132 + _btn_center_shift, center_y - 16, 32, 32)
+        mediabar_cover_btn_rect  = pygame.Rect(btn_offset_x + 174 + _btn_center_shift, center_y - 14, 28, 28)
 
         lyrics_hover = mediabar_lyrics_btn_rect.collidepoint(mouse_pos)
         lyrics_click = lyrics_hover and pygame.mouse.get_pressed()[0]
@@ -2033,26 +2035,26 @@ def draw_media_bar():
         prev_hover = prev_btn_rect.collidepoint(mouse_pos)
         prev_click = prev_hover and pygame.mouse.get_pressed()[0]
         prev_color = COLOR_SPOTIFY_GREEN if prev_click else (COLOR_WHITE if prev_hover else COLOR_TEXT_MUTED)
-        pygame.draw.polygon(virtual_surface, prev_color, [(btn_offset_x - 15, center_y), (btn_offset_x, center_y - 9), (btn_offset_x, center_y + 9)])
+        pygame.draw.polygon(virtual_surface, prev_color, [(btn_offset_x - 15 + _btn_center_shift, center_y), (btn_offset_x + _btn_center_shift, center_y - 9), (btn_offset_x + _btn_center_shift, center_y + 9)])
 
         is_mb_play_hovered = play_btn_rect.collidepoint(mouse_pos)
         is_mb_play_pressed = is_mb_play_hovered and pygame.mouse.get_pressed()[0]
         if is_mb_play_pressed:
-            pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, (btn_offset_x + 33, center_y), 16)
+            pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, (btn_offset_x + 33 + _btn_center_shift, center_y), 16)
         elif is_mb_play_hovered:
-            pygame.draw.circle(virtual_surface, COLOR_WHITE, (btn_offset_x + 33, center_y), 20)
+            pygame.draw.circle(virtual_surface, COLOR_WHITE, (btn_offset_x + 33 + _btn_center_shift, center_y), 20)
         else:
-            pygame.draw.circle(virtual_surface, COLOR_WHITE, (btn_offset_x + 33, center_y), 18)
+            pygame.draw.circle(virtual_surface, COLOR_WHITE, (btn_offset_x + 33 + _btn_center_shift, center_y), 18)
         if not is_playing:
-            pygame.draw.polygon(virtual_surface, COLOR_BLACK, [(btn_offset_x + 30, center_y - 6), (btn_offset_x + 30, center_y + 6), (btn_offset_x + 40, center_y)])
+            pygame.draw.polygon(virtual_surface, COLOR_BLACK, [(btn_offset_x + 30 + _btn_center_shift, center_y - 6), (btn_offset_x + 30 + _btn_center_shift, center_y + 6), (btn_offset_x + 40 + _btn_center_shift, center_y)])
         else:
-            pygame.draw.rect(virtual_surface, COLOR_BLACK, (btn_offset_x + 29, center_y - 6, 3, 12))
-            pygame.draw.rect(virtual_surface, COLOR_BLACK, (btn_offset_x + 35, center_y - 6, 3, 12))
+            pygame.draw.rect(virtual_surface, COLOR_BLACK, (btn_offset_x + 29 + _btn_center_shift, center_y - 6, 3, 12))
+            pygame.draw.rect(virtual_surface, COLOR_BLACK, (btn_offset_x + 35 + _btn_center_shift, center_y - 6, 3, 12))
 
         next_hover = next_btn_rect.collidepoint(mouse_pos)
         next_click = next_hover and pygame.mouse.get_pressed()[0]
         next_color = COLOR_SPOTIFY_GREEN if next_click else (COLOR_WHITE if next_hover else COLOR_TEXT_MUTED)
-        pygame.draw.polygon(virtual_surface, next_color, [(btn_offset_x + 80, center_y), (btn_offset_x + 65, center_y - 9), (btn_offset_x + 65, center_y + 9)])
+        pygame.draw.polygon(virtual_surface, next_color, [(btn_offset_x + 80 + _btn_center_shift, center_y), (btn_offset_x + 65 + _btn_center_shift, center_y - 9), (btn_offset_x + 65 + _btn_center_shift, center_y + 9)])
 
         p10_hover = plus_10_btn_rect.collidepoint(mouse_pos)
         p10_click = p10_hover and pygame.mouse.get_pressed()[0]
@@ -2088,9 +2090,9 @@ def draw_media_bar():
             cover_icon_color = COLOR_TEXT_MUTED
         draw_picture_frame_icon(virtual_surface, mediabar_cover_btn_rect, cover_icon_color)
 
-        progress_bar_width = min(400, WIDTH - 40) if is_portrait else 400
+        progress_bar_width = min(WIDTH - 140, WIDTH - 40) if is_portrait else 400
         progress_bar_x = center_x - (progress_bar_width // 2) if is_portrait else btn_offset_x - (progress_bar_width // 2) + 20
-        progress_bar_y = HEIGHT - (50 if is_portrait else 25)
+        progress_bar_y = (bar_y + 80) if is_portrait else (HEIGHT - 25)
         progress_bar_rect = pygame.Rect(progress_bar_x, progress_bar_y - 10, progress_bar_width, 24)
     
     elapsed_sec = 0.0
@@ -2669,7 +2671,7 @@ while running:
                                 main_x = 0 if is_portrait else 230
                                 main_w = WIDTH - main_x
                                 
-                                event_margin = (160 if (is_portrait and layout_mode == "phone") else (130 if is_portrait else 90)) if current_track["title"] != "Select a song" else 0
+                                event_margin = (100 if (is_portrait and layout_mode == "phone") else (104 if is_portrait else 90)) if current_track["title"] != "Select a song" else 0
                                 main_h_event = HEIGHT - event_margin - portrait_sidebar_h
                                 
                                 if current_page == "Your Library" and (viewing_liked_playlist or selected_custom_playlist_name):
