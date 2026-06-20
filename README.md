@@ -45,7 +45,7 @@ Once you've timed each line, hit **Save**. From then on, while the song plays, t
 
 # Installation
 
-To run this app you need to install the following libraries. Some are "backups" used to read less common formats or to run on Android — if you want to save space, only install what you need, but installing everything is recommended for full compatibility. (`.apk` and `.exe` builds will be added to Releases once packaging is set up i dont know how to right now so if you want to help me please email me.)
+To run this app you need to install the following libraries. Some are "backups" used to read less common formats or to run on Android — if you want to save space, only install what you need, but installing everything is recommended for full compatibility. (`.apk` and `.exe` builds will be added to Releases once packaging is set up i dont know how to right now so probably not soon.)
 
 ### 1. Core Requirements (Must Install)
 Required for the app to open and play standard audio formats (MP3, WAV, OGG, FLAC):
