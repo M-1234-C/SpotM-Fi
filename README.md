@@ -16,12 +16,13 @@ This is an offline music player that recreates the popular online music service 
 ​Progress Bar: Click anywhere on the bar to skip to a specific part of the song.
 ​Add Folder: Go to the Search tab to import your music folder.
 
-<img width="2880" height="233" alt="1001160831" src="https://github.com/user-attachments/assets/55a32887-d292-4141-a896-7bf2a122fbd2" />
+<img width="2880" height="234" alt="1001161322" src="https://github.com/user-attachments/assets/33038ef4-912f-44b3-a016-152130fd9824" />
 
 # Help
 ​Playlist Covers: When you create a playlist, you can assign an image to it just find it in the directores page that opens when you click to change the cover. If you want to change it after you have created the playlist then go into it and click the cover and select you image just like you did before it support the formats: .png, .jpg, .jpeg.
 
-<img width="2880" height="1800" alt="1001160829" src="https://github.com/user-attachments/assets/4d1f9b20-868e-44ea-8997-04517ea6bfc9" />
+<img width="2880" height="1800" alt="1001161327" src="https://github.com/user-attachments/assets/5eaefa00-e687-43bc-ad3d-c63240d74d51" />
+
 
 ​Default Icons: If no image is found, the app will use a default grey placeholder with a music note.
 ​Song Art: Not added yet (custom icon support will be added in future version)
@@ -30,7 +31,8 @@ Lyrics And Syncing: Open the Editor While a song is playing, look for the small 
 ​a window will pop up. You can type directly into it or Paste lyrics you copied from the web.
 ​On Desktop, you can use Ctrl + V. On Android the built in clipbaord.But how to sync the lyrics as by itself nothing happens.To Sync them you have to put "[]" before each verse with the time it plays in it for example: "[1:23] Oh i love music" or "[0:06] let it snow, let it snow, let it snow" once you done this for each verse hit the Save button then when you play the song the lyrics are synced and show in the bpottom left of media when the verse is being sang if they have been timed right and all lyric are saved inisde the .json file so when you close it or force clsoe the app by acident they will still be their when you open it up again.
 
-<img width="2880" height="1800" alt="1001160832" src="https://github.com/user-attachments/assets/01a9f93e-8e09-4773-9e5e-2d2b15f0e813" />
+<img width="2880" height="1800" alt="1001161326" src="https://github.com/user-attachments/assets/fd2192eb-a7cc-4d15-a0be-73bc9805bba3" />
+
 ​
 # Installation
 
