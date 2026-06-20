@@ -285,6 +285,7 @@ modal_image_picker_rect = pygame.Rect(0, 0, 0, 0)
 
 lyrics_close_rect = pygame.Rect(0, 0, 0, 0)
 lyrics_save_rect = pygame.Rect(0, 0, 0, 0)
+lyrics_clear_rect = pygame.Rect(0, 0, 0, 0)
 lyrics_textarea_rect = pygame.Rect(270, 145, 760, 420)
 
 def save_app_data():
@@ -1458,7 +1459,7 @@ def draw_main_content():
 
 # --- MODAL RENDERING ENGINE ---
 def draw_modals():
-    global modal_close_rect, modal_save_rect, modal_input_rect, modal_desc_rect, modal_playlist_rects, modal_image_picker_rect, lyrics_close_rect, lyrics_save_rect, lyrics_textarea_rect, max_music_scroll, lyrics_editor_cursor_timer, max_lyrics_scroll, target_lyrics_scroll, lyrics_text_changed
+    global modal_close_rect, modal_save_rect, modal_input_rect, modal_desc_rect, modal_playlist_rects, modal_image_picker_rect, lyrics_close_rect, lyrics_save_rect, lyrics_clear_rect, lyrics_textarea_rect, max_music_scroll, lyrics_editor_cursor_timer, max_lyrics_scroll, target_lyrics_scroll, lyrics_text_changed
     mouse_pos = get_virtual_mouse_pos()
     
     portrait_sidebar_h = (80 if (is_portrait and layout_mode == "phone") else (65 if is_portrait else 0))
@@ -1595,22 +1596,35 @@ def draw_modals():
             
         if is_portrait:
             btn_y = lyrics_textarea_rect.bottom + 20
-            start_x = main_x + (main_w - 230) // 2 
+            start_x = main_x + (main_w - 350) // 2 
             lyrics_close_rect = pygame.Rect(start_x, btn_y, 100, 42)
             lyrics_save_rect = pygame.Rect(start_x + 120, btn_y, 110, 42)
+            lyrics_clear_rect = pygame.Rect(start_x + 250, btn_y, 100, 42)
         else:
             lyrics_close_rect = pygame.Rect(main_x + 40, 590, 100, 42)
             lyrics_save_rect = pygame.Rect(main_x + 150, 590, 100, 42)
+            lyrics_clear_rect = pygame.Rect(main_x + 260, 590, 100, 42)
         
-        c_bg = COLOR_HOVER if lyrics_close_rect.collidepoint(mouse_pos) else COLOR_LIGHT_GREY
+        c_hovered = lyrics_close_rect.collidepoint(mouse_pos)
+        c_clicked = c_hovered and pygame.mouse.get_pressed()[0]
+        c_bg = COLOR_SPOTIFY_GREEN if c_clicked else (COLOR_HOVER if c_hovered else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, c_bg, lyrics_close_rect, border_radius=21)
         c_txt = font_body.render("Close", True, COLOR_WHITE)
         virtual_surface.blit(c_txt, (lyrics_close_rect.x + 28, lyrics_close_rect.y + 11))
         
-        s_bg = (40, 230, 110) if lyrics_save_rect.collidepoint(mouse_pos) else COLOR_SPOTIFY_GREEN
+        s_hovered = lyrics_save_rect.collidepoint(mouse_pos)
+        s_clicked = s_hovered and pygame.mouse.get_pressed()[0]
+        s_bg = COLOR_SPOTIFY_GREEN if s_clicked else (COLOR_HOVER if s_hovered else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, s_bg, lyrics_save_rect, border_radius=21)
-        s_txt = font_body.render("Save", True, COLOR_BLACK)
+        s_txt = font_body.render("Save", True, COLOR_WHITE)
         virtual_surface.blit(s_txt, (lyrics_save_rect.x + 30, lyrics_save_rect.y + 11))
+
+        cl_hovered = lyrics_clear_rect.collidepoint(mouse_pos)
+        cl_clicked = cl_hovered and pygame.mouse.get_pressed()[0]
+        cl_bg = COLOR_SPOTIFY_GREEN if cl_clicked else (COLOR_HOVER if cl_hovered else COLOR_LIGHT_GREY)
+        pygame.draw.rect(virtual_surface, cl_bg, lyrics_clear_rect, border_radius=21)
+        cl_txt = font_body.render("Clear", True, COLOR_WHITE)
+        virtual_surface.blit(cl_txt, (lyrics_clear_rect.x + 28, lyrics_clear_rect.y + 11))
         return
 
     if show_create_playlist_modal:
@@ -2486,6 +2500,11 @@ while running:
                             show_lyrics_editor_view = False
                             search_input_active = False
                             save_app_data()
+                        elif lyrics_clear_rect.collidepoint(mouse_pos):
+                            track_ref = current_track.get("path", "")
+                            song_lyrics_database[track_ref] = ""
+                            lyrics_cursor_pos = 0
+                            lyrics_text_changed = True
                         elif lyrics_textarea_rect.collidepoint(mouse_pos):
                             search_input_active = True
                             active_input_field = "lyrics"
