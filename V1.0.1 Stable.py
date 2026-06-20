@@ -201,6 +201,8 @@ show_lyrics_editor_view = False
 lyrics_editor_cursor_timer = 0.0
 lyrics_text_changed = False
 lyrics_cursor_pos = 0
+_lyric_cache_key = None
+_lyric_cache_parsed = []
 
 show_create_playlist_modal = False
 playlist_input_text = ""
@@ -286,6 +288,7 @@ modal_image_picker_rect = pygame.Rect(0, 0, 0, 0)
 lyrics_close_rect = pygame.Rect(0, 0, 0, 0)
 lyrics_save_rect = pygame.Rect(0, 0, 0, 0)
 lyrics_clear_rect = pygame.Rect(0, 0, 0, 0)
+lyrics_import_rect = pygame.Rect(0, 0, 0, 0)
 lyrics_textarea_rect = pygame.Rect(270, 145, 760, 420)
 
 def save_app_data():
@@ -378,6 +381,17 @@ def load_app_data():
                 t["cover_surface"] = track_covers[t["path"]]["surface"]
             
         rebuild_imported_tracks()
+
+        # Backfill embedded metadata covers (extracted during rebuild_imported_tracks)
+        # onto liked_tracks / custom_playlists tracks that don't already have a custom cover
+        embedded_cover_lookup = {t["path"]: t["cover_surface"] for t in imported_tracks if t.get("cover_surface")}
+        for t in liked_tracks:
+            if not t.get("cover_surface") and t.get("path") in embedded_cover_lookup:
+                t["cover_surface"] = embedded_cover_lookup[t["path"]]
+        for p_data in custom_playlists.values():
+            for t in p_data["tracks"]:
+                if not t.get("cover_surface") and t.get("path") in embedded_cover_lookup:
+                    t["cover_surface"] = embedded_cover_lookup[t["path"]]
     except Exception as e:
         print(f"File Load Error: {e}")
 
@@ -516,11 +530,72 @@ def update_browser_contents():
         for item in sorted(os.listdir(current_browser_path)):
             full_path = os.path.join(current_browser_path, item)
             is_dir = os.path.isdir(full_path)
-            if is_browsing_for_cover and not is_dir and not item.lower().endswith(('.png', '.jpg', '.jpeg')):
-                continue
+            if is_browsing_for_cover and not is_dir:
+                if browsing_cover_target == "lyrics_import" and not item.lower().endswith('.txt'):
+                    continue
+                elif browsing_cover_target != "lyrics_import" and not item.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    continue
             browser_items.append({"name": item, "is_dir": is_dir, "path": full_path})
     except Exception:
         search_message = "Access Denied: Restricted system folder or permission missing."
+
+def extract_embedded_cover(track_path):
+    """Attempts to read embedded album art from a music file's metadata (ID3 APIC for MP3,
+    FLAC pictures, M4A covr atom). Returns a pygame Surface scaled to (130, 130), or None
+    if the file has no embedded artwork or can't be read."""
+    art_bytes = None
+    try:
+        lower_path = track_path.lower()
+        if lower_path.endswith('.mp3'):
+            from mutagen.id3 import ID3
+            tags = ID3(track_path)
+            for tag_key in tags.keys():
+                if tag_key.startswith('APIC'):
+                    art_bytes = tags[tag_key].data
+                    break
+        elif lower_path.endswith('.flac'):
+            from mutagen.flac import FLAC
+            audio = FLAC(track_path)
+            if audio.pictures:
+                art_bytes = audio.pictures[0].data
+        elif lower_path.endswith(('.m4a', '.mp4', '.alac')):
+            from mutagen.mp4 import MP4
+            audio = MP4(track_path)
+            covr = audio.tags.get('covr') if audio.tags else None
+            if covr:
+                art_bytes = bytes(covr[0])
+        elif lower_path.endswith('.ogg'):
+            from mutagen.oggvorbis import OggVorbis
+            from mutagen.flac import Picture
+            import base64
+            audio = OggVorbis(track_path)
+            pics = audio.get('metadata_block_picture', [])
+            if pics:
+                pic = Picture(base64.b64decode(pics[0]))
+                art_bytes = pic.data
+    except Exception:
+        art_bytes = None
+
+    if not art_bytes:
+        return None
+
+    import io
+    try:
+        art_surface = pygame.image.load(io.BytesIO(art_bytes))
+        return pygame.transform.smoothscale(art_surface, (130, 130))
+    except Exception:
+        pass
+
+    # Fallback: pygame's built-in loader can lack full JPEG support on some Android/Pydroid
+    # builds. Most embedded album art is JPEG, so decode via Pillow and hand pygame raw
+    # RGB pixel data instead, which sidesteps pygame's own JPEG decoder entirely.
+    try:
+        from PIL import Image
+        pil_img = Image.open(io.BytesIO(art_bytes)).convert("RGB")
+        art_surface = pygame.image.fromstring(pil_img.tobytes(), pil_img.size, "RGB")
+        return pygame.transform.smoothscale(art_surface, (130, 130))
+    except Exception:
+        return None
 
 def rebuild_imported_tracks():
     global imported_tracks, search_message
@@ -551,6 +626,10 @@ def rebuild_imported_tracks():
                     full_track_path = track_data["path"]
                     if full_track_path in track_covers and track_covers[full_track_path].get("surface"):
                         track_data["cover_surface"] = track_covers[full_track_path]["surface"]
+                    else:
+                        embedded_cover = extract_embedded_cover(full_track_path)
+                        if embedded_cover:
+                            track_data["cover_surface"] = embedded_cover
                     imported_tracks.append(track_data)
                     track_counter += 1
                     new_songs_found += 1
@@ -970,8 +1049,13 @@ def draw_main_content():
         virtual_surface.set_clip(None)
 
     # --- STORAGE BROWSER ---
-    elif (is_browsing_storage or is_browsing_for_cover) and (current_page in ["Search", "Your Library"] or browsing_cover_target == "track_cover"):
-        title_string = "Import custom cover picture (.png, .jpg)" if is_browsing_for_cover else "Device Storage Explorer"
+    elif (is_browsing_storage or is_browsing_for_cover) and (current_page in ["Search", "Your Library"] or browsing_cover_target in ("track_cover", "lyrics_import")):
+        if is_browsing_for_cover and browsing_cover_target == "lyrics_import":
+            title_string = "Import lyrics file (.txt)"
+        elif is_browsing_for_cover:
+            title_string = "Import custom cover picture (.png, .jpg)"
+        else:
+            title_string = "Device Storage Explorer"
         browser_title = font_title.render(title_string, True, COLOR_WHITE)
         virtual_surface.blit(browser_title, (content_pad_x, 40))
         
@@ -1295,11 +1379,22 @@ def draw_main_content():
                     cover_rect = pygame.Rect(box_x + 12, box_y + 12, card_width - 24, card_height - 24)
                     pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, border_radius=6)
                     if track.get("cover_surface"):
-                        scaled_cover = pygame.transform.smoothscale(track["cover_surface"], (cover_rect.width, cover_rect.height))
-                        mask_surf = pygame.Surface((cover_rect.width, cover_rect.height), pygame.SRCALPHA)
+                        src_surf = track["cover_surface"]
+                        src_w, src_h = src_surf.get_size()
+                        box_w, box_h = cover_rect.width, cover_rect.height
+                        # Scale to fully cover the box on the limiting dimension, preserving aspect ratio
+                        scale_factor = max(box_w / src_w, box_h / src_h)
+                        fit_w, fit_h = max(1, round(src_w * scale_factor)), max(1, round(src_h * scale_factor))
+                        scaled_cover = pygame.transform.smoothscale(src_surf, (fit_w, fit_h))
+                        # Center-crop any overflow so nothing is squashed
+                        crop_x = (fit_w - box_w) // 2
+                        crop_y = (fit_h - box_h) // 2
+                        cropped_cover = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
+                        cropped_cover.blit(scaled_cover, (-crop_x, -crop_y))
+                        mask_surf = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
                         pygame.draw.rect(mask_surf, (255, 255, 255), mask_surf.get_rect(), border_radius=6)
-                        scaled_cover.blit(mask_surf, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
-                        virtual_surface.blit(scaled_cover, (cover_rect.x, cover_rect.y))
+                        cropped_cover.blit(mask_surf, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+                        virtual_surface.blit(cropped_cover, (cover_rect.x, cover_rect.y))
                     
                     if track["title"] == current_track["title"]:
                         title_color = COLOR_SPOTIFY_GREEN
@@ -1459,7 +1554,7 @@ def draw_main_content():
 
 # --- MODAL RENDERING ENGINE ---
 def draw_modals():
-    global modal_close_rect, modal_save_rect, modal_input_rect, modal_desc_rect, modal_playlist_rects, modal_image_picker_rect, lyrics_close_rect, lyrics_save_rect, lyrics_clear_rect, lyrics_textarea_rect, max_music_scroll, lyrics_editor_cursor_timer, max_lyrics_scroll, target_lyrics_scroll, lyrics_text_changed
+    global modal_close_rect, modal_save_rect, modal_input_rect, modal_desc_rect, modal_playlist_rects, modal_image_picker_rect, lyrics_close_rect, lyrics_save_rect, lyrics_clear_rect, lyrics_import_rect, lyrics_textarea_rect, max_music_scroll, lyrics_editor_cursor_timer, max_lyrics_scroll, target_lyrics_scroll, lyrics_text_changed
     mouse_pos = get_virtual_mouse_pos()
     
     portrait_sidebar_h = (80 if (is_portrait and layout_mode == "phone") else (65 if is_portrait else 0))
@@ -1596,14 +1691,16 @@ def draw_modals():
             
         if is_portrait:
             btn_y = lyrics_textarea_rect.bottom + 20
-            start_x = main_x + (main_w - 350) // 2 
+            start_x = main_x + (main_w - 460) // 2 
             lyrics_close_rect = pygame.Rect(start_x, btn_y, 100, 42)
             lyrics_save_rect = pygame.Rect(start_x + 120, btn_y, 110, 42)
             lyrics_clear_rect = pygame.Rect(start_x + 250, btn_y, 100, 42)
+            lyrics_import_rect = pygame.Rect(start_x + 360, btn_y, 100, 42)
         else:
             lyrics_close_rect = pygame.Rect(main_x + 40, 590, 100, 42)
             lyrics_save_rect = pygame.Rect(main_x + 150, 590, 100, 42)
             lyrics_clear_rect = pygame.Rect(main_x + 260, 590, 100, 42)
+            lyrics_import_rect = pygame.Rect(main_x + 370, 590, 100, 42)
         
         c_hovered = lyrics_close_rect.collidepoint(mouse_pos)
         c_clicked = c_hovered and pygame.mouse.get_pressed()[0]
@@ -1625,6 +1722,14 @@ def draw_modals():
         pygame.draw.rect(virtual_surface, cl_bg, lyrics_clear_rect, border_radius=21)
         cl_txt = font_body.render("Clear", True, COLOR_WHITE)
         virtual_surface.blit(cl_txt, (lyrics_clear_rect.x + 28, lyrics_clear_rect.y + 11))
+
+        im_hovered = lyrics_import_rect.collidepoint(mouse_pos)
+        im_clicked = im_hovered and pygame.mouse.get_pressed()[0]
+        im_bg = COLOR_SPOTIFY_GREEN if im_clicked else (COLOR_HOVER if im_hovered else COLOR_LIGHT_GREY)
+        pygame.draw.rect(virtual_surface, im_bg, lyrics_import_rect, border_radius=21)
+        im_txt = font_body.render("Import", True, COLOR_WHITE)
+        im_txt_x = lyrics_import_rect.x + (lyrics_import_rect.width - im_txt.get_width()) // 2
+        virtual_surface.blit(im_txt, (im_txt_x, lyrics_import_rect.y + 11))
         return
 
     if show_create_playlist_modal:
@@ -1777,7 +1882,7 @@ def draw_modals():
             virtual_surface.set_clip(None)
 
 def draw_media_bar():
-    global play_btn_rect, prev_btn_rect, next_btn_rect, minus_10_btn_rect, plus_10_btn_rect, mediabar_add_btn_rect, mediabar_lyrics_btn_rect, star_btn_rect, shuffle_btn_rect, progress_bar_rect, mediabar_cover_btn_rect
+    global play_btn_rect, prev_btn_rect, next_btn_rect, minus_10_btn_rect, plus_10_btn_rect, mediabar_add_btn_rect, mediabar_lyrics_btn_rect, star_btn_rect, shuffle_btn_rect, progress_bar_rect, mediabar_cover_btn_rect, _lyric_cache_key, _lyric_cache_parsed
     
     if current_track["title"] == "Select a song" or show_lyrics_editor_view or show_create_playlist_modal:
         return
@@ -1813,22 +1918,29 @@ def draw_media_bar():
     current_lyrics_str = song_lyrics_database.get(track_ref, "")
     active_lyric_text = ""
     if current_lyrics_str:
-        lyric_lines = current_lyrics_str.split('\n')
+        cache_key = (track_ref, current_lyrics_str)
+        if cache_key != _lyric_cache_key:
+            parsed_lines = []
+            for line in current_lyrics_str.split('\n'):
+                line_stripped = line.strip()
+                if line_stripped.startswith('[') and ']' in line_stripped:
+                    try:
+                        time_part, lyric_part = line_stripped.split(']', 1)
+                        time_part = time_part[1:].strip()
+                        if ':' in time_part:
+                            t_parts = time_part.split(':')
+                            lyric_time = float(t_parts[0]) * 60 + float(t_parts[1])
+                            parsed_lines.append((lyric_time, lyric_part.strip()))
+                    except:
+                        pass
+            _lyric_cache_parsed = parsed_lines
+            _lyric_cache_key = cache_key
+
         best_time = -1
-        for line in lyric_lines:
-            line_stripped = line.strip()
-            if line_stripped.startswith('[') and ']' in line_stripped:
-                try:
-                    time_part, lyric_part = line_stripped.split(']', 1)
-                    time_part = time_part[1:].strip()
-                    if ':' in time_part:
-                        t_parts = time_part.split(':')
-                        lyric_time = float(t_parts[0]) * 60 + float(t_parts[1])
-                        if lyric_time <= elapsed_sec and lyric_time > best_time:
-                            best_time = lyric_time
-                            active_lyric_text = lyric_part.strip()
-                except:
-                    pass
+        for lyric_time, lyric_text in _lyric_cache_parsed:
+            if lyric_time <= elapsed_sec and lyric_time > best_time:
+                best_time = lyric_time
+                active_lyric_text = lyric_text
 
     # --- PHONE MODE: taller 2-row bar ---
     # Row 1 (top): track title + artist left, lyrics/add/star icons right
@@ -2505,6 +2617,12 @@ while running:
                             song_lyrics_database[track_ref] = ""
                             lyrics_cursor_pos = 0
                             lyrics_text_changed = True
+                        elif lyrics_import_rect.collidepoint(mouse_pos):
+                            is_browsing_for_cover = True
+                            browsing_cover_target = "lyrics_import"
+                            show_lyrics_editor_view = False
+                            update_browser_contents()
+                            search_input_active = False
                         elif lyrics_textarea_rect.collidepoint(mouse_pos):
                             search_input_active = True
                             active_input_field = "lyrics"
@@ -2640,15 +2758,30 @@ while running:
                             virtual_surface = pygame.Surface((WIDTH, HEIGHT))
                             save_app_data()
 
-                    if is_browsing_for_cover and (current_page == "Your Library" or browsing_cover_target == "track_cover"):
+                    if is_browsing_for_cover and (current_page == "Your Library" or browsing_cover_target in ("track_cover", "lyrics_import")):
                         if cancel_browser_btn_rect.collidepoint(mouse_pos):
                             is_browsing_for_cover = False
+                            if browsing_cover_target == "lyrics_import":
+                                show_lyrics_editor_view = True
                         else:
                             for rect, item in browser_rects:
                                 if rect.collidepoint(mouse_pos):
                                     if item["is_dir"]:
                                         current_browser_path = item["path"]
                                         update_browser_contents()
+                                    elif browsing_cover_target == "lyrics_import":
+                                        try:
+                                            with open(item["path"], "r", encoding="utf-8", errors="replace") as lyrics_file:
+                                                imported_lyrics_text = lyrics_file.read()
+                                            track_ref = current_track.get("path", "")
+                                            song_lyrics_database[track_ref] = imported_lyrics_text
+                                            lyrics_cursor_pos = len(imported_lyrics_text)
+                                            lyrics_text_changed = True
+                                            save_app_data()
+                                        except Exception as lyrics_err:
+                                            print(f"Error importing lyrics file: {lyrics_err}")
+                                        is_browsing_for_cover = False
+                                        show_lyrics_editor_view = True
                                     else:
                                         try:
                                             raw_img = pygame.image.load(item["path"])
