@@ -723,7 +723,7 @@ def draw_sidebar():
     sidebar_rects = [] 
     
     _phone = is_portrait and layout_mode == "phone"
-    content_bottom_margin = (100 if _phone else (104 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
+    content_bottom_margin = (100 if _phone else (144 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
     
     if not is_portrait:
         sidebar_rect = pygame.Rect(0, 0, 230, HEIGHT - content_bottom_margin)
@@ -801,7 +801,7 @@ def draw_main_content():
     custom_playlist_rects = []
     
     _phone = is_portrait and layout_mode == "phone"
-    content_bottom_margin = (100 if _phone else (104 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
+    content_bottom_margin = (100 if _phone else (144 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
     portrait_sidebar_h = (80 if (is_portrait and layout_mode == "phone") else (65 if is_portrait else 0))
     
     main_x = 0 if is_portrait else 230
@@ -977,8 +977,11 @@ def draw_main_content():
         path_lbl = font_small.render(f"Path: {current_browser_path}", True, COLOR_SPOTIFY_GREEN)
         virtual_surface.blit(path_lbl, (content_pad_x, 75))
         
-        select_folder_btn_rect = pygame.Rect(main_x + main_w - 270, 35, 160, 35)
-        cancel_browser_btn_rect = pygame.Rect(main_x + main_w - 100, 35, 90, 35)
+        if not is_portrait:
+            cancel_browser_btn_rect = pygame.Rect(main_x + main_w - 250, 35, 90, 35)
+        else:
+            cancel_browser_btn_rect = pygame.Rect(main_x + main_w - 130, 35, 90, 35)
+        select_folder_btn_rect = pygame.Rect(cancel_browser_btn_rect.x - 170, 35, 160, 35)
         
         sf_hovered = select_folder_btn_rect.collidepoint(mouse_pos)
         sf_clicked = sf_hovered and pygame.mouse.get_pressed()[0]
@@ -988,9 +991,10 @@ def draw_main_content():
             sf_color = COLOR_SPOTIFY_GREEN if sf_hovered else COLOR_LIGHT_GREY
         pygame.draw.rect(virtual_surface, sf_color, select_folder_btn_rect, border_radius=15)
         
-        sf_text = "✓ Confirm File" if is_browsing_for_cover else "✓ Select Current"
+        sf_text = "Confirm File" if is_browsing_for_cover else "Select Current"
         sf_lbl = font_small.render(sf_text, True, COLOR_WHITE if sf_color == COLOR_LIGHT_GREY else COLOR_BLACK)
-        virtual_surface.blit(sf_lbl, (select_folder_btn_rect.x + 25, 44))
+        sf_lbl_x = select_folder_btn_rect.x + (select_folder_btn_rect.width - sf_lbl.get_width()) // 2
+        virtual_surface.blit(sf_lbl, (sf_lbl_x, 44))
         
         cc_hovered = cancel_browser_btn_rect.collidepoint(mouse_pos)
         cc_clicked = cc_hovered and pygame.mouse.get_pressed()[0]
@@ -1044,7 +1048,7 @@ def draw_main_content():
         if not is_portrait:
             close_settings_btn_rect = pygame.Rect(main_x + main_w - 250, 35, 90, 35)
         else:
-            close_settings_btn_rect = pygame.Rect(main_x + main_w - 110, 35, 90, 35)
+            close_settings_btn_rect = pygame.Rect(main_x + main_w - 130, 35, 90, 35)
             
         cs_hovered = close_settings_btn_rect.collidepoint(mouse_pos)
         cs_clicked = cs_hovered and pygame.mouse.get_pressed()[0]
@@ -1461,7 +1465,7 @@ def draw_modals():
     main_x = 0 if is_portrait else 230
     main_w = WIDTH - main_x
     _phone = is_portrait and layout_mode == "phone"
-    content_bottom_margin = (100 if _phone else (104 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
+    content_bottom_margin = (100 if _phone else (144 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
     main_h = HEIGHT - content_bottom_margin - portrait_sidebar_h
     content_pad_x = main_x + 30
     
@@ -1767,6 +1771,51 @@ def draw_media_bar():
     mouse_pos = get_virtual_mouse_pos()
     is_phone_mode = is_portrait and layout_mode == "phone"
 
+    # --- Compute playback position early so both layout branches can show the active lyric line ---
+    elapsed_sec = 0.0
+    remaining_sec = 0.0
+    percent_fill = 0.0
+
+    if is_dragging_progress:
+        elapsed_sec = min(track_duration, drag_seek_target)
+        remaining_sec = max(0.0, track_duration - elapsed_sec)
+        percent_fill = min(1.0, max(0.0, elapsed_sec / track_duration))
+    elif track_duration > 0 and music_loaded:
+        if current_backend == "android" and android_media_player:
+            try: elapsed_sec = android_media_player.getCurrentPosition() / 1000.0
+            except: elapsed_sec = 0.0
+        else:
+            mix_pos = pygame.mixer.music.get_pos()
+            if mix_pos == -1:
+                elapsed_sec = track_duration if current_track.get("_has_started", False) else track_start_accumulator
+            else:
+                elapsed_sec = track_start_accumulator + (mix_pos / 1000.0)
+
+        elapsed_sec = min(track_duration, elapsed_sec)
+        remaining_sec = max(0.0, track_duration - elapsed_sec)
+        percent_fill = min(1.0, max(0.0, elapsed_sec / track_duration))
+
+    track_ref = current_track.get("path", "")
+    current_lyrics_str = song_lyrics_database.get(track_ref, "")
+    active_lyric_text = ""
+    if current_lyrics_str:
+        lyric_lines = current_lyrics_str.split('\n')
+        best_time = -1
+        for line in lyric_lines:
+            line_stripped = line.strip()
+            if line_stripped.startswith('[') and ']' in line_stripped:
+                try:
+                    time_part, lyric_part = line_stripped.split(']', 1)
+                    time_part = time_part[1:].strip()
+                    if ':' in time_part:
+                        t_parts = time_part.split(':')
+                        lyric_time = float(t_parts[0]) * 60 + float(t_parts[1])
+                        if lyric_time <= elapsed_sec and lyric_time > best_time:
+                            best_time = lyric_time
+                            active_lyric_text = lyric_part.strip()
+                except:
+                    pass
+
     # --- PHONE MODE: taller 2-row bar ---
     # Row 1 (top): track title + artist left, lyrics/add/star icons right
     # Row 2 (mid): -10  ◀  ▶  ▶  +10  shuffle  — all centred
@@ -1940,32 +1989,62 @@ def draw_media_bar():
         progress_bar_y = ctrl_y + 34
         progress_bar_rect = pygame.Rect(progress_bar_x, progress_bar_y - 10, progress_bar_width, 24)
 
-        # --- Row 4: song title + artist, combined on one line, centred under the timer bar ---
-        now_playing_title = font_body.render(
-            current_track["title"] if len(current_track["title"]) < 16 else current_track["title"][:13] + "...",
-            True, COLOR_WHITE)
-        now_playing_artist = font_small.render(
-            " - " + (current_track["artist"] if len(current_track["artist"]) < 16 else current_track["artist"][:13] + "..."),
-            True, COLOR_TEXT_MUTED)
-        combined_w = now_playing_title.get_width() + now_playing_artist.get_width()
-        title_row_y = progress_bar_y + 18
-        title_row_x = (WIDTH - combined_w) // 2
-        virtual_surface.blit(now_playing_title, (title_row_x, title_row_y))
-        virtual_surface.blit(now_playing_artist, (title_row_x + now_playing_title.get_width(), title_row_y + 2))
+        # --- Row 4: active lyric line (falls back to title+artist if no lyric is active), spans available width, centred under the timer bar ---
+        # Available width is bounded by the icon row's own left/right edges (lyrics icon to cover icon)
+        text_bound_left = mediabar_lyrics_btn_rect.left
+        text_bound_right = mediabar_cover_btn_rect.right
+        available_text_w = text_bound_right - text_bound_left
+
+        if active_lyric_text:
+            display_text = active_lyric_text
+            display_color = COLOR_SPOTIFY_GREEN
+            trimmed_text = display_text
+            now_playing_title = font_body.render(trimmed_text, True, display_color)
+            while trimmed_text and now_playing_title.get_width() > available_text_w:
+                trimmed_text = trimmed_text[:-1]
+                now_playing_title = font_body.render(trimmed_text + "...", True, display_color)
+            title_row_y = progress_bar_y + 18
+            title_row_x = text_bound_left + (available_text_w - now_playing_title.get_width()) // 2
+            virtual_surface.blit(now_playing_title, (title_row_x, title_row_y))
+        else:
+            full_title = current_track["title"]
+            full_artist = " - " + current_track["artist"]
+
+            def _render_title_artist(title_str, artist_str):
+                t_surf = font_body.render(title_str, True, COLOR_WHITE)
+                a_surf = font_small.render(artist_str, True, COLOR_TEXT_MUTED)
+                return t_surf, a_surf
+
+            now_playing_title, now_playing_artist = _render_title_artist(full_title, full_artist)
+            combined_w = now_playing_title.get_width() + now_playing_artist.get_width()
+
+            if combined_w > available_text_w:
+                # Progressively shorten the title (keep full artist) until it fits, then add "..."
+                trimmed_title = full_title
+                while trimmed_title and combined_w > available_text_w:
+                    trimmed_title = trimmed_title[:-1]
+                    now_playing_title = font_body.render(trimmed_title + "...", True, COLOR_WHITE)
+                    combined_w = now_playing_title.get_width() + now_playing_artist.get_width()
+
+            title_row_y = progress_bar_y + 18
+            title_row_x = text_bound_left + (available_text_w - combined_w) // 2
+            virtual_surface.blit(now_playing_title, (title_row_x, title_row_y))
+            virtual_surface.blit(now_playing_artist, (title_row_x + now_playing_title.get_width(), title_row_y + 2))
 
     else:
         # -----------------------------------------------------------------------
         # ORIGINAL non-phone layout (desktop / tablet portrait) — UNCHANGED
         # -----------------------------------------------------------------------
-        bar_height = 104 if is_portrait else 90
+        bar_height = 144 if is_portrait else 90
         bar_y = HEIGHT - bar_height - (65 if is_portrait else 0)   # sit above bottom tab bar in portrait
         bar_rect = pygame.Rect(0, bar_y, WIDTH, bar_height)
         pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, bar_rect)
 
         now_playing_title = font_body.render(current_track["title"] if len(current_track["title"]) < 20 else current_track["title"][:17] + "...", True, COLOR_WHITE)
         now_playing_artist = font_small.render(current_track["artist"] if len(current_track["artist"]) < 20 else current_track["artist"][:17] + "...", True, COLOR_TEXT_MUTED)
-        virtual_surface.blit(now_playing_title, (20, bar_y + 25))
-        virtual_surface.blit(now_playing_artist, (20, bar_y + 45))
+        if not (is_portrait and active_lyric_text):
+            virtual_surface.blit(now_playing_title, (20, bar_y + 25))
+            virtual_surface.blit(now_playing_artist, (20, bar_y + 45))
 
         center_x = WIDTH // 2
         center_y = (bar_y + 40) if is_portrait else (HEIGHT - 60)
@@ -2099,30 +2178,47 @@ def draw_media_bar():
         progress_bar_x = center_x - (progress_bar_width // 2) if is_portrait else btn_offset_x - (progress_bar_width // 2) + 20
         progress_bar_y = (bar_y + 80) if is_portrait else (HEIGHT - 25)
         progress_bar_rect = pygame.Rect(progress_bar_x, progress_bar_y - 10, progress_bar_width, 24)
-    
-    elapsed_sec = 0.0
-    remaining_sec = 0.0
-    percent_fill = 0.0
-    
-    if is_dragging_progress:
-        elapsed_sec = min(track_duration, drag_seek_target)
-        remaining_sec = max(0.0, track_duration - elapsed_sec)
-        percent_fill = min(1.0, max(0.0, elapsed_sec / track_duration))
-    elif track_duration > 0 and music_loaded:
-        if current_backend =="android" and android_media_player:
-            try: elapsed_sec = android_media_player.getCurrentPosition() / 1000.0
-            except: elapsed_sec = 0.0
-        else:
-            mix_pos = pygame.mixer.music.get_pos()
-            if mix_pos == -1:
-                elapsed_sec = track_duration if current_track.get("_has_started", False) else track_start_accumulator
-            else:
-                elapsed_sec = track_start_accumulator + (mix_pos / 1000.0)
-            
-        elapsed_sec = min(track_duration, elapsed_sec)
-        remaining_sec = max(0.0, track_duration - elapsed_sec)
-        percent_fill = min(1.0, max(0.0, elapsed_sec / track_duration))
 
+        if is_portrait:
+            # --- PORTRAIT: lyric line sits under the song timer bar, centred, capped to the same width as the timer bar ---
+            lyric_row_y = progress_bar_y + 28
+            lyric_max_w = progress_bar_width
+            lyric_clip_rect = pygame.Rect(progress_bar_x, lyric_row_y, lyric_max_w, 18)
+            if active_lyric_text:
+                trimmed_text = active_lyric_text
+                lyric_surf = font_small.render(trimmed_text, True, COLOR_SPOTIFY_GREEN)
+                while trimmed_text and lyric_surf.get_width() > lyric_max_w:
+                    trimmed_text = trimmed_text[:-1]
+                    lyric_surf = font_small.render(trimmed_text + "...", True, COLOR_SPOTIFY_GREEN)
+                if trimmed_text:
+                    lyric_x = progress_bar_x + (lyric_max_w - lyric_surf.get_width()) // 2
+                    virtual_surface.set_clip(lyric_clip_rect)
+                    virtual_surface.blit(lyric_surf, (lyric_x, lyric_row_y))
+                    virtual_surface.set_clip(None)
+            # else: gap stays invisible/empty, nothing drawn
+
+        if not is_portrait:
+            # --- LANDSCAPE: invisible box barrier so the lyric ticker can never go outside it ---
+            # Anchored well clear of the icons, lower toward the bottom of the bar;
+            # if there's no active lyric the gap simply stays invisible
+            lyric_clip_left = btn_offset_x + 280
+            lyric_clip_right = WIDTH - 30
+            lyric_row_y = center_y - 7
+            if lyric_clip_right > lyric_clip_left and active_lyric_text:
+                lyric_clip_w = max(0, lyric_clip_right - lyric_clip_left)
+                lyric_clip_rect = pygame.Rect(lyric_clip_left, lyric_row_y, lyric_clip_w, 24)
+                trimmed_text = active_lyric_text
+                lyric_surf = font_small.render(trimmed_text, True, COLOR_SPOTIFY_GREEN)
+                # Trim with a safety margin so the rendered text never reaches the box edge
+                while trimmed_text and lyric_surf.get_width() > max(0, lyric_clip_w - 8):
+                    trimmed_text = trimmed_text[:-1]
+                    lyric_surf = font_small.render(trimmed_text + "...", True, COLOR_SPOTIFY_GREEN)
+                if trimmed_text:
+                    virtual_surface.set_clip(lyric_clip_rect)
+                    virtual_surface.blit(lyric_surf, (lyric_clip_left, lyric_row_y))
+                    virtual_surface.set_clip(None)
+            # else: gap stays invisible/empty, nothing drawn
+    
     pygame.draw.rect(virtual_surface, COLOR_HOVER, (progress_bar_x, progress_bar_y, progress_bar_width, 4), border_radius=2)
     pygame.draw.rect(virtual_surface, COLOR_WHITE, (progress_bar_x, progress_bar_y, int(progress_bar_width * percent_fill), 4), border_radius=2)
     
@@ -2135,32 +2231,6 @@ def draw_media_bar():
     virtual_surface.blit(time_start, (progress_bar_x - 35, progress_bar_y - 6))
     virtual_surface.blit(time_end, (progress_bar_x + progress_bar_width + 10, progress_bar_y - 6))
 
-    track_ref = current_track.get("path", "")
-    current_lyrics_str = song_lyrics_database.get(track_ref, "")
-    if current_lyrics_str:
-        lyric_lines = current_lyrics_str.split('\n')
-        active_lyric_text = ""
-        best_time = -1
-        for line in lyric_lines:
-            line_stripped = line.strip()
-            if line_stripped.startswith('[') and ']' in line_stripped:
-                try:
-                    time_part, lyric_part = line_stripped.split(']', 1)
-                    time_part = time_part[1:].strip()
-                    if ':' in time_part:
-                        t_parts = time_part.split(':')
-                        lyric_time = float(t_parts[0]) * 60 + float(t_parts[1])
-                        if lyric_time <= elapsed_sec and lyric_time > best_time:
-                            best_time = lyric_time
-                            active_lyric_text = lyric_part.strip()
-                except:
-                    pass
-        if active_lyric_text:
-            lyric_surf = font_small.render(active_lyric_text, True, COLOR_SPOTIFY_GREEN)
-            if is_portrait:
-                virtual_surface.blit(lyric_surf, ((WIDTH - lyric_surf.get_width()) // 2, HEIGHT - 30))
-            else:
-                virtual_surface.blit(lyric_surf, (WIDTH - lyric_surf.get_width() - 30, HEIGHT - 55))
 
 # --- MAIN LOOP ---
 load_app_data()
@@ -2676,7 +2746,7 @@ while running:
                                 main_x = 0 if is_portrait else 230
                                 main_w = WIDTH - main_x
                                 
-                                event_margin = (100 if (is_portrait and layout_mode == "phone") else (104 if is_portrait else 90)) if current_track["title"] != "Select a song" else 0
+                                event_margin = (100 if (is_portrait and layout_mode == "phone") else (144 if is_portrait else 90)) if current_track["title"] != "Select a song" else 0
                                 main_h_event = HEIGHT - event_margin - portrait_sidebar_h
                                 
                                 if current_page == "Your Library" and (viewing_liked_playlist or selected_custom_playlist_name):
