@@ -1053,7 +1053,7 @@ def draw_main_content():
         if is_browsing_for_cover and browsing_cover_target == "lyrics_import":
             title_string = "Import lyrics file (.txt)"
         elif is_browsing_for_cover:
-            title_string = "Import custom cover picture (.png, .jpg)"
+            title_string = "Import Cover (.png, .jpg)"
         else:
             title_string = "Device Storage Explorer"
         browser_title = font_title.render(title_string, True, COLOR_WHITE)
@@ -1831,7 +1831,7 @@ def draw_modals():
     elif show_add_to_playlist_modal:
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, main_h))
         
-        lbl = font_title.render("Pick a playlist to add it to", True, COLOR_WHITE)
+        lbl = font_title.render("Add to Playlist", True, COLOR_WHITE)
         virtual_surface.blit(lbl, (content_pad_x, 40))
         
         track_lbl_text = f"Song: {track_to_add_to_playlist['title']}" if track_to_add_to_playlist else ""
@@ -1884,7 +1884,7 @@ def draw_modals():
 def draw_media_bar():
     global play_btn_rect, prev_btn_rect, next_btn_rect, minus_10_btn_rect, plus_10_btn_rect, mediabar_add_btn_rect, mediabar_lyrics_btn_rect, star_btn_rect, shuffle_btn_rect, progress_bar_rect, mediabar_cover_btn_rect, _lyric_cache_key, _lyric_cache_parsed
     
-    if current_track["title"] == "Select a song" or show_lyrics_editor_view or show_create_playlist_modal:
+    if current_track["title"] == "Select a song" or show_lyrics_editor_view or show_create_playlist_modal or show_add_to_playlist_modal or is_browsing_for_cover:
         return
 
     mouse_pos = get_virtual_mouse_pos()
