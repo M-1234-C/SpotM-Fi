@@ -806,7 +806,7 @@ def draw_sidebar():
     content_bottom_margin = (100 if _phone else (144 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
     
     if not is_portrait:
-        sidebar_rect = pygame.Rect(0, 0, 230, HEIGHT - content_bottom_margin)
+        sidebar_rect = pygame.Rect(0, 0, 230, HEIGHT)
         pygame.draw.rect(virtual_surface, COLOR_DARK_GREY, sidebar_rect)
         
         logo_text = font_title.render("SpotM-Fi", True, COLOR_SPOTIFY_GREEN)
@@ -820,7 +820,7 @@ def draw_sidebar():
             sidebar_rects.append((item_rect, item))
             
             is_hovered = item_rect.collidepoint(mouse_pos)
-            is_clicked = is_hovered and pygame.mouse.get_pressed()[0]
+            is_clicked = is_hovered and mouse_held
             
             if is_clicked:
                 pygame.draw.rect(virtual_surface, (60, 60, 60), item_rect, border_radius=5)
@@ -848,7 +848,7 @@ def draw_sidebar():
             sidebar_rects.append((item_rect, item))
             
             is_hovered = item_rect.collidepoint(mouse_pos)
-            is_clicked = is_hovered and pygame.mouse.get_pressed()[0]
+            is_clicked = is_hovered and mouse_held
             
             if is_clicked:
                 text_color = COLOR_SPOTIFY_GREEN
@@ -968,7 +968,7 @@ def draw_main_content():
         
         playlist_play_btn_rect = pygame.Rect(content_pad_x, 215, 50, 50)
         is_p_hovered = playlist_play_btn_rect.collidepoint(mouse_pos)
-        is_p_clicked = is_p_hovered and pygame.mouse.get_pressed()[0]
+        is_p_clicked = is_p_hovered and mouse_held
         
         if is_p_clicked:
             pygame.draw.circle(virtual_surface, (20, 150, 65), (content_pad_x + 25, 240), 23)
@@ -1019,7 +1019,7 @@ def draw_main_content():
                 track_rects.append((row_rect, track))
                 
                 is_row_hovered = row_rect.collidepoint(mouse_pos)
-                is_row_clicked = is_row_hovered and pygame.mouse.get_pressed()[0]
+                is_row_clicked = is_row_hovered and mouse_held
                 
                 if is_row_clicked:
                     pygame.draw.rect(virtual_surface, (60, 60, 60), row_rect, border_radius=6)
@@ -1050,6 +1050,7 @@ def draw_main_content():
 
     # --- STORAGE BROWSER ---
     elif (is_browsing_storage or is_browsing_for_cover) and (current_page in ["Search", "Your Library"] or browsing_cover_target in ("track_cover", "lyrics_import")):
+        pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT))
         if is_browsing_for_cover and browsing_cover_target == "lyrics_import":
             title_string = "Import lyrics file (.txt)"
         elif is_browsing_for_cover:
@@ -1069,7 +1070,7 @@ def draw_main_content():
         select_folder_btn_rect = pygame.Rect(cancel_browser_btn_rect.x - 170, 35, 160, 35)
         
         sf_hovered = select_folder_btn_rect.collidepoint(mouse_pos)
-        sf_clicked = sf_hovered and pygame.mouse.get_pressed()[0]
+        sf_clicked = sf_hovered and mouse_held
         if sf_clicked:
             sf_color = (20, 150, 65)
         else:
@@ -1082,7 +1083,7 @@ def draw_main_content():
         virtual_surface.blit(sf_lbl, (sf_lbl_x, 44))
         
         cc_hovered = cancel_browser_btn_rect.collidepoint(mouse_pos)
-        cc_clicked = cc_hovered and pygame.mouse.get_pressed()[0]
+        cc_clicked = cc_hovered and mouse_held
         if cc_clicked:
             cc_color = (30, 30, 30)
         else:
@@ -1093,10 +1094,11 @@ def draw_main_content():
         
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
         
+        browser_available_h = HEIGHT - portrait_sidebar_h
         total_content_height = len(browser_items) * 42
-        max_browser_scroll = max(0, total_content_height - (main_h - 130) + 30)
+        max_browser_scroll = max(0, total_content_height - (browser_available_h - 130) + 30)
         
-        clip_rect = pygame.Rect(main_x, 130, main_w, main_h - 130)
+        clip_rect = pygame.Rect(main_x, 130, main_w, browser_available_h - 130)
         virtual_surface.set_clip(clip_rect)
         
         y_offset = 130 - int(browser_scroll_offset)
@@ -1106,7 +1108,7 @@ def draw_main_content():
                 browser_rects.append((item_row_rect, item))
                 
                 is_b_hovered = item_row_rect.collidepoint(mouse_pos)
-                is_b_clicked = is_b_hovered and pygame.mouse.get_pressed()[0]
+                is_b_clicked = is_b_hovered and mouse_held
                 
                 if is_b_clicked:
                     pygame.draw.rect(virtual_surface, (60, 60, 60), item_row_rect, border_radius=5)
@@ -1136,7 +1138,7 @@ def draw_main_content():
             close_settings_btn_rect = pygame.Rect(main_x + main_w - 130, 35, 90, 35)
             
         cs_hovered = close_settings_btn_rect.collidepoint(mouse_pos)
-        cs_clicked = cs_hovered and pygame.mouse.get_pressed()[0]
+        cs_clicked = cs_hovered and mouse_held
         if cs_clicked:
             cs_color = (30, 30, 30)
         else:
@@ -1216,7 +1218,7 @@ def draw_main_content():
 
             # Draw + Add Folder
             is_af_hovered = add_folder_btn_rect.collidepoint(mouse_pos)
-            is_af_clicked = is_af_hovered and pygame.mouse.get_pressed()[0]
+            is_af_clicked = is_af_hovered and mouse_held
             if is_af_clicked:
                 pygame.draw.rect(virtual_surface, (20, 150, 65), add_folder_btn_rect, border_radius=20)
                 btn_color = COLOR_WHITE
@@ -1233,7 +1235,7 @@ def draw_main_content():
             # Draw settings cog (only when directories exist)
             if saved_directories:
                 is_st_hovered = settings_btn_rect.collidepoint(mouse_pos)
-                is_st_clicked = is_st_hovered and pygame.mouse.get_pressed()[0]
+                is_st_clicked = is_st_hovered and mouse_held
                 if is_st_clicked:
                     box_bg_color = (20, 150, 65); st_color = COLOR_WHITE
                 elif is_st_hovered:
@@ -1253,7 +1255,7 @@ def draw_main_content():
                 add_folder_btn_rect = pygame.Rect(main_x + main_w - 220, 80, 150, 40)
 
             is_af_hovered = add_folder_btn_rect.collidepoint(mouse_pos)
-            is_af_clicked = is_af_hovered and pygame.mouse.get_pressed()[0]
+            is_af_clicked = is_af_hovered and mouse_held
             if is_af_clicked:
                 pygame.draw.rect(virtual_surface, (20, 150, 65), add_folder_btn_rect, border_radius=20)
                 btn_color = COLOR_WHITE
@@ -1273,7 +1275,7 @@ def draw_main_content():
                     settings_btn_rect = pygame.Rect(main_x + main_w - 55, 80, 40, 40)
 
                 is_st_hovered = settings_btn_rect.collidepoint(mouse_pos)
-                is_st_clicked = is_st_hovered and pygame.mouse.get_pressed()[0]
+                is_st_clicked = is_st_hovered and mouse_held
                 if is_st_clicked:
                     box_bg_color = (20, 150, 65); st_color = COLOR_WHITE
                 elif is_st_hovered:
@@ -1365,7 +1367,7 @@ def draw_main_content():
                     track_rects.append((card_rect, track))
                     
                     is_card_hovered = card_rect.collidepoint(mouse_pos)
-                    is_card_clicked = is_card_hovered and pygame.mouse.get_pressed()[0]
+                    is_card_clicked = is_card_hovered and mouse_held
                     
                     if is_card_clicked:
                         pygame.draw.rect(virtual_surface, (45, 45, 45), card_rect, border_radius=8)
@@ -1424,7 +1426,7 @@ def draw_main_content():
 
         # Desktop/Tablet button — green when active
         is_dt_hovered = desktop_btn_rect.collidepoint(mouse_pos)
-        is_dt_clicked = is_dt_hovered and pygame.mouse.get_pressed()[0]
+        is_dt_clicked = is_dt_hovered and mouse_held
         if layout_mode == "desktop":
             dt_color = COLOR_SPOTIFY_GREEN
             dt_text_color = COLOR_BLACK
@@ -1445,7 +1447,7 @@ def draw_main_content():
 
         # Phone button — green when active
         is_ph_hovered = phone_btn_rect.collidepoint(mouse_pos)
-        is_ph_clicked = is_ph_hovered and pygame.mouse.get_pressed()[0]
+        is_ph_clicked = is_ph_hovered and mouse_held
         if layout_mode == "phone":
             ph_color = COLOR_SPOTIFY_GREEN
             ph_text_color = COLOR_BLACK
@@ -1471,7 +1473,7 @@ def draw_main_content():
         
         create_playlist_btn_rect = pygame.Rect(content_pad_x + 130, 35, 40, 40)
         is_cp_hovered = create_playlist_btn_rect.collidepoint(mouse_pos)
-        is_cp_clicked = is_cp_hovered and pygame.mouse.get_pressed()[0]
+        is_cp_clicked = is_cp_hovered and mouse_held
         
         if is_cp_clicked:
             cp_box_color = (20, 150, 65)
@@ -1492,7 +1494,7 @@ def draw_main_content():
         
         liked_songs_card_rect = pygame.Rect(content_pad_x, 95, 160, 200)
         is_lib_hovered = liked_songs_card_rect.collidepoint(mouse_pos)
-        is_lib_clicked = is_lib_hovered and pygame.mouse.get_pressed()[0]
+        is_lib_clicked = is_lib_hovered and mouse_held
         
         if is_lib_clicked:
             pygame.draw.rect(virtual_surface, (45, 45, 45), liked_songs_card_rect, border_radius=8)
@@ -1532,7 +1534,7 @@ def draw_main_content():
             custom_playlist_rects.append((c_rect, p_name))
             
             is_c_hover = c_rect.collidepoint(mouse_pos)
-            if is_c_hover and pygame.mouse.get_pressed()[0]:
+            if is_c_hover and mouse_held:
                 pygame.draw.rect(virtual_surface, (45, 45, 45), c_rect, border_radius=8)
             elif is_c_hover:
                 pygame.draw.rect(virtual_surface, COLOR_HOVER, c_rect, border_radius=8)
@@ -1566,7 +1568,7 @@ def draw_modals():
     content_pad_x = main_x + 30
     
     if show_lyrics_editor_view:
-        pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT))
+        pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
         
         track_ref = current_track.get("path", "")
         current_lyrics_str = song_lyrics_database.get(track_ref, "")
@@ -1576,7 +1578,7 @@ def draw_modals():
         virtual_surface.blit(header_lbl, (main_x + 40, 45))
         virtual_surface.blit(track_lbl, (main_x + 40, 105))
         
-        lyrics_box_h = HEIGHT - 250 if is_portrait else 420
+        lyrics_box_h = HEIGHT - portrait_sidebar_h - 250 if is_portrait else 420
         lyrics_textarea_rect = pygame.Rect(main_x + 40, 145, main_w - 80, lyrics_box_h)
         pygame.draw.rect(virtual_surface, COLOR_CARD_BG, lyrics_textarea_rect, border_radius=8)
         
@@ -1703,28 +1705,28 @@ def draw_modals():
             lyrics_import_rect = pygame.Rect(main_x + 370, 590, 100, 42)
         
         c_hovered = lyrics_close_rect.collidepoint(mouse_pos)
-        c_clicked = c_hovered and pygame.mouse.get_pressed()[0]
+        c_clicked = c_hovered and mouse_held
         c_bg = COLOR_SPOTIFY_GREEN if c_clicked else (COLOR_HOVER if c_hovered else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, c_bg, lyrics_close_rect, border_radius=21)
         c_txt = font_body.render("Close", True, COLOR_WHITE)
         virtual_surface.blit(c_txt, (lyrics_close_rect.x + 28, lyrics_close_rect.y + 11))
         
         s_hovered = lyrics_save_rect.collidepoint(mouse_pos)
-        s_clicked = s_hovered and pygame.mouse.get_pressed()[0]
+        s_clicked = s_hovered and mouse_held
         s_bg = COLOR_SPOTIFY_GREEN if s_clicked else (COLOR_HOVER if s_hovered else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, s_bg, lyrics_save_rect, border_radius=21)
         s_txt = font_body.render("Save", True, COLOR_WHITE)
         virtual_surface.blit(s_txt, (lyrics_save_rect.x + 30, lyrics_save_rect.y + 11))
 
         cl_hovered = lyrics_clear_rect.collidepoint(mouse_pos)
-        cl_clicked = cl_hovered and pygame.mouse.get_pressed()[0]
+        cl_clicked = cl_hovered and mouse_held
         cl_bg = COLOR_SPOTIFY_GREEN if cl_clicked else (COLOR_HOVER if cl_hovered else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, cl_bg, lyrics_clear_rect, border_radius=21)
         cl_txt = font_body.render("Clear", True, COLOR_WHITE)
         virtual_surface.blit(cl_txt, (lyrics_clear_rect.x + 28, lyrics_clear_rect.y + 11))
 
         im_hovered = lyrics_import_rect.collidepoint(mouse_pos)
-        im_clicked = im_hovered and pygame.mouse.get_pressed()[0]
+        im_clicked = im_hovered and mouse_held
         im_bg = COLOR_SPOTIFY_GREEN if im_clicked else (COLOR_HOVER if im_hovered else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, im_bg, lyrics_import_rect, border_radius=21)
         im_txt = font_body.render("Import", True, COLOR_WHITE)
@@ -1829,7 +1831,7 @@ def draw_modals():
         virtual_surface.blit(s_txt, (modal_save_rect.x + 32, modal_save_rect.y + 11))
 
     elif show_add_to_playlist_modal:
-        pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, main_h))
+        pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
         
         lbl = font_title.render("Add to Playlist", True, COLOR_WHITE)
         virtual_surface.blit(lbl, (content_pad_x, 40))
@@ -1856,10 +1858,11 @@ def draw_modals():
             virtual_surface.blit(hint_lbl, (content_pad_x, 180))
             max_music_scroll = 0
         else:
+            playlist_available_h = HEIGHT - portrait_sidebar_h
             total_content_height = len(p_names) * 55
-            max_music_scroll = max(0, total_content_height - (main_h - 130) + 30)
+            max_music_scroll = max(0, total_content_height - (playlist_available_h - 130) + 30)
             
-            clip_rect = pygame.Rect(main_x, 130, main_w, main_h - 130)
+            clip_rect = pygame.Rect(main_x, 130, main_w, playlist_available_h - 130)
             virtual_surface.set_clip(clip_rect)
             
             y_item = 130 - int(music_grid_scroll_offset)
@@ -1884,7 +1887,7 @@ def draw_modals():
 def draw_media_bar():
     global play_btn_rect, prev_btn_rect, next_btn_rect, minus_10_btn_rect, plus_10_btn_rect, mediabar_add_btn_rect, mediabar_lyrics_btn_rect, star_btn_rect, shuffle_btn_rect, progress_bar_rect, mediabar_cover_btn_rect, _lyric_cache_key, _lyric_cache_parsed
     
-    if current_track["title"] == "Select a song" or show_lyrics_editor_view or show_create_playlist_modal or show_add_to_playlist_modal or is_browsing_for_cover:
+    if current_track["title"] == "Select a song" or show_lyrics_editor_view or show_create_playlist_modal or show_add_to_playlist_modal or is_browsing_for_cover or is_browsing_storage or viewing_settings_page:
         return
 
     mouse_pos = get_virtual_mouse_pos()
@@ -1985,7 +1988,7 @@ def draw_media_bar():
 
         # Lyrics button
         lyrics_hover = mediabar_lyrics_btn_rect.collidepoint(mouse_pos)
-        lyrics_click = lyrics_hover and pygame.mouse.get_pressed()[0]
+        lyrics_click = lyrics_hover and mouse_held
         if lyrics_click:
             paper_icon_color = COLOR_SPOTIFY_GREEN
         elif lyrics_hover:
@@ -1996,7 +1999,7 @@ def draw_media_bar():
 
         # Add-to-playlist button
         add_hover = mediabar_add_btn_rect.collidepoint(mouse_pos)
-        add_click = add_hover and pygame.mouse.get_pressed()[0]
+        add_click = add_hover and mouse_held
         if add_click:
             pygame.draw.circle(virtual_surface, (20, 150, 65), mediabar_add_btn_rect.center, 13)
             plus_color = COLOR_WHITE
@@ -2013,7 +2016,7 @@ def draw_media_bar():
         # Star (like) button
         is_starred = current_track in liked_tracks
         is_star_hovered = star_btn_rect.collidepoint(mouse_pos)
-        is_star_clicked = is_star_hovered and pygame.mouse.get_pressed()[0]
+        is_star_clicked = is_star_hovered and mouse_held
         if is_star_clicked:
             star_color = (20, 150, 65) if is_starred else COLOR_SPOTIFY_GREEN
         elif is_star_hovered:
@@ -2024,7 +2027,7 @@ def draw_media_bar():
 
         # -10
         m10_hover = minus_10_btn_rect.collidepoint(mouse_pos)
-        m10_click = m10_hover and pygame.mouse.get_pressed()[0]
+        m10_click = m10_hover and mouse_held
         if m10_click:
             pygame.draw.circle(virtual_surface, (20, 150, 65), minus_10_btn_rect.center, 21)
             pygame.draw.circle(virtual_surface, COLOR_WHITE, minus_10_btn_rect.center, 21, width=2)
@@ -2042,14 +2045,14 @@ def draw_media_bar():
 
         # Prev
         prev_hover = prev_btn_rect.collidepoint(mouse_pos)
-        prev_click = prev_hover and pygame.mouse.get_pressed()[0]
+        prev_click = prev_hover and mouse_held
         prev_color = COLOR_SPOTIFY_GREEN if prev_click else (COLOR_WHITE if prev_hover else COLOR_TEXT_MUTED)
         pygame.draw.polygon(virtual_surface, prev_color,
                             [(prev_cx + 1, ctrl_y), (prev_cx + 18, ctrl_y - 12), (prev_cx + 18, ctrl_y + 12)])
 
         # Play/Pause
         is_mb_play_hovered = play_btn_rect.collidepoint(mouse_pos)
-        is_mb_play_pressed = is_mb_play_hovered and pygame.mouse.get_pressed()[0]
+        is_mb_play_pressed = is_mb_play_hovered and mouse_held
         if is_mb_play_pressed:
             pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, (play_cx, ctrl_y), 21)
         elif is_mb_play_hovered:
@@ -2065,14 +2068,14 @@ def draw_media_bar():
 
         # Next
         next_hover = next_btn_rect.collidepoint(mouse_pos)
-        next_click = next_hover and pygame.mouse.get_pressed()[0]
+        next_click = next_hover and mouse_held
         next_color = COLOR_SPOTIFY_GREEN if next_click else (COLOR_WHITE if next_hover else COLOR_TEXT_MUTED)
         pygame.draw.polygon(virtual_surface, next_color,
                             [(next_cx - 1, ctrl_y), (next_cx - 18, ctrl_y - 12), (next_cx - 18, ctrl_y + 12)])
 
         # +10
         p10_hover = plus_10_btn_rect.collidepoint(mouse_pos)
-        p10_click = p10_hover and pygame.mouse.get_pressed()[0]
+        p10_click = p10_hover and mouse_held
         if p10_click:
             pygame.draw.circle(virtual_surface, (20, 150, 65), plus_10_btn_rect.center, 21)
             pygame.draw.circle(virtual_surface, COLOR_WHITE, plus_10_btn_rect.center, 21, width=2)
@@ -2100,7 +2103,7 @@ def draw_media_bar():
 
         # Picture frame (set song cover) button
         cover_hover = mediabar_cover_btn_rect.collidepoint(mouse_pos)
-        cover_click = cover_hover and pygame.mouse.get_pressed()[0]
+        cover_click = cover_hover and mouse_held
         if cover_click:
             cover_icon_color = COLOR_SPOTIFY_GREEN
         elif cover_hover:
@@ -2181,7 +2184,7 @@ def draw_media_bar():
 
         is_starred = current_track in liked_tracks
         is_star_hovered = star_btn_rect.collidepoint(mouse_pos)
-        is_star_clicked = is_star_hovered and pygame.mouse.get_pressed()[0]
+        is_star_clicked = is_star_hovered and mouse_held
         if is_star_clicked:
             star_color = (20, 150, 65) if is_starred else COLOR_SPOTIFY_GREEN
         elif is_star_hovered:
@@ -2201,7 +2204,7 @@ def draw_media_bar():
         mediabar_cover_btn_rect  = pygame.Rect(btn_offset_x + 174 + _btn_center_shift, center_y - 14, 28, 28)
 
         lyrics_hover = mediabar_lyrics_btn_rect.collidepoint(mouse_pos)
-        lyrics_click = lyrics_hover and pygame.mouse.get_pressed()[0]
+        lyrics_click = lyrics_hover and mouse_held
         if lyrics_click:
             paper_icon_color = COLOR_SPOTIFY_GREEN
         elif lyrics_hover:
@@ -2211,7 +2214,7 @@ def draw_media_bar():
         draw_piece_of_paper_icon(virtual_surface, mediabar_lyrics_btn_rect, paper_icon_color)
 
         add_hover = mediabar_add_btn_rect.collidepoint(mouse_pos)
-        add_click = add_hover and pygame.mouse.get_pressed()[0]
+        add_click = add_hover and mouse_held
         if add_click:
             pygame.draw.circle(virtual_surface, (20, 150, 65), mediabar_add_btn_rect.center, 13)
             plus_color = COLOR_WHITE
@@ -2227,7 +2230,7 @@ def draw_media_bar():
         virtual_surface.blit(plus_surf, (plus_x, plus_y))
 
         m10_hover = minus_10_btn_rect.collidepoint(mouse_pos)
-        m10_click = m10_hover and pygame.mouse.get_pressed()[0]
+        m10_click = m10_hover and mouse_held
         if m10_click:
             pygame.draw.circle(virtual_surface, (20, 150, 65), minus_10_btn_rect.center, 16)
             pygame.draw.circle(virtual_surface, COLOR_WHITE, minus_10_btn_rect.center, 16, width=2)
@@ -2243,12 +2246,12 @@ def draw_media_bar():
         virtual_surface.blit(m10_surf, (minus_10_btn_rect.centerx - m10_surf.get_width() // 2, minus_10_btn_rect.centery - m10_surf.get_height() // 2))
 
         prev_hover = prev_btn_rect.collidepoint(mouse_pos)
-        prev_click = prev_hover and pygame.mouse.get_pressed()[0]
+        prev_click = prev_hover and mouse_held
         prev_color = COLOR_SPOTIFY_GREEN if prev_click else (COLOR_WHITE if prev_hover else COLOR_TEXT_MUTED)
         pygame.draw.polygon(virtual_surface, prev_color, [(btn_offset_x - 15 + _btn_center_shift, center_y), (btn_offset_x + _btn_center_shift, center_y - 9), (btn_offset_x + _btn_center_shift, center_y + 9)])
 
         is_mb_play_hovered = play_btn_rect.collidepoint(mouse_pos)
-        is_mb_play_pressed = is_mb_play_hovered and pygame.mouse.get_pressed()[0]
+        is_mb_play_pressed = is_mb_play_hovered and mouse_held
         if is_mb_play_pressed:
             pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, (btn_offset_x + 33 + _btn_center_shift, center_y), 16)
         elif is_mb_play_hovered:
@@ -2262,12 +2265,12 @@ def draw_media_bar():
             pygame.draw.rect(virtual_surface, COLOR_BLACK, (btn_offset_x + 35 + _btn_center_shift, center_y - 6, 3, 12))
 
         next_hover = next_btn_rect.collidepoint(mouse_pos)
-        next_click = next_hover and pygame.mouse.get_pressed()[0]
+        next_click = next_hover and mouse_held
         next_color = COLOR_SPOTIFY_GREEN if next_click else (COLOR_WHITE if next_hover else COLOR_TEXT_MUTED)
         pygame.draw.polygon(virtual_surface, next_color, [(btn_offset_x + 80 + _btn_center_shift, center_y), (btn_offset_x + 65 + _btn_center_shift, center_y - 9), (btn_offset_x + 65 + _btn_center_shift, center_y + 9)])
 
         p10_hover = plus_10_btn_rect.collidepoint(mouse_pos)
-        p10_click = p10_hover and pygame.mouse.get_pressed()[0]
+        p10_click = p10_hover and mouse_held
         if p10_click:
             pygame.draw.circle(virtual_surface, (20, 150, 65), plus_10_btn_rect.center, 16)
             pygame.draw.circle(virtual_surface, COLOR_WHITE, plus_10_btn_rect.center, 16, width=2)
@@ -2291,7 +2294,7 @@ def draw_media_bar():
         draw_spotify_shuffle_icon(virtual_surface, shuffle_btn_rect, sh_icon_color)
 
         cover_hover = mediabar_cover_btn_rect.collidepoint(mouse_pos)
-        cover_click = cover_hover and pygame.mouse.get_pressed()[0]
+        cover_click = cover_hover and mouse_held
         if cover_click:
             cover_icon_color = COLOR_SPOTIFY_GREEN
         elif cover_hover:
@@ -2368,8 +2371,20 @@ virtual_surface = pygame.Surface((WIDTH, HEIGHT))
 running = True
 
 virtual_keyboard_active = False
+mouse_held = False
+mouse_just_released = False
+button_flash_frames = 0
 
 while running:
+    # Button highlight: count down flash frames so highlight shows for at least 2
+    # rendered frames even when FINGERDOWN+FINGERUP arrive in the same event pump
+    if button_flash_frames > 0:
+        button_flash_frames -= 1
+        mouse_held = True
+    else:
+        mouse_held = False
+    mouse_just_released = False
+
     if search_input_active and not virtual_keyboard_active:
         try: pygame.key.start_text_input()
         except: pass
@@ -2380,13 +2395,20 @@ while running:
         virtual_keyboard_active = False
 
     dt = min(0.1, clock.get_time() / 1000.0)
+
+    frame_had_input = False
     
     music_grid_scroll_offset += (target_music_scroll - music_grid_scroll_offset) * (15.0 * dt)
     browser_scroll_offset += (target_browser_scroll - browser_scroll_offset) * (15.0 * dt)
     settings_scroll_offset += (target_settings_scroll - settings_scroll_offset) * (15.0 * dt)
     lyrics_scroll_offset += (target_lyrics_scroll - lyrics_scroll_offset) * (15.0 * dt)
 
+    if mouse_held or is_dragging_progress:
+        frame_had_input = True
+
     for event in pygame.event.get():
+        if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION, pygame.KEYDOWN, pygame.TEXTINPUT, pygame.VIDEORESIZE, pygame.FINGERDOWN, pygame.FINGERUP):
+            frame_had_input = True
         if event.type == pygame.QUIT:
             running = False
             
@@ -2427,7 +2449,10 @@ while running:
         elif event.type == pygame.KEYDOWN:
             mods = pygame.key.get_mods()
             is_ctrl_or_cmd = (mods & pygame.KMOD_CTRL) or (mods & pygame.KMOD_META)
-            
+
+            if event.key == pygame.K_ESCAPE:
+                search_input_active = False
+
             if is_ctrl_or_cmd and event.key == pygame.K_v and search_input_active:
                 pasted_text = get_clipboard_text()
                 
@@ -2496,7 +2521,7 @@ while running:
                         playlist_input_text = playlist_input_text[:-1]
                     else:
                         playlist_desc_text = playlist_desc_text[:-1]
-                elif event.key == pygame.K_RETURN:
+                elif event.key == pygame.K_RETURN or event.key == pygame.K_ESCAPE:
                     search_input_active = False
             
             elif current_page == "Search" and search_input_active:
@@ -2505,7 +2530,19 @@ while running:
                 elif event.key == pygame.K_ESCAPE or event.key == pygame.K_RETURN:
                     search_input_active = False
                         
+        elif event.type == pygame.FINGERDOWN:
+            button_flash_frames = 3
+            mouse_held = True
+
+        elif event.type == getattr(pygame, 'WINDOWFOCUSLOST', None) or \
+             event.type == getattr(pygame, 'WINDOWEVENT', None):
+            if search_input_active:
+                search_input_active = False
+
         elif event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1:
+                button_flash_frames = 3
+                mouse_held = True
             mouse_pos = get_virtual_mouse_pos()
             
             if current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal:
@@ -2586,6 +2623,8 @@ while running:
         elif event.type == pygame.MOUSEBUTTONUP:
             mouse_pos = get_virtual_mouse_pos()
             if event.button == 1:
+                if search_input_active:
+                    search_input_active = False
                 if is_dragging_progress:
                     is_dragging_progress = False
                     track_start_accumulator = drag_seek_target
@@ -3041,7 +3080,31 @@ while running:
 
     
     pygame.display.flip()
-    clock.tick(DEVICE_REFRESH_RATE)
+
+    # --- Idle-aware frame pacing ---
+    # Every frame is still drawn fully and correctly (nothing is skipped) — this only
+    # changes how OFTEN we redraw. We keep the full device refresh rate any time
+    # something on screen needs to keep moving on its own (music playing/progress bar/
+    # synced lyrics, an in-flight scroll animation still settling, the playlist
+    # description marquee, or the lyrics editor's blinking text cursor), and any time
+    # there was actual touch/mouse/keyboard input this frame. Otherwise (genuinely
+    # idle screen, nothing playing, nothing animating) we drop to a low tick rate to
+    # save CPU/battery, since there's nothing new to show until something changes.
+    _scroll_settling = (
+        abs(target_music_scroll - music_grid_scroll_offset) > 0.5 or
+        abs(target_browser_scroll - browser_scroll_offset) > 0.5 or
+        abs(target_settings_scroll - settings_scroll_offset) > 0.5 or
+        abs(target_lyrics_scroll - lyrics_scroll_offset) > 0.5
+    )
+    _needs_continuous_frames = (
+        is_playing or
+        frame_had_input or
+        _scroll_settling or
+        show_lyrics_editor_view or
+        selected_custom_playlist_name is not None or
+        viewing_liked_playlist
+    )
+    clock.tick(DEVICE_REFRESH_RATE if _needs_continuous_frames else 10)
 
 save_app_data()
 
