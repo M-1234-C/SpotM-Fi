@@ -276,6 +276,7 @@ select_folder_btn_rect = pygame.Rect(0, 0, 0, 0)
 cancel_browser_btn_rect = pygame.Rect(0, 0, 0, 0)
 close_settings_btn_rect = pygame.Rect(0, 0, 0, 0)
 progress_bar_rect = pygame.Rect(0, 0, 0, 0)
+media_bar_rect = pygame.Rect(0, 0, 0, 0)
 desktop_btn_rect = pygame.Rect(0, 0, 0, 0)
 phone_btn_rect = pygame.Rect(0, 0, 0, 0)
 
@@ -1885,9 +1886,10 @@ def draw_modals():
             virtual_surface.set_clip(None)
 
 def draw_media_bar():
-    global play_btn_rect, prev_btn_rect, next_btn_rect, minus_10_btn_rect, plus_10_btn_rect, mediabar_add_btn_rect, mediabar_lyrics_btn_rect, star_btn_rect, shuffle_btn_rect, progress_bar_rect, mediabar_cover_btn_rect, _lyric_cache_key, _lyric_cache_parsed
+    global play_btn_rect, prev_btn_rect, next_btn_rect, minus_10_btn_rect, plus_10_btn_rect, mediabar_add_btn_rect, mediabar_lyrics_btn_rect, star_btn_rect, shuffle_btn_rect, progress_bar_rect, mediabar_cover_btn_rect, _lyric_cache_key, _lyric_cache_parsed, media_bar_rect
     
     if current_track["title"] == "Select a song" or show_lyrics_editor_view or show_create_playlist_modal or show_add_to_playlist_modal or is_browsing_for_cover or is_browsing_storage or viewing_settings_page:
+        media_bar_rect = pygame.Rect(0, 0, 0, 0)
         return
 
     mouse_pos = get_virtual_mouse_pos()
@@ -1953,9 +1955,8 @@ def draw_media_bar():
         bar_height = 124
         bar_y = HEIGHT - bar_height - 80   # sit just above the bottom tab bar
         bar_rect = pygame.Rect(0, bar_y, WIDTH, bar_height)
+        media_bar_rect = bar_rect
         pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, bar_rect)
-
-        # --- Single control row: lyrics  add  star  -10  prev  play  next  +10  shuffle  cover ---
         # Icon cluster is centred on its own row; title/artist moved below the progress bar
         ctrl_y = bar_y + 32
 
@@ -2167,8 +2168,8 @@ def draw_media_bar():
         bar_height = 144 if is_portrait else 90
         bar_y = HEIGHT - bar_height - (65 if is_portrait else 0)   # sit above bottom tab bar in portrait
         bar_rect = pygame.Rect(0, bar_y, WIDTH, bar_height)
+        media_bar_rect = bar_rect
         pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, bar_rect)
-
         now_playing_title = font_body.render(current_track["title"] if len(current_track["title"]) < 20 else current_track["title"][:17] + "...", True, COLOR_WHITE)
         now_playing_artist = font_small.render(current_track["artist"] if len(current_track["artist"]) < 20 else current_track["artist"][:17] + "...", True, COLOR_TEXT_MUTED)
         if not (is_portrait and active_lyric_text):
@@ -2584,6 +2585,8 @@ while running:
                 is_dragging_grid = True
                 last_touch_y = mouse_pos[1]
                 total_drag_dy = 0
+                if media_bar_rect.collidepoint(mouse_pos) and current_track["title"] != "Select a song":
+                    is_dragging_grid = False
                 
         elif event.type == pygame.MOUSEMOTION:
             mouse_pos = get_virtual_mouse_pos()
@@ -2641,8 +2644,10 @@ while running:
                     continue 
 
                 is_dragging_grid = False
-                
-                if total_drag_dy < 15:
+
+                tap_on_media_bar = media_bar_rect.collidepoint(mouse_pos) and current_track["title"] != "Select a song"
+
+                if total_drag_dy < 15 and not tap_on_media_bar:
                     if show_lyrics_editor_view:
                         if lyrics_close_rect.collidepoint(mouse_pos):
                             show_lyrics_editor_view = False
@@ -2953,95 +2958,96 @@ while running:
                                     green_toggled_tracks.add(current_track["path"])
                                     load_and_play_track(current_track["path"])
                                     
-                        if current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal:
-                            if mediabar_lyrics_btn_rect.collidepoint(mouse_pos):
-                                show_lyrics_editor_view = True
-                                track_ref = current_track.get("path", "")
-                                if track_ref not in song_lyrics_database:
-                                    song_lyrics_database[track_ref] = ""
-                                search_input_active = True
-                                active_input_field = "lyrics"
-                                target_lyrics_scroll = 0.0
-                                lyrics_cursor_pos = len(song_lyrics_database[track_ref])
+                if current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal:
+                    if total_drag_dy < 15:
+                        if mediabar_lyrics_btn_rect.collidepoint(mouse_pos):
+                            show_lyrics_editor_view = True
+                            track_ref = current_track.get("path", "")
+                            if track_ref not in song_lyrics_database:
+                                song_lyrics_database[track_ref] = ""
+                            search_input_active = True
+                            active_input_field = "lyrics"
+                            target_lyrics_scroll = 0.0
+                            lyrics_cursor_pos = len(song_lyrics_database[track_ref])
 
-                            if mediabar_add_btn_rect.collidepoint(mouse_pos):
-                                track_to_add_to_playlist = current_track
-                                show_add_to_playlist_modal = True
-                                target_music_scroll = 0.0
+                        if mediabar_add_btn_rect.collidepoint(mouse_pos):
+                            track_to_add_to_playlist = current_track
+                            show_add_to_playlist_modal = True
+                            target_music_scroll = 0.0
 
-                            if mediabar_cover_btn_rect.collidepoint(mouse_pos):
-                                is_browsing_for_cover = True
-                                browsing_cover_target = "track_cover"
-                                update_browser_contents()
-                                continue
+                        if mediabar_cover_btn_rect.collidepoint(mouse_pos):
+                            is_browsing_for_cover = True
+                            browsing_cover_target = "track_cover"
+                            update_browser_contents()
+                            continue
 
-                            if minus_10_btn_rect.collidepoint(mouse_pos) and track_duration > 0 and music_loaded:
-                                current_track["_has_started"] = False
-                                if current_backend == "android" and android_media_player:
-                                    try: current_pos = android_media_player.getCurrentPosition() / 1000.0
-                                    except: current_pos = 0.0
+                        if minus_10_btn_rect.collidepoint(mouse_pos) and track_duration > 0 and music_loaded:
+                            current_track["_has_started"] = False
+                            if current_backend == "android" and android_media_player:
+                                try: current_pos = android_media_player.getCurrentPosition() / 1000.0
+                                except: current_pos = 0.0
+                            else:
+                                mix_pos = pygame.mixer.music.get_pos()
+                                current_pos = track_start_accumulator + (mix_pos / 1000.0) if mix_pos != -1 else track_start_accumulator
+                        
+                            seek_target = max(0.0, current_pos - 10.0)
+                            track_start_accumulator = seek_target
+                            if current_backend == "android" and android_media_player:
+                                try:
+                                    android_media_player.seekTo(int(seek_target * 1000))
+                                    android_media_player.start()
+                                except: pass
+                            else:
+                                try: pygame.mixer.music.play(start=seek_target)
+                                except: pass
+                            is_playing = True
+
+                        if prev_btn_rect.collidepoint(mouse_pos):
+                            advance_track(backward=True)
+
+                        if play_btn_rect.collidepoint(mouse_pos):
+                            if music_loaded: 
+                                is_playing = not is_playing
+                                if is_playing:
+                                    if current_backend == "android": android_media_player.start()
+                                    else: pygame.mixer.music.unpause()
                                 else:
-                                    mix_pos = pygame.mixer.music.get_pos()
-                                    current_pos = track_start_accumulator + (mix_pos / 1000.0) if mix_pos != -1 else track_start_accumulator
-                                
-                                seek_target = max(0.0, current_pos - 10.0)
-                                track_start_accumulator = seek_target
-                                if current_backend == "android" and android_media_player:
-                                    try:
-                                        android_media_player.seekTo(int(seek_target * 1000))
-                                        android_media_player.start()
-                                    except: pass
-                                else:
-                                    try: pygame.mixer.music.play(start=seek_target)
-                                    except: pass
-                                is_playing = True
+                                    if current_backend == "android": android_media_player.pause()
+                                    else: pygame.mixer.music.pause()
 
-                            if prev_btn_rect.collidepoint(mouse_pos):
-                                advance_track(backward=True)
+                        if next_btn_rect.collidepoint(mouse_pos):
+                            advance_track(backward=False)
 
-                            if play_btn_rect.collidepoint(mouse_pos):
-                                if music_loaded: 
-                                    is_playing = not is_playing
-                                    if is_playing:
-                                        if current_backend == "android": android_media_player.start()
-                                        else: pygame.mixer.music.unpause()
-                                    else:
-                                        if current_backend == "android": android_media_player.pause()
-                                        else: pygame.mixer.music.pause()
+                        if plus_10_btn_rect.collidepoint(mouse_pos) and track_duration > 0 and music_loaded:
+                            current_track["_has_started"] = False
+                            if current_backend == "android" and android_media_player:
+                                try: current_pos = android_media_player.getCurrentPosition() / 1000.0
+                                except: current_pos = 0.0
+                            else:
+                                mix_pos = pygame.mixer.music.get_pos()
+                                current_pos = track_start_accumulator + (mix_pos / 1000.0) if mix_pos != -1 else track_start_accumulator
+                        
+                            seek_target = min(track_duration, current_pos + 10.0)
+                            track_start_accumulator = seek_target
+                            if current_backend == "android" and android_media_player:
+                                try:
+                                    android_media_player.seekTo(int(seek_target * 1000))
+                                    android_media_player.start()
+                                except: pass
+                            else:
+                                try: pygame.mixer.music.play(start=seek_target)
+                                except: pass
+                            is_playing = True
+                        
+                        if shuffle_btn_rect.collidepoint(mouse_pos):
+                            is_shuffle = not is_shuffle
 
-                            if next_btn_rect.collidepoint(mouse_pos):
-                                advance_track(backward=False)
-
-                            if plus_10_btn_rect.collidepoint(mouse_pos) and track_duration > 0 and music_loaded:
-                                current_track["_has_started"] = False
-                                if current_backend == "android" and android_media_player:
-                                    try: current_pos = android_media_player.getCurrentPosition() / 1000.0
-                                    except: current_pos = 0.0
-                                else:
-                                    mix_pos = pygame.mixer.music.get_pos()
-                                    current_pos = track_start_accumulator + (mix_pos / 1000.0) if mix_pos != -1 else track_start_accumulator
-                                
-                                seek_target = min(track_duration, current_pos + 10.0)
-                                track_start_accumulator = seek_target
-                                if current_backend == "android" and android_media_player:
-                                    try:
-                                        android_media_player.seekTo(int(seek_target * 1000))
-                                        android_media_player.start()
-                                    except: pass
-                                else:
-                                    try: pygame.mixer.music.play(start=seek_target)
-                                    except: pass
-                                is_playing = True
-                                
-                            if shuffle_btn_rect.collidepoint(mouse_pos):
-                                is_shuffle = not is_shuffle
-
-                            if star_btn_rect.collidepoint(mouse_pos):
-                                if current_track in liked_tracks:
-                                    liked_tracks.remove(current_track)
-                                else:
-                                    liked_tracks.append(current_track)
-                                save_app_data()
+                        if star_btn_rect.collidepoint(mouse_pos):
+                            if current_track in liked_tracks:
+                                liked_tracks.remove(current_track)
+                            else:
+                                liked_tracks.append(current_track)
+                        save_app_data()
             
     if is_playing and track_duration > 0 and music_loaded and not is_dragging_progress:
         if current_backend == "android" and android_media_player:
