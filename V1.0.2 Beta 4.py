@@ -6,6 +6,11 @@ import time
 import math
 import random
 import json
+import re
+import threading
+import urllib.request
+import urllib.parse
+import urllib.error
 
 # --- WINDOW & SCALING CONFIGURATION ---
 pygame.mixer.pre_init(44100, -16, 2, 2048)
@@ -273,6 +278,23 @@ add_folder_btn_rect = pygame.Rect(0, 0, 0, 0)
 settings_btn_rect = pygame.Rect(0, 0, 0, 0)
 create_playlist_btn_rect = pygame.Rect(390, 35, 40, 40)
 select_folder_btn_rect = pygame.Rect(0, 0, 0, 0)
+browser_extra_search_btn_rect = pygame.Rect(0, 0, 0, 0)
+
+show_art_search_modal    = False
+show_art_manual_modal    = False
+art_search_loading       = False
+art_search_results       = []
+art_search_error         = ""
+art_search_thread        = None
+art_search_close_rect    = pygame.Rect(0, 0, 0, 0)
+art_manual_rect          = pygame.Rect(0, 0, 0, 0)
+art_manual_title_rect    = pygame.Rect(0, 0, 0, 0)
+art_manual_artist_rect   = pygame.Rect(0, 0, 0, 0)
+art_manual_go_rect       = pygame.Rect(0, 0, 0, 0)
+art_search_item_rects    = []
+art_search_scroll_offset = 0.0
+target_art_search_scroll = 0.0
+max_art_search_scroll    = 0
 cancel_browser_btn_rect = pygame.Rect(0, 0, 0, 0)
 close_settings_btn_rect = pygame.Rect(0, 0, 0, 0)
 progress_bar_rect = pygame.Rect(0, 0, 0, 0)
@@ -290,7 +312,191 @@ lyrics_close_rect = pygame.Rect(0, 0, 0, 0)
 lyrics_save_rect = pygame.Rect(0, 0, 0, 0)
 lyrics_clear_rect = pygame.Rect(0, 0, 0, 0)
 lyrics_import_rect = pygame.Rect(0, 0, 0, 0)
+lyrics_search_rect = pygame.Rect(0, 0, 0, 0)
 lyrics_textarea_rect = pygame.Rect(270, 145, 760, 420)
+
+# --- LYRICS SEARCH (synced lyrics library lookup) MODAL STATE ---
+show_lyrics_search_modal = False
+lyrics_search_loading = False
+lyrics_search_results = []      
+lyrics_search_error = ""        
+lyrics_search_thread = None
+lyrics_search_close_rect = pygame.Rect(0, 0, 0, 0)
+lyrics_search_item_rects = []    
+lyrics_search_scroll_offset = 0.0
+target_lyrics_search_scroll = 0.0
+max_lyrics_search_scroll = 0
+
+# --- MANUAL SONG/ARTIST ENTRY MODAL STATE (for the synced lyrics search) ---
+show_lyrics_manual_modal = False
+manual_title_text = ""
+manual_artist_text = ""
+lyrics_manual_rect = pygame.Rect(0, 0, 0, 0)
+lyrics_manual_title_rect = pygame.Rect(0, 0, 0, 0)
+lyrics_manual_artist_rect = pygame.Rect(0, 0, 0, 0)
+lyrics_manual_go_rect = pygame.Rect(0, 0, 0, 0)
+lyrics_manual_close_rect = pygame.Rect(0, 0, 0, 0)
+
+_LYRICS_SEARCH_NOISE_WORDS = {
+    "official", "video", "audio", "lyrics", "lyric", "hd", "hq", "4k",
+    "remastered", "remaster", "extended", "radio", "edit", "version",
+    "mv", "explicit", "clean", "visualizer", "live", "ost", "soundtrack",
+    "full", "track", "single"
+}
+
+def shorten_title_keywords(raw_title):
+    """Strips filler noise (bracketed tags, file extensions, words like
+    'Official Video', 'Remastered', etc.) from a messy song title and
+    returns just the core keywords, so the lyrics search can match a
+    wider range of different songs instead of one exact messy string."""
+    if not raw_title:
+        return raw_title
+    t = raw_title
+    t = re.sub(r'\.[a-zA-Z0-9]{2,4}$', '', t)
+    t = re.sub(r'[\(\[\{][^\)\]\}]*[\)\]\}]', ' ', t)
+    words = re.findall(r"[A-Za-z0-9']+", t)
+    keywords = [w for w in words if w.lower() not in _LYRICS_SEARCH_NOISE_WORDS]
+    if not keywords:
+        keywords = words
+    return " ".join(keywords[:6]).strip()
+
+def _query_lrclib(params):
+    """Runs a single lrclib.net search request and returns the parsed
+    JSON list (or raises on network/HTTP error)."""
+    url = "https://lrclib.net/api/search?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={"User-Agent": "MusicPlayerApp/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw = resp.read().decode("utf-8", errors="ignore")
+    except urllib.error.URLError as ssl_err:
+        # Android/Pydroid builds often ship without a usable CA bundle, which
+        # makes HTTPS requests fail with a certificate verify error even when
+        # the network connection itself is fine. Retry once with an
+        # unverified SSL context so it isn't misreported as "no internet".
+        if "CERTIFICATE_VERIFY_FAILED" in str(ssl_err) or "certificate" in str(ssl_err).lower():
+            import ssl
+            unverified_ctx = ssl._create_unverified_context()
+            with urllib.request.urlopen(req, timeout=8, context=unverified_ctx) as resp:
+                raw = resp.read().decode("utf-8", errors="ignore")
+        else:
+            raise
+    return json.loads(raw)
+
+def fetch_synced_lyrics_candidates(title, artist):
+    """Runs on a background thread: queries the lrclib.net synced lyrics
+    library for candidate matches of the currently playing song title.
+    Tries a few different query variants, since a messy/auto-detected
+    title can fail to match even when the song is really in the library."""
+    global lyrics_search_loading, lyrics_search_results, lyrics_search_error
+    has_artist = bool(artist and artist.lower() not in ("unknown artist", "unknown", ""))
+
+    query_variants = []
+    shortened = shorten_title_keywords(title)
+    if shortened:
+        query_variants.append({"track_name": shortened})
+    if title and title != shortened:
+        query_variants.append({"track_name": title})
+    fuzzy_text = f"{title} {artist}".strip() if has_artist else (title or "")
+    if fuzzy_text:
+        query_variants.append({"q": fuzzy_text})
+
+    last_error = "Failed - no matches found for this song."
+    try:
+        for base_params in query_variants:
+            params = dict(base_params)
+            if has_artist and "q" not in params:
+                params["artist_name"] = artist
+            try:
+                data = _query_lrclib(params)
+            except Exception as e:
+                last_error = f"Failed - {type(e).__name__}: {e}"
+                continue
+            if isinstance(data, list) and len(data) > 0:
+                lyrics_search_results = data[:12]
+                lyrics_search_error = ""
+                lyrics_search_loading = False
+                return
+        lyrics_search_results = []
+        lyrics_search_error = last_error
+    except Exception as e:
+        lyrics_search_results = []
+        # Show the actual exception so real causes (no permission, DNS, SSL,
+        # timeout, HTTP error) are visible instead of one generic message.
+        lyrics_search_error = f"Failed - {type(e).__name__}: {e}"
+    finally:
+        lyrics_search_loading = False
+
+def start_lyrics_search(title, artist):
+    global show_lyrics_search_modal, show_lyrics_manual_modal, lyrics_search_loading, lyrics_search_results, lyrics_search_error, lyrics_search_thread, lyrics_search_scroll_offset
+    show_lyrics_search_modal = True
+    show_lyrics_manual_modal = False
+    lyrics_search_loading = True
+    lyrics_search_results = []
+    lyrics_search_error = ""
+    lyrics_search_scroll_offset = 0.0
+    lyrics_search_thread = threading.Thread(target=fetch_synced_lyrics_candidates, args=(title, artist), daemon=True)
+    lyrics_search_thread.start()
+
+def fetch_itunes_art_candidates(title, artist):
+    """Background thread: queries the iTunes Search API for artwork candidates."""
+    global art_search_loading, art_search_results, art_search_error
+    try:
+        query_variants = []
+        has_artist = bool(artist and artist.lower() not in ("unknown artist", "unknown", ""))
+        if has_artist:
+            query_variants.append(f"{title} {artist}")
+        query_variants.append(title)
+
+        for q in query_variants:
+            params = urllib.parse.urlencode({
+                "term": q, "entity": "song", "media": "music", "limit": 12
+            })
+            url = f"https://itunes.apple.com/search?{params}"
+            req = urllib.request.Request(url, headers={"User-Agent": "SpotMFi/1.0"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            results = data.get("results", [])
+            if results:
+                art_search_results = results
+                art_search_error = ""
+                art_search_loading = False
+                return
+
+        art_search_results = []
+        art_search_error = "Failed - no results found for this song."
+    except Exception as e:
+        art_search_results = []
+        art_search_error = f"Failed - {type(e).__name__}: {e}"
+    finally:
+        art_search_loading = False
+
+def start_art_search(title, artist):
+    global show_art_search_modal, art_search_loading, art_search_results, art_search_error, art_search_thread, art_search_scroll_offset
+    show_art_search_modal = True
+    art_search_loading = True
+    art_search_results = []
+    art_search_error = ""
+    art_search_scroll_offset = 0.0
+    art_search_thread = threading.Thread(target=fetch_itunes_art_candidates, args=(title, artist), daemon=True)
+    art_search_thread.start()
+
+def apply_itunes_art(artwork_url):
+    """Download an iTunes artwork URL (swap 100x100 thumbnail for 600x600),
+    save to a temp file, load into pygame and apply to the current track."""
+    global art_search_error
+    try:
+        hq_url = artwork_url.replace("100x100bb", "600x600bb")
+        req = urllib.request.Request(hq_url, headers={"User-Agent": "SpotMFi/1.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            img_bytes = resp.read()
+        suffix = ".jpg" if "jpeg" in hq_url or "jpg" in hq_url else ".png"
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tmp.write(img_bytes)
+        tmp.close()
+        return tmp.name
+    except Exception as e:
+        art_search_error = f"Failed - {type(e).__name__}: {e}"
+        return None
 
 def save_app_data():
     data = {
@@ -532,7 +738,7 @@ def update_browser_contents():
             full_path = os.path.join(current_browser_path, item)
             is_dir = os.path.isdir(full_path)
             if is_browsing_for_cover and not is_dir:
-                if browsing_cover_target == "lyrics_import" and not item.lower().endswith('.txt'):
+                if browsing_cover_target == "lyrics_import" and not item.lower().endswith(('.txt', '.lrc')):
                     continue
                 elif browsing_cover_target != "lyrics_import" and not item.lower().endswith(('.png', '.jpg', '.jpeg')):
                     continue
@@ -875,7 +1081,7 @@ def draw_sidebar():
             virtual_surface.blit(text_surf, (tx, ty))
 
 def draw_main_content():
-    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction, desktop_btn_rect, phone_btn_rect, search_box_rect
+    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, browser_extra_search_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction, desktop_btn_rect, phone_btn_rect, search_box_rect
     track_rects = []
     browser_rects = []
     settings_dir_rects = []
@@ -1053,7 +1259,7 @@ def draw_main_content():
     elif (is_browsing_storage or is_browsing_for_cover) and (current_page in ["Search", "Your Library"] or browsing_cover_target in ("track_cover", "lyrics_import")):
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT))
         if is_browsing_for_cover and browsing_cover_target == "lyrics_import":
-            title_string = "Import lyrics file (.txt)"
+            title_string = "Import lyrics file (.txt / .lrc)"
         elif is_browsing_for_cover:
             title_string = "Import Cover (.png, .jpg)"
         else:
@@ -1069,6 +1275,16 @@ def draw_main_content():
         else:
             cancel_browser_btn_rect = pygame.Rect(main_x + main_w - 130, 35, 90, 35)
         select_folder_btn_rect = pygame.Rect(cancel_browser_btn_rect.x - 170, 35, 160, 35)
+        browser_extra_search_btn_rect = pygame.Rect(select_folder_btn_rect.x - 110, 35, 100, 35)
+
+        bes_hovered = browser_extra_search_btn_rect.collidepoint(mouse_pos)
+        bes_clicked = bes_hovered and mouse_held
+        bes_color = (20, 150, 65) if bes_clicked else (COLOR_HOVER if bes_hovered else COLOR_LIGHT_GREY)
+        if is_browsing_for_cover and browsing_cover_target not in ("lyrics_import",):
+            pygame.draw.rect(virtual_surface, bes_color, browser_extra_search_btn_rect, border_radius=15)
+            bes_lbl = font_small.render("Search", True, COLOR_WHITE)
+            bes_lbl_x = browser_extra_search_btn_rect.x + (browser_extra_search_btn_rect.width - bes_lbl.get_width()) // 2
+            virtual_surface.blit(bes_lbl, (bes_lbl_x, 44))
         
         sf_hovered = select_folder_btn_rect.collidepoint(mouse_pos)
         sf_clicked = sf_hovered and mouse_held
@@ -1108,7 +1324,7 @@ def draw_main_content():
             if item_row_rect.colliderect(clip_rect):
                 browser_rects.append((item_row_rect, item))
                 
-                is_b_hovered = item_row_rect.collidepoint(mouse_pos)
+                is_b_hovered = item_row_rect.collidepoint(mouse_pos) and not show_art_search_modal
                 is_b_clicked = is_b_hovered and mouse_held
                 
                 if is_b_clicked:
@@ -1557,7 +1773,7 @@ def draw_main_content():
 
 # --- MODAL RENDERING ENGINE ---
 def draw_modals():
-    global modal_close_rect, modal_save_rect, modal_input_rect, modal_desc_rect, modal_playlist_rects, modal_image_picker_rect, lyrics_close_rect, lyrics_save_rect, lyrics_clear_rect, lyrics_import_rect, lyrics_textarea_rect, max_music_scroll, lyrics_editor_cursor_timer, max_lyrics_scroll, target_lyrics_scroll, lyrics_text_changed
+    global modal_close_rect, modal_save_rect, modal_input_rect, modal_desc_rect, modal_playlist_rects, modal_image_picker_rect, lyrics_close_rect, lyrics_save_rect, lyrics_clear_rect, lyrics_import_rect, lyrics_search_rect, lyrics_textarea_rect, max_music_scroll, lyrics_editor_cursor_timer, max_lyrics_scroll, target_lyrics_scroll, lyrics_text_changed, lyrics_search_close_rect, lyrics_search_item_rects, max_lyrics_search_scroll, lyrics_manual_rect, lyrics_manual_title_rect, lyrics_manual_artist_rect, lyrics_manual_go_rect, lyrics_manual_close_rect, art_search_close_rect, art_search_item_rects, max_art_search_scroll, art_search_scroll_offset, art_manual_rect, art_manual_title_rect, art_manual_artist_rect, art_manual_go_rect
     mouse_pos = get_virtual_mouse_pos()
     
     portrait_sidebar_h = (80 if (is_portrait and layout_mode == "phone") else (65 if is_portrait else 0))
@@ -1567,11 +1783,132 @@ def draw_modals():
     content_bottom_margin = (100 if _phone else (144 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
     main_h = HEIGHT - content_bottom_margin - portrait_sidebar_h
     content_pad_x = main_x + 30
-    
+
+    # --- ART SEARCH MODAL (overlays the cover browser) ---
+    if show_art_search_modal:
+        overlay_rect = pygame.Rect(main_x, 0, main_w, HEIGHT - portrait_sidebar_h)
+        dim = pygame.Surface((overlay_rect.width, overlay_rect.height), pygame.SRCALPHA)
+        dim.fill((0, 0, 0, 210))
+        virtual_surface.blit(dim, (overlay_rect.x, overlay_rect.y))
+
+        card_w = min(main_w - 80, 700)
+        card_h = min(HEIGHT - portrait_sidebar_h - 80, 520)
+        card_x = main_x + (main_w - card_w) // 2
+        card_y = (HEIGHT - portrait_sidebar_h - card_h) // 2
+        card_rect = pygame.Rect(card_x, card_y, card_w, card_h)
+        pygame.draw.rect(virtual_surface, (22, 22, 22), card_rect, border_radius=12)
+        pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, card_rect, width=1, border_radius=12)
+
+        hdr = font_body.render("Search Album Art  •  iTunes", True, COLOR_SPOTIFY_GREEN)
+        virtual_surface.blit(hdr, (card_x + 20, card_y + 18))
+        sub_title = f"{current_track['title']} — {current_track['artist']}"
+        if len(sub_title) > 55: sub_title = sub_title[:53] + "…"
+        sub = font_small.render(sub_title, True, COLOR_TEXT_MUTED)
+        virtual_surface.blit(sub, (card_x + 20, card_y + 46))
+
+        art_search_close_rect = pygame.Rect(card_x + card_w - 110, card_y + 14, 90, 34)
+        cls_hov = art_search_close_rect.collidepoint(mouse_pos)
+        pygame.draw.rect(virtual_surface, COLOR_HOVER if cls_hov else COLOR_LIGHT_GREY,
+                         art_search_close_rect, border_radius=17)
+        cls_txt = font_small.render("Close", True, COLOR_WHITE)
+        virtual_surface.blit(cls_txt, (
+            art_search_close_rect.x + (art_search_close_rect.width - cls_txt.get_width()) // 2,
+            art_search_close_rect.y + 9))
+
+        art_manual_rect = pygame.Rect(card_x + card_w - 220, card_y + 14, 90, 34)
+        amn_hov = art_manual_rect.collidepoint(mouse_pos)
+        amn_bg = COLOR_SPOTIFY_GREEN if (amn_hov and mouse_held) else (COLOR_HOVER if amn_hov else COLOR_LIGHT_GREY)
+        pygame.draw.rect(virtual_surface, amn_bg, art_manual_rect, border_radius=17)
+        amn_txt = font_small.render("Manual", True, COLOR_WHITE)
+        virtual_surface.blit(amn_txt, (
+            art_manual_rect.x + (art_manual_rect.width - amn_txt.get_width()) // 2,
+            art_manual_rect.y + 9))
+
+        divider_y = card_y + 72
+        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY,
+                         (card_x + 20, divider_y), (card_x + card_w - 20, divider_y))
+
+        body_top = divider_y + 10
+        body_rect = pygame.Rect(card_x + 10, body_top, card_w - 20, card_y + card_h - body_top - 10)
+        art_search_item_rects = []
+
+        if show_art_manual_modal:
+            pygame.draw.rect(virtual_surface, COLOR_CARD_BG, body_rect, border_radius=8)
+
+            name_lbl = font_small.render("Song name", True, COLOR_TEXT_MUTED)
+            virtual_surface.blit(name_lbl, (body_rect.x + 25, body_rect.y + 25))
+            art_manual_title_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 47, body_rect.width - 50, 44)
+            pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, art_manual_title_rect, border_radius=6)
+            if search_input_active and active_input_field == "art_manual_title":
+                pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, art_manual_title_rect, width=2, border_radius=6)
+            amt_disp = manual_title_text if manual_title_text else "e.g. Blinding Lights"
+            amt_color = COLOR_WHITE if manual_title_text else COLOR_TEXT_MUTED
+            amt_surf = font_small.render(amt_disp, True, amt_color)
+            virtual_surface.blit(amt_surf, (art_manual_title_rect.x + 12, art_manual_title_rect.y + 13))
+
+            artist_lbl = font_small.render("Artist", True, COLOR_TEXT_MUTED)
+            virtual_surface.blit(artist_lbl, (body_rect.x + 25, body_rect.y + 107))
+            art_manual_artist_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 129, body_rect.width - 50, 44)
+            pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, art_manual_artist_rect, border_radius=6)
+            if search_input_active and active_input_field == "art_manual_artist":
+                pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, art_manual_artist_rect, width=2, border_radius=6)
+            ama_disp = manual_artist_text if manual_artist_text else "e.g. The Weeknd"
+            ama_color = COLOR_WHITE if manual_artist_text else COLOR_TEXT_MUTED
+            ama_surf = font_small.render(ama_disp, True, ama_color)
+            virtual_surface.blit(ama_surf, (art_manual_artist_rect.x + 12, art_manual_artist_rect.y + 13))
+
+            art_manual_go_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 195, 140, 44)
+            amg_hovered = art_manual_go_rect.collidepoint(mouse_pos)
+            amg_bg = (40, 230, 110) if amg_hovered else COLOR_SPOTIFY_GREEN
+            pygame.draw.rect(virtual_surface, amg_bg, art_manual_go_rect, border_radius=22)
+            amg_txt = font_body.render("Search", True, COLOR_BLACK)
+            amg_txt_x = art_manual_go_rect.x + (art_manual_go_rect.width - amg_txt.get_width()) // 2
+            virtual_surface.blit(amg_txt, (amg_txt_x, art_manual_go_rect.y + 11))
+        elif art_search_loading:
+            wait_lbl = font_body.render("Searching iTunes...", True, COLOR_TEXT_MUTED)
+            virtual_surface.blit(wait_lbl, (card_x + 20, body_top + 20))
+        elif art_search_error and not art_search_results:
+            for ei, eline in enumerate(get_wrapped_lines(art_search_error, font_body, body_rect.width - 30)):
+                virtual_surface.blit(font_body.render(eline, True, (200, 90, 90)),
+                                     (card_x + 20, body_top + 20 + ei * 28))
+        else:
+            virtual_surface.set_clip(body_rect)
+            item_h = 68
+            y_item = body_top - int(art_search_scroll_offset)
+            max_art_search_scroll = max(0, len(art_search_results) * item_h - body_rect.height + 10)
+
+            for idx, result in enumerate(art_search_results):
+                row_rect = pygame.Rect(card_x + 14, y_item, card_w - 28, item_h - 6)
+                if row_rect.colliderect(body_rect):
+                    art_search_item_rects.append((row_rect, idx))
+                    row_hov = row_rect.collidepoint(mouse_pos)
+                    row_clk = row_hov and mouse_held
+                    row_bg  = (45, 45, 45) if row_clk else (COLOR_HOVER if row_hov else (30, 30, 30))
+                    pygame.draw.rect(virtual_surface, row_bg, row_rect, border_radius=6)
+
+                    thumb_rect = pygame.Rect(row_rect.x + 8, row_rect.y + 8, 52, 52)
+                    pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, thumb_rect, border_radius=4)
+                    note = font_small.render("\u266a", True, COLOR_TEXT_MUTED)
+                    virtual_surface.blit(note, (thumb_rect.x + 20, thumb_rect.y + 16))
+
+                    track_name  = result.get("trackName")  or result.get("collectionName") or "Unknown"
+                    artist_name = result.get("artistName") or "Unknown"
+                    coll_name   = result.get("collectionName") or ""
+                    if len(track_name)  > 40: track_name  = track_name[:38]  + "\u2026"
+                    if len(artist_name) > 40: artist_name = artist_name[:38] + "\u2026"
+                    if len(coll_name)   > 40: coll_name   = coll_name[:38]   + "\u2026"
+
+                    tx = row_rect.x + 70
+                    virtual_surface.blit(font_body.render(track_name,   True, COLOR_WHITE),       (tx, row_rect.y + 6))
+                    virtual_surface.blit(font_small.render(artist_name, True, COLOR_TEXT_MUTED),  (tx, row_rect.y + 28))
+                    if coll_name:
+                        virtual_surface.blit(font_small.render(coll_name, True, (130, 130, 130)), (tx, row_rect.y + 44))
+                y_item += item_h
+            virtual_surface.set_clip(None)
+        return
+
     if show_lyrics_editor_view:
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
-        
-        track_ref = current_track.get("path", "")
         current_lyrics_str = song_lyrics_database.get(track_ref, "")
         
         header_lbl = font_huge.render("Edit Song Lyrics", True, COLOR_SPOTIFY_GREEN)
@@ -1694,16 +2031,18 @@ def draw_modals():
             
         if is_portrait:
             btn_y = lyrics_textarea_rect.bottom + 20
-            start_x = main_x + (main_w - 460) // 2 
+            start_x = main_x + (main_w - 570) // 2 
             lyrics_close_rect = pygame.Rect(start_x, btn_y, 100, 42)
             lyrics_save_rect = pygame.Rect(start_x + 120, btn_y, 110, 42)
             lyrics_clear_rect = pygame.Rect(start_x + 250, btn_y, 100, 42)
             lyrics_import_rect = pygame.Rect(start_x + 360, btn_y, 100, 42)
+            lyrics_search_rect = pygame.Rect(start_x + 470, btn_y, 100, 42)
         else:
             lyrics_close_rect = pygame.Rect(main_x + 40, 590, 100, 42)
             lyrics_save_rect = pygame.Rect(main_x + 150, 590, 100, 42)
             lyrics_clear_rect = pygame.Rect(main_x + 260, 590, 100, 42)
             lyrics_import_rect = pygame.Rect(main_x + 370, 590, 100, 42)
+            lyrics_search_rect = pygame.Rect(main_x + 480, 590, 100, 42)
         
         c_hovered = lyrics_close_rect.collidepoint(mouse_pos)
         c_clicked = c_hovered and mouse_held
@@ -1733,6 +2072,152 @@ def draw_modals():
         im_txt = font_body.render("Import", True, COLOR_WHITE)
         im_txt_x = lyrics_import_rect.x + (lyrics_import_rect.width - im_txt.get_width()) // 2
         virtual_surface.blit(im_txt, (im_txt_x, lyrics_import_rect.y + 11))
+
+        se_hovered = lyrics_search_rect.collidepoint(mouse_pos)
+        se_clicked = se_hovered and mouse_held
+        se_bg = COLOR_SPOTIFY_GREEN if se_clicked else (COLOR_HOVER if se_hovered else COLOR_LIGHT_GREY)
+        pygame.draw.rect(virtual_surface, se_bg, lyrics_search_rect, border_radius=21)
+        se_txt = font_body.render("Search", True, COLOR_WHITE)
+        se_txt_x = lyrics_search_rect.x + (lyrics_search_rect.width - se_txt.get_width()) // 2
+        virtual_surface.blit(se_txt, (se_txt_x, lyrics_search_rect.y + 11))
+
+        if show_lyrics_search_modal:
+            overlay_rect = pygame.Rect(main_x, 0, main_w, HEIGHT - portrait_sidebar_h)
+            dim = pygame.Surface((overlay_rect.width, overlay_rect.height), pygame.SRCALPHA)
+            dim.fill((0, 0, 0, 210))
+            virtual_surface.blit(dim, (overlay_rect.x, overlay_rect.y))
+
+            card_w = min(main_w - 80, 700)
+            card_h = min(HEIGHT - portrait_sidebar_h - 80, 520)
+            card_x = main_x + (main_w - card_w) // 2
+            card_y = (HEIGHT - portrait_sidebar_h - card_h) // 2
+            card_rect = pygame.Rect(card_x, card_y, card_w, card_h)
+            pygame.draw.rect(virtual_surface, (22, 22, 22), card_rect, border_radius=12)
+            pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, card_rect, width=1, border_radius=12)
+
+            hdr = font_body.render("Search Synced Lyrics", True, COLOR_SPOTIFY_GREEN)
+            virtual_surface.blit(hdr, (card_x + 20, card_y + 18))
+            sub_title = f"{current_track['title']} \u2014 {current_track['artist']}"
+            if len(sub_title) > 55: sub_title = sub_title[:53] + "\u2026"
+            sub = font_small.render(sub_title, True, COLOR_TEXT_MUTED)
+            virtual_surface.blit(sub, (card_x + 20, card_y + 46))
+
+            lyrics_search_close_rect = pygame.Rect(card_x + card_w - 110, card_y + 14, 90, 34)
+            cls_hov = lyrics_search_close_rect.collidepoint(mouse_pos)
+            pygame.draw.rect(virtual_surface, COLOR_HOVER if cls_hov else COLOR_LIGHT_GREY,
+                             lyrics_search_close_rect, border_radius=17)
+            cls_txt = font_small.render("Close", True, COLOR_WHITE)
+            virtual_surface.blit(cls_txt, (
+                lyrics_search_close_rect.x + (lyrics_search_close_rect.width - cls_txt.get_width()) // 2,
+                lyrics_search_close_rect.y + 9))
+
+            lyrics_manual_rect = pygame.Rect(card_x + card_w - 220, card_y + 14, 90, 34)
+            man_hov = lyrics_manual_rect.collidepoint(mouse_pos)
+            man_bg = COLOR_SPOTIFY_GREEN if (man_hov and mouse_held) else (COLOR_HOVER if man_hov else COLOR_LIGHT_GREY)
+            pygame.draw.rect(virtual_surface, man_bg, lyrics_manual_rect, border_radius=17)
+            man_txt = font_small.render("Manual", True, COLOR_WHITE)
+            virtual_surface.blit(man_txt, (
+                lyrics_manual_rect.x + (lyrics_manual_rect.width - man_txt.get_width()) // 2,
+                lyrics_manual_rect.y + 9))
+
+            divider_y = card_y + 72
+            pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY,
+                             (card_x + 20, divider_y), (card_x + card_w - 20, divider_y))
+
+            body_top = divider_y + 10
+            body_rect = pygame.Rect(card_x + 10, body_top, card_w - 20, card_y + card_h - body_top - 10)
+
+            if show_lyrics_manual_modal:
+                pygame.draw.rect(virtual_surface, COLOR_CARD_BG, body_rect, border_radius=8)
+
+                name_lbl = font_small.render("Song name", True, COLOR_TEXT_MUTED)
+                virtual_surface.blit(name_lbl, (body_rect.x + 25, body_rect.y + 25))
+                lyrics_manual_title_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 47, body_rect.width - 50, 44)
+                pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, lyrics_manual_title_rect, border_radius=6)
+                if search_input_active and active_input_field == "manual_title":
+                    pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, lyrics_manual_title_rect, width=2, border_radius=6)
+                mt_disp = manual_title_text if manual_title_text else "e.g. Blinding Lights"
+                mt_color = COLOR_WHITE if manual_title_text else COLOR_TEXT_MUTED
+                mt_surf = font_small.render(mt_disp, True, mt_color)
+                virtual_surface.blit(mt_surf, (lyrics_manual_title_rect.x + 12, lyrics_manual_title_rect.y + 13))
+
+                artist_lbl = font_small.render("Artist", True, COLOR_TEXT_MUTED)
+                virtual_surface.blit(artist_lbl, (body_rect.x + 25, body_rect.y + 107))
+                lyrics_manual_artist_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 129, body_rect.width - 50, 44)
+                pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, lyrics_manual_artist_rect, border_radius=6)
+                if search_input_active and active_input_field == "manual_artist":
+                    pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, lyrics_manual_artist_rect, width=2, border_radius=6)
+                ma_disp = manual_artist_text if manual_artist_text else "e.g. The Weeknd"
+                ma_color2 = COLOR_WHITE if manual_artist_text else COLOR_TEXT_MUTED
+                maa_surf = font_small.render(ma_disp, True, ma_color2)
+                virtual_surface.blit(maa_surf, (lyrics_manual_artist_rect.x + 12, lyrics_manual_artist_rect.y + 13))
+
+                lyrics_manual_go_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 195, 140, 44)
+                mg_hovered = lyrics_manual_go_rect.collidepoint(mouse_pos)
+                mg_bg = (40, 230, 110) if mg_hovered else COLOR_SPOTIFY_GREEN
+                pygame.draw.rect(virtual_surface, mg_bg, lyrics_manual_go_rect, border_radius=22)
+                mg_txt = font_body.render("Search", True, COLOR_BLACK)
+                mg_txt_x = lyrics_manual_go_rect.x + (lyrics_manual_go_rect.width - mg_txt.get_width()) // 2
+                virtual_surface.blit(mg_txt, (mg_txt_x, lyrics_manual_go_rect.y + 11))
+                lyrics_manual_close_rect = pygame.Rect(0, 0, 0, 0)
+            else:
+                lyrics_search_item_rects = []
+                if lyrics_search_loading:
+                    loading_lbl = font_body.render("Searching...", True, COLOR_TEXT_MUTED)
+                    virtual_surface.blit(loading_lbl, (card_x + 20, body_top + 20))
+                elif lyrics_search_error and not lyrics_search_results:
+                    for ei, eline in enumerate(get_wrapped_lines(lyrics_search_error, font_body, body_rect.width - 30)):
+                        virtual_surface.blit(font_body.render(eline, True, (200, 90, 90)),
+                                             (card_x + 20, body_top + 20 + ei * 28))
+                else:
+                    virtual_surface.set_clip(body_rect)
+                    item_h = 68
+                    y_item = body_top - int(lyrics_search_scroll_offset)
+                    max_lyrics_search_scroll = max(0, len(lyrics_search_results) * item_h - body_rect.height + 10)
+
+                    for idx, cand in enumerate(lyrics_search_results):
+                        row_rect = pygame.Rect(card_x + 14, y_item, card_w - 28, item_h - 6)
+                        if row_rect.colliderect(body_rect):
+                            lyrics_search_item_rects.append((row_rect, idx))
+                            row_hov = row_rect.collidepoint(mouse_pos)
+                            row_clk = row_hov and mouse_held
+                            row_bg  = (45, 45, 45) if row_clk else (COLOR_HOVER if row_hov else (30, 30, 30))
+                            pygame.draw.rect(virtual_surface, row_bg, row_rect, border_radius=6)
+
+                            thumb_rect = pygame.Rect(row_rect.x + 8, row_rect.y + 8, 52, 52)
+                            pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, thumb_rect, border_radius=4)
+                            has_synced = bool(cand.get("syncedLyrics"))
+                            icon_char = "\u266a" if has_synced else "\u2715"
+                            icon_col  = COLOR_SPOTIFY_GREEN if has_synced else (200, 90, 90)
+                            icon_surf = font_body.render(icon_char, True, icon_col)
+                            virtual_surface.blit(icon_surf, (
+                                thumb_rect.x + (thumb_rect.width  - icon_surf.get_width())  // 2,
+                                thumb_rect.y + (thumb_rect.height - icon_surf.get_height()) // 2))
+
+                            cand_title  = cand.get("trackName")  or "Unknown title"
+                            cand_artist = cand.get("artistName") or "Unknown artist"
+                            dur = cand.get("duration")
+                            dur_str = f"{int(dur // 60)}:{int(dur % 60):02d}" if isinstance(dur, (int, float)) else "--:--"
+                            if len(cand_title)  > 40: cand_title  = cand_title[:38]  + "\u2026"
+                            if len(cand_artist) > 40: cand_artist = cand_artist[:38] + "\u2026"
+
+                            tx = row_rect.x + 70
+                            virtual_surface.blit(font_body.render(cand_title,  True, COLOR_WHITE),      (tx, row_rect.y + 6))
+                            virtual_surface.blit(font_small.render(cand_artist, True, COLOR_TEXT_MUTED), (tx, row_rect.y + 28))
+                            sync_lbl = "synced" if has_synced else "no synced lyrics"
+                            sync_col  = COLOR_TEXT_MUTED if has_synced else (200, 90, 90)
+                            virtual_surface.blit(font_small.render(f"{dur_str} \u2022 {sync_lbl}", True, sync_col),
+                                                 (tx, row_rect.y + 44))
+                        y_item += item_h
+                    virtual_surface.set_clip(None)
+
+                    if lyrics_search_error:
+                        fail_lines = get_wrapped_lines(lyrics_search_error, font_small, body_rect.width - 40)[:2]
+                        y_fail = body_rect.bottom - 24 - (len(fail_lines) - 1) * 18
+                        for fline in fail_lines:
+                            virtual_surface.blit(font_small.render(fline, True, (200, 90, 90)),
+                                                 (body_rect.x + 20, y_fail))
+                            y_fail += 18
         return
 
     if show_create_playlist_modal:
@@ -2403,6 +2888,8 @@ while running:
     browser_scroll_offset += (target_browser_scroll - browser_scroll_offset) * (15.0 * dt)
     settings_scroll_offset += (target_settings_scroll - settings_scroll_offset) * (15.0 * dt)
     lyrics_scroll_offset += (target_lyrics_scroll - lyrics_scroll_offset) * (15.0 * dt)
+    art_search_scroll_offset += (target_art_search_scroll - art_search_scroll_offset) * min(0.3, 15.0 * dt)
+    lyrics_search_scroll_offset += (target_lyrics_search_scroll - lyrics_search_scroll_offset) * min(0.3, 15.0 * dt)
 
     if mouse_held or is_dragging_progress:
         frame_had_input = True
@@ -2436,6 +2923,16 @@ while running:
                     song_lyrics_database[track_ref] = new_txt
                     lyrics_cursor_pos += len(event.text)
                     lyrics_text_changed = True
+                elif show_lyrics_editor_view and show_lyrics_manual_modal:
+                    if active_input_field == "manual_title" and len(manual_title_text) < 60:
+                        manual_title_text += event.text
+                    elif active_input_field == "manual_artist" and len(manual_artist_text) < 40:
+                        manual_artist_text += event.text
+                elif show_art_search_modal and show_art_manual_modal:
+                    if active_input_field == "art_manual_title" and len(manual_title_text) < 60:
+                        manual_title_text += event.text
+                    elif active_input_field == "art_manual_artist" and len(manual_artist_text) < 40:
+                        manual_artist_text += event.text
                 elif show_create_playlist_modal:
                     if active_input_field == "name" and len(playlist_input_text) < 20:
                         playlist_input_text += event.text
@@ -2465,6 +2962,16 @@ while running:
                         song_lyrics_database[track_ref] = txt[:lyrics_cursor_pos] + pasted_text + txt[lyrics_cursor_pos:]
                         lyrics_cursor_pos += len(pasted_text)
                         lyrics_text_changed = True
+                    elif show_lyrics_editor_view and show_lyrics_manual_modal:
+                        if active_input_field == "manual_title":
+                            manual_title_text = (manual_title_text + pasted_text)[:60]
+                        elif active_input_field == "manual_artist":
+                            manual_artist_text = (manual_artist_text + pasted_text)[:40]
+                    elif show_art_search_modal and show_art_manual_modal:
+                        if active_input_field == "art_manual_title":
+                            manual_title_text = (manual_title_text + pasted_text)[:60]
+                        elif active_input_field == "art_manual_artist":
+                            manual_artist_text = (manual_artist_text + pasted_text)[:40]
                     elif show_create_playlist_modal:
                         if active_input_field == "name":
                             playlist_input_text = (playlist_input_text + pasted_text)[:20]
@@ -2516,6 +3023,44 @@ while running:
                 elif event.key == pygame.K_ESCAPE:
                     search_input_active = False
                         
+            elif show_lyrics_editor_view and show_lyrics_manual_modal and search_input_active:
+                if event.key == pygame.K_BACKSPACE:
+                    if active_input_field == "manual_title":
+                        manual_title_text = manual_title_text[:-1]
+                    elif active_input_field == "manual_artist":
+                        manual_artist_text = manual_artist_text[:-1]
+                elif event.key == pygame.K_TAB:
+                    active_input_field = "manual_artist" if active_input_field == "manual_title" else "manual_title"
+                elif event.key == pygame.K_RETURN:
+                    if manual_title_text.strip():
+                        show_lyrics_manual_modal = False
+                        search_input_active = False
+                        try:
+                            start_lyrics_search(manual_title_text.strip(), manual_artist_text.strip())
+                        except Exception as e:
+                            show_lyrics_search_modal = True
+                            lyrics_search_loading = False
+                            lyrics_search_results = []
+                            lyrics_search_error = f"Failed - {type(e).__name__}: {e}"
+                elif event.key == pygame.K_ESCAPE:
+                    search_input_active = False
+
+            elif show_art_search_modal and show_art_manual_modal and search_input_active:
+                if event.key == pygame.K_BACKSPACE:
+                    if active_input_field == "art_manual_title":
+                        manual_title_text = manual_title_text[:-1]
+                    elif active_input_field == "art_manual_artist":
+                        manual_artist_text = manual_artist_text[:-1]
+                elif event.key == pygame.K_TAB:
+                    active_input_field = "art_manual_artist" if active_input_field == "art_manual_title" else "art_manual_title"
+                elif event.key == pygame.K_RETURN:
+                    if manual_title_text.strip():
+                        show_art_manual_modal = False
+                        search_input_active = False
+                        start_art_search(manual_title_text.strip(), manual_artist_text.strip())
+                elif event.key == pygame.K_ESCAPE:
+                    search_input_active = False
+
             elif show_create_playlist_modal and search_input_active:
                 if event.key == pygame.K_BACKSPACE:
                     if active_input_field == "name":
@@ -2555,7 +3100,13 @@ while running:
                         drag_seek_target = fraction * track_duration
                         continue
 
-            if show_lyrics_editor_view:
+            if show_art_search_modal:
+                if event.button == 4: target_art_search_scroll = max(0.0, target_art_search_scroll - 120.0)
+                elif event.button == 5: target_art_search_scroll = min(max_art_search_scroll, target_art_search_scroll + 120.0)
+            elif show_lyrics_search_modal:
+                if event.button == 4: target_lyrics_search_scroll = max(0.0, target_lyrics_search_scroll - 120.0)
+                elif event.button == 5: target_lyrics_search_scroll = min(max_lyrics_search_scroll, target_lyrics_search_scroll + 120.0)
+            elif show_lyrics_editor_view:
                 if event.button == 4: target_lyrics_scroll = max(0.0, target_lyrics_scroll - 120.0)
                 elif event.button == 5: target_lyrics_scroll = min(max_lyrics_scroll, target_lyrics_scroll + 120.0)
             elif not show_create_playlist_modal:
@@ -2599,7 +3150,15 @@ while running:
                 dy = last_touch_y - mouse_pos[1]
                 total_drag_dy += abs(dy)
                 
-                if show_create_playlist_modal:
+                if show_art_search_modal:
+                    target_art_search_scroll += dy * 1.5
+                    target_art_search_scroll = max(0.0, min(max_art_search_scroll, target_art_search_scroll))
+                    last_touch_y = mouse_pos[1]
+                elif show_lyrics_search_modal:
+                    target_lyrics_search_scroll += dy * 1.5
+                    target_lyrics_search_scroll = max(0.0, min(max_lyrics_search_scroll, target_lyrics_search_scroll))
+                    last_touch_y = mouse_pos[1]
+                elif show_create_playlist_modal:
                     if is_browsing_for_cover:
                         target_browser_scroll += dy * 1.5
                         target_browser_scroll = max(0.0, min(max_browser_scroll, target_browser_scroll))
@@ -2648,6 +3207,54 @@ while running:
                 tap_on_media_bar = media_bar_rect.collidepoint(mouse_pos) and current_track["title"] != "Select a song"
 
                 if total_drag_dy < 15 and not tap_on_media_bar:
+                    if show_lyrics_editor_view and show_lyrics_search_modal:
+                        if show_lyrics_manual_modal:
+                            if lyrics_manual_go_rect.collidepoint(mouse_pos):
+                                if manual_title_text.strip():
+                                    try:
+                                        start_lyrics_search(manual_title_text.strip(), manual_artist_text.strip())
+                                    except Exception as e:
+                                        show_lyrics_search_modal = True
+                                        show_lyrics_manual_modal = False
+                                        lyrics_search_loading = False
+                                        lyrics_search_results = []
+                                        lyrics_search_error = f"Failed - {type(e).__name__}: {e}"
+                                    search_input_active = False
+                            elif lyrics_manual_title_rect.collidepoint(mouse_pos):
+                                search_input_active = True
+                                active_input_field = "manual_title"
+                            elif lyrics_manual_artist_rect.collidepoint(mouse_pos):
+                                search_input_active = True
+                                active_input_field = "manual_artist"
+                            elif lyrics_search_close_rect.collidepoint(mouse_pos):
+                                show_lyrics_search_modal = False
+                                show_lyrics_manual_modal = False
+                                search_input_active = False
+                        else:
+                            if lyrics_search_close_rect.collidepoint(mouse_pos):
+                                show_lyrics_search_modal = False
+                                search_input_active = False
+                            elif lyrics_manual_rect.collidepoint(mouse_pos):
+                                manual_title_text = current_track.get("title", "") if current_track.get("title") != "Select a song" else ""
+                                manual_artist_text = ""
+                                show_lyrics_manual_modal = True
+                                search_input_active = True
+                                active_input_field = "manual_title"
+                            else:
+                                for item_rect, idx in lyrics_search_item_rects:
+                                    if item_rect.collidepoint(mouse_pos):
+                                        candidate = lyrics_search_results[idx]
+                                        synced = candidate.get("syncedLyrics")
+                                        if synced:
+                                            track_ref = current_track.get("path", "")
+                                            song_lyrics_database[track_ref] = synced
+                                            lyrics_cursor_pos = 0
+                                            lyrics_text_changed = True
+                                            show_lyrics_search_modal = False
+                                        else:
+                                            lyrics_search_error = "Failed - no synced lyrics found for that match."
+                                        break
+                        continue
                     if show_lyrics_editor_view:
                         if lyrics_close_rect.collidepoint(mouse_pos):
                             show_lyrics_editor_view = False
@@ -2666,6 +3273,9 @@ while running:
                             browsing_cover_target = "lyrics_import"
                             show_lyrics_editor_view = False
                             update_browser_contents()
+                            search_input_active = False
+                        elif lyrics_search_rect.collidepoint(mouse_pos):
+                            start_lyrics_search(current_track.get("title", ""), "")
                             search_input_active = False
                         elif lyrics_textarea_rect.collidepoint(mouse_pos):
                             search_input_active = True
@@ -2802,7 +3412,68 @@ while running:
                             virtual_surface = pygame.Surface((WIDTH, HEIGHT))
                             save_app_data()
 
+                    if show_art_search_modal:
+                        if show_art_manual_modal:
+                            if art_manual_go_rect.collidepoint(mouse_pos):
+                                if manual_title_text.strip():
+                                    show_art_manual_modal = False
+                                    search_input_active = False
+                                    start_art_search(manual_title_text.strip(), manual_artist_text.strip())
+                            elif art_manual_title_rect.collidepoint(mouse_pos):
+                                search_input_active = True
+                                active_input_field = "art_manual_title"
+                            elif art_manual_artist_rect.collidepoint(mouse_pos):
+                                search_input_active = True
+                                active_input_field = "art_manual_artist"
+                            elif art_search_close_rect.collidepoint(mouse_pos):
+                                show_art_search_modal = False
+                                show_art_manual_modal = False
+                                search_input_active = False
+                            continue
+                        if art_search_close_rect.collidepoint(mouse_pos):
+                            show_art_search_modal = False
+                        elif art_manual_rect.collidepoint(mouse_pos):
+                            manual_title_text = current_track.get("title", "") if current_track.get("title") != "Select a song" else ""
+                            manual_artist_text = ""
+                            show_art_manual_modal = True
+                            search_input_active = True
+                            active_input_field = "art_manual_title"
+                        else:
+                            for row_rect, idx in art_search_item_rects:
+                                if row_rect.collidepoint(mouse_pos):
+                                    result = art_search_results[idx]
+                                    art_url = result.get("artworkUrl100", "")
+                                    if art_url:
+                                        tmp_path = apply_itunes_art(art_url)
+                                        if tmp_path:
+                                            try:
+                                                raw_img = pygame.image.load(tmp_path)
+                                                grid_cover_surf = pygame.transform.smoothscale(raw_img, (130, 130))
+                                                t_path = current_track["path"]
+                                                track_covers[t_path] = {"image_path": tmp_path, "surface": grid_cover_surf}
+                                                current_track["cover_surface"] = grid_cover_surf
+                                                for t in imported_tracks:
+                                                    if t["path"] == t_path:
+                                                        t["cover_surface"] = grid_cover_surf
+                                                for t in liked_tracks:
+                                                    if t["path"] == t_path:
+                                                        t["cover_surface"] = grid_cover_surf
+                                                for p_data in custom_playlists.values():
+                                                    for t in p_data["tracks"]:
+                                                        if t["path"] == t_path:
+                                                            t["cover_surface"] = grid_cover_surf
+                                                save_app_data()
+                                                show_art_search_modal = False
+                                                is_browsing_for_cover = False
+                                            except Exception as art_err:
+                                                art_search_error = f"Failed - {art_err}"
+                                    break
+                        continue
+
                     if is_browsing_for_cover and (current_page == "Your Library" or browsing_cover_target in ("track_cover", "lyrics_import")):
+                        if browser_extra_search_btn_rect.collidepoint(mouse_pos) and is_browsing_for_cover and browsing_cover_target not in ("lyrics_import",):
+                            start_art_search(current_track.get("title", ""), current_track.get("artist", ""))
+                            continue
                         if cancel_browser_btn_rect.collidepoint(mouse_pos):
                             is_browsing_for_cover = False
                             if browsing_cover_target == "lyrics_import":
@@ -3124,3 +3795,4 @@ if HAS_ANDROID_MEDIA and android_media_player:
 
 pygame.quit()
 sys.exit()
+
