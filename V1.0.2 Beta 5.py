@@ -11,6 +11,7 @@ import threading
 import urllib.request
 import urllib.parse
 import urllib.error
+import webbrowser
 
 # --- WINDOW & SCALING CONFIGURATION ---
 pygame.mixer.pre_init(44100, -16, 2, 2048)
@@ -226,11 +227,37 @@ search_input_active = False
 search_query = ""
 viewing_liked_playlist = False
 viewing_settings_page = False  
+show_top100_page = False
+top100_tracks        = []        # list of dicts: rank, title, artist, spotify_url, youtube_url, apple_url
+top100_loading       = False
+top100_error         = ""
+top100_last_fetched  = 0.0       # epoch time of last successful fetch
+top100_scroll_offset = 0.0
+target_top100_scroll = 0.0
+max_top100_scroll    = 0
+top100_link_rects    = []        # list of (rect, url) for link buttons
+top100_thread        = None
+top100_art_cache     = {}        # { rank(int): pygame.Surface or None }
+show_song_of_day_page = False
+show_artist_of_day_page = False
+show_history_maker_page = False
+subpage_back_rect = pygame.Rect(0, 0, 0, 0)
+top100_btn_rect = pygame.Rect(0, 0, 0, 0)
+song_of_day_btn_rect = pygame.Rect(0, 0, 0, 0)
+artist_of_day_btn_rect = pygame.Rect(0, 0, 0, 0)
+history_maker_btn_rect = pygame.Rect(0, 0, 0, 0)
+btn_row_scroll_offset = 0.0
+target_btn_row_scroll = 0.0
+max_btn_row_scroll = 0
+btn_row_rect = pygame.Rect(0, 0, 0, 0)
+user_scrolled_btn_row = False
 playlist_is_playing = None  
 layout_mode = "desktop"  
 
 is_dragging_grid = False
+is_dragging_row = False
 last_touch_y = 0
+last_touch_x = 0
 total_drag_dy = 0
 
 music_grid_scroll_offset = 0.0  
@@ -390,18 +417,18 @@ def fetch_synced_lyrics_candidates(title, artist):
     global lyrics_search_loading, lyrics_search_results, lyrics_search_error
     has_artist = bool(artist and artist.lower() not in ("unknown artist", "unknown", ""))
 
-    query_variants = []
-    shortened = shorten_title_keywords(title)
-    if shortened:
-        query_variants.append({"track_name": shortened})
-    if title and title != shortened:
-        query_variants.append({"track_name": title})
-    fuzzy_text = f"{title} {artist}".strip() if has_artist else (title or "")
-    if fuzzy_text:
-        query_variants.append({"q": fuzzy_text})
-
     last_error = "Failed - no matches found for this song."
     try:
+        query_variants = []
+        shortened = shorten_title_keywords(title)
+        if shortened:
+            query_variants.append({"track_name": shortened})
+        if title and title != shortened:
+            query_variants.append({"track_name": title})
+        fuzzy_text = f"{title} {artist}".strip() if has_artist else (title or "")
+        if fuzzy_text:
+            query_variants.append({"q": fuzzy_text})
+
         for base_params in query_variants:
             params = dict(base_params)
             if has_artist and "q" not in params:
@@ -497,6 +524,153 @@ def apply_itunes_art(artwork_url):
     except Exception as e:
         art_search_error = f"Failed - {type(e).__name__}: {e}"
         return None
+
+def _fetch_top100_worker():
+    """Background thread: fetches chart data then kicks off artwork downloads."""
+    global top100_tracks, top100_loading, top100_error, top100_last_fetched
+
+    def build_links(title, artist):
+        q = urllib.parse.quote_plus(f"{title} {artist}")
+        spotify_url = f"https://open.spotify.com/search/{urllib.parse.quote(title + ' ' + artist)}"
+        youtube_url = f"https://music.youtube.com/search?q={q}"
+        apple_url   = f"https://music.apple.com/us/search?term={q}"
+        return spotify_url, youtube_url, apple_url
+
+    tracks = []
+
+    # --- Primary: Spotify Charts public page (no auth, updates daily) ---
+    try:
+        url = "https://charts.spotify.com/charts/view/regional-global-daily/latest"
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; SpotMFi/1.0)",
+            "Accept": "application/json"
+        })
+        with urllib.request.urlopen(req, timeout=12) as r:
+            raw = r.read().decode("utf-8", errors="replace")
+        if raw.strip().startswith("{"):
+            data = json.loads(raw)
+            entries = data.get("entries", data.get("chartEntryData", []))
+            for entry in entries[:100]:
+                try:
+                    td = entry.get("trackMetadata", entry)
+                    title  = td.get("trackName", td.get("name",   ""))
+                    artist = td.get("artists",    td.get("artist", ""))
+                    if isinstance(artist, list):
+                        artist = ", ".join(a.get("name", str(a)) for a in artist)
+                    if title:
+                        sp, yt, ap = build_links(title, artist)
+                        tracks.append({"rank": len(tracks)+1, "title": title,
+                                       "artist": artist, "spotify_url": sp,
+                                       "youtube_url": yt, "apple_url": ap,
+                                       "art_url": ""})
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # --- Fallback / top-up: Apple Music Global Top 100 RSS (always public) ---
+    # The RSS also gives us artworkUrl100 for free — upgrade to 600x600
+    if len(tracks) < 50:
+        try:
+            url2 = "https://rss.applemarketingtools.com/api/v2/us/music/most-played/100/songs.json"
+            req2 = urllib.request.Request(url2, headers={"User-Agent": "SpotMFi/1.0"})
+            with urllib.request.urlopen(req2, timeout=12) as r2:
+                data2 = json.loads(r2.read().decode("utf-8"))
+            seen = {(t["title"].lower(), t["artist"].lower()) for t in tracks}
+            for item in data2.get("feed", {}).get("results", []):
+                title   = item.get("name", "")
+                artist  = item.get("artistName", "")
+                art_url = item.get("artworkUrl100", "").replace("100x100bb", "300x300bb")
+                if not title or (title.lower(), artist.lower()) in seen:
+                    continue
+                sp, yt, ap = build_links(title, artist)
+                tracks.append({"rank": len(tracks)+1, "title": title,
+                                "artist": artist, "spotify_url": sp,
+                                "youtube_url": yt, "apple_url": ap,
+                                "art_url": art_url})
+                seen.add((title.lower(), artist.lower()))
+                if len(tracks) >= 100:
+                    break
+        except Exception as e2:
+            if not tracks:
+                top100_error   = f"Failed to load chart data: {e2}"
+                top100_loading = False
+                return
+
+    # Re-number ranks
+    for i, t in enumerate(tracks):
+        t["rank"] = i + 1
+
+    top100_tracks       = tracks[:100]
+    top100_last_fetched = time.time()
+    top100_error        = ""
+    top100_loading      = False
+
+    # For tracks that still have no art URL, fetch from iTunes search
+    # Do this in a second pass so the list appears immediately
+    def _fetch_missing_art_urls():
+        for t in top100_tracks:
+            if t.get("art_url"):
+                continue
+            try:
+                params = urllib.parse.urlencode({
+                    "term": f"{t['title']} {t['artist']}",
+                    "entity": "song", "media": "music", "limit": 1
+                })
+                req_i = urllib.request.Request(
+                    f"https://itunes.apple.com/search?{params}",
+                    headers={"User-Agent": "SpotMFi/1.0"})
+                with urllib.request.urlopen(req_i, timeout=8) as ri:
+                    rd = json.loads(ri.read().decode("utf-8"))
+                results = rd.get("results", [])
+                if results:
+                    t["art_url"] = results[0].get("artworkUrl100", "").replace("100x100bb", "300x300bb")
+            except Exception:
+                pass
+
+    threading.Thread(target=_fetch_missing_art_urls, daemon=True).start()
+    # Kick off actual image downloads
+    threading.Thread(target=_download_top100_art, daemon=True).start()
+
+
+def _download_top100_art():
+    """Downloads artwork for each top-100 track and stores decoded surfaces."""
+    import io
+    for t in top100_tracks:
+        rank = t["rank"]
+        if rank in top100_art_cache:
+            continue
+        url = t.get("art_url", "")
+        if not url:
+            # Wait briefly for the URL-fetch thread to populate it
+            time.sleep(0.05)
+            url = t.get("art_url", "")
+        if not url:
+            continue
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "SpotMFi/1.0"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                img_bytes = r.read()
+            buf = io.BytesIO(img_bytes)
+            surf = pygame.image.load(buf)
+            surf = pygame.transform.smoothscale(surf, (56, 56))
+            top100_art_cache[rank] = surf
+        except Exception:
+            top100_art_cache[rank] = None  # mark as attempted so we don't retry
+
+
+def start_top100_fetch():
+    global top100_loading, top100_error, top100_tracks, top100_thread
+    global top100_scroll_offset, target_top100_scroll, top100_art_cache
+    top100_loading       = True
+    top100_error         = ""
+    top100_tracks        = []
+    top100_art_cache     = {}
+    top100_scroll_offset = 0.0
+    target_top100_scroll = 0.0
+    top100_thread = threading.Thread(target=_fetch_top100_worker, daemon=True)
+    top100_thread.start()
+
 
 def save_app_data():
     data = {
@@ -1081,7 +1255,7 @@ def draw_sidebar():
             virtual_surface.blit(text_surf, (tx, ty))
 
 def draw_main_content():
-    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, browser_extra_search_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction, desktop_btn_rect, phone_btn_rect, search_box_rect
+    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, browser_extra_search_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction, desktop_btn_rect, phone_btn_rect, search_box_rect, top100_btn_rect, song_of_day_btn_rect, artist_of_day_btn_rect, history_maker_btn_rect, subpage_back_rect, max_btn_row_scroll, btn_row_rect, user_scrolled_btn_row, btn_row_scroll_offset, target_btn_row_scroll
     track_rects = []
     browser_rects = []
     settings_dir_rects = []
@@ -1390,6 +1564,180 @@ def draw_main_content():
             y_offset += 50
         virtual_surface.set_clip(None)
 
+    # --- TOP 100 / SONG OF DAY / ARTIST OF DAY / HISTORY MAKER EMPTY PAGES ---
+    elif show_top100_page and current_page == "Search":
+        pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
+
+        # --- Header ---
+        page_title = font_title.render("Top 100", True, COLOR_WHITE)
+        virtual_surface.blit(page_title, (content_pad_x, 40))
+        subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
+        sb_hov = subpage_back_rect.collidepoint(mouse_pos)
+        sb_clk = sb_hov and mouse_held
+        sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
+        pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
+        sb_lbl = font_small.render("Back", True, COLOR_WHITE)
+        virtual_surface.blit(sb_lbl, (subpage_back_rect.x + 26, 44))
+
+        # Refresh button
+        refresh_rect = pygame.Rect(main_x + main_w - (240 if is_portrait else 360), 35, 90, 35)
+        rf_hov = refresh_rect.collidepoint(mouse_pos)
+        rf_clk = rf_hov and mouse_held
+        rf_color = COLOR_SPOTIFY_GREEN if rf_clk else (COLOR_HOVER if rf_hov else COLOR_LIGHT_GREY)
+        pygame.draw.rect(virtual_surface, rf_color, refresh_rect, border_radius=15)
+        rf_lbl = font_small.render("Refresh", True, COLOR_WHITE)
+        virtual_surface.blit(rf_lbl, (refresh_rect.x + (refresh_rect.width - rf_lbl.get_width()) // 2, 44))
+
+        # Freshness label
+        if top100_last_fetched > 0:
+            import datetime
+            age_str = datetime.datetime.fromtimestamp(top100_last_fetched).strftime("Updated %d %b %H:%M")
+            age_surf = font_small.render(age_str, True, COLOR_TEXT_MUTED)
+            virtual_surface.blit(age_surf, (content_pad_x, 88))
+
+        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY,
+                         (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
+
+        body_top  = 125
+        body_h    = HEIGHT - portrait_sidebar_h - body_top
+        body_rect = pygame.Rect(main_x, body_top, main_w, body_h)
+
+        if top100_loading:
+            wait = font_body.render("Loading chart data...", True, COLOR_TEXT_MUTED)
+            virtual_surface.blit(wait, (content_pad_x, body_top + 30))
+        elif top100_error and not top100_tracks:
+            for ei, el in enumerate(top100_error.split("\n")):
+                virtual_surface.blit(font_body.render(el, True, (200, 90, 90)),
+                                     (content_pad_x, body_top + 30 + ei * 28))
+        else:
+            virtual_surface.set_clip(body_rect)
+            top100_link_rects.clear()
+            global max_top100_scroll
+
+            row_h       = 80
+            link_w      = 96
+            link_h      = 30
+            link_gap    = 8
+            rank_w      = 52
+            art_w       = 48
+
+            y_row = body_top - int(top100_scroll_offset)
+            total_h = len(top100_tracks) * row_h
+            max_top100_scroll = max(0, total_h - body_h + 20)
+
+            for track in top100_tracks:
+                row_rect = pygame.Rect(main_x + 10, y_row, main_w - 20, row_h - 6)
+                if row_rect.bottom < body_top or row_rect.top > body_top + body_h:
+                    y_row += row_h
+                    continue
+
+                # Row background
+                row_hov = row_rect.collidepoint(mouse_pos)
+                pygame.draw.rect(virtual_surface, (28, 28, 28) if row_hov else (20, 20, 20),
+                                 row_rect, border_radius=6)
+
+                # Rank number — uniform muted colour
+                rank_surf = font_body.render(str(track["rank"]), True, COLOR_TEXT_MUTED)
+                rx = row_rect.x + 10 + (rank_w - rank_surf.get_width()) // 2
+                virtual_surface.blit(rank_surf, (rx, y_row + (row_h - 6 - rank_surf.get_height()) // 2))
+
+                # Art box — show downloaded surface or placeholder while loading
+                art_rect = pygame.Rect(row_rect.x + rank_w + 8, y_row + 8, art_w, art_w)
+                cached = top100_art_cache.get(track["rank"])
+                if cached is not None:
+                    virtual_surface.blit(pygame.transform.smoothscale(cached, (art_w, art_w)), art_rect)
+                    pygame.draw.rect(virtual_surface, (50, 50, 50), art_rect, width=1, border_radius=4)
+                else:
+                    pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, art_rect, border_radius=4)
+                    note = font_small.render("\u266a", True, (120, 120, 120))
+                    virtual_surface.blit(note, (art_rect.x + (art_w - note.get_width()) // 2,
+                                                art_rect.y + (art_w - note.get_height()) // 2))
+
+                # Title + artist
+                tx = row_rect.x + rank_w + art_w + 20
+                link_area_w = (link_w + link_gap) * 3 - link_gap
+                text_max_w  = row_rect.right - tx - link_area_w - 14
+
+                title_str  = track["title"]
+                artist_str = track["artist"]
+                while font_body.size(title_str)[0]  > text_max_w and len(title_str)  > 4: title_str  = title_str[:-1]
+                while font_small.size(artist_str)[0] > text_max_w and len(artist_str) > 4: artist_str = artist_str[:-1]
+                if title_str  != track["title"]:  title_str  += "\u2026"
+                if artist_str != track["artist"]: artist_str += "\u2026"
+
+                virtual_surface.blit(font_body.render(title_str,  True, COLOR_WHITE),
+                                     (tx, y_row + 12))
+                virtual_surface.blit(font_small.render(artist_str, True, COLOR_TEXT_MUTED),
+                                     (tx, y_row + 38))
+
+                # Link buttons: black bg, coloured text per service
+                link_defs = [
+                    ("Spotify",  track["spotify_url"],  (30, 215, 96)),
+                    ("YouTube",  track["youtube_url"],  (255, 80,  80)),
+                    ("Apple",    track["apple_url"],    (250, 110, 200)),
+                ]
+                lx = row_rect.right - link_area_w - 8
+                ly = y_row + (row_h - 6 - link_h) // 2
+                for lbl, url, txt_col in link_defs:
+                    lr = pygame.Rect(lx, ly, link_w, link_h)
+                    l_hov = lr.collidepoint(mouse_pos)
+                    l_clk = l_hov and mouse_held
+                    bg = (50, 50, 50) if l_clk else (COLOR_HOVER if l_hov else COLOR_LIGHT_GREY)
+                    pygame.draw.rect(virtual_surface, bg, lr, border_radius=15)
+                    ls = font_small.render(lbl, True, txt_col)
+                    virtual_surface.blit(ls, (lr.x + (lr.width - ls.get_width()) // 2,
+                                             lr.y + (lr.height - ls.get_height()) // 2))
+                    top100_link_rects.append((lr, url))
+                    lx += link_w + link_gap
+
+                pygame.draw.line(virtual_surface, (35, 35, 35),
+                                 (row_rect.x + rank_w, row_rect.bottom + 2),
+                                 (row_rect.right - 10, row_rect.bottom + 2), 1)
+                y_row += row_h
+
+            virtual_surface.set_clip(None)
+
+            # Error banner at bottom if partial data with warning
+            if top100_error:
+                err_surf = font_small.render(top100_error[:80], True, (200, 90, 90))
+                virtual_surface.blit(err_surf, (content_pad_x, HEIGHT - portrait_sidebar_h - 28))
+
+    elif show_song_of_day_page and current_page == "Search":
+        page_title = font_title.render("Song of the Day", True, COLOR_WHITE)
+        virtual_surface.blit(page_title, (content_pad_x, 40))
+        subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
+        sb_hov = subpage_back_rect.collidepoint(mouse_pos)
+        sb_clk = sb_hov and mouse_held
+        sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
+        pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
+        sb_lbl = font_small.render("Back", True, COLOR_WHITE)
+        virtual_surface.blit(sb_lbl, (subpage_back_rect.x + 26, 44))
+        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
+
+    elif show_artist_of_day_page and current_page == "Search":
+        page_title = font_title.render("Artist of the Day", True, COLOR_WHITE)
+        virtual_surface.blit(page_title, (content_pad_x, 40))
+        subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
+        sb_hov = subpage_back_rect.collidepoint(mouse_pos)
+        sb_clk = sb_hov and mouse_held
+        sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
+        pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
+        sb_lbl = font_small.render("Back", True, COLOR_WHITE)
+        virtual_surface.blit(sb_lbl, (subpage_back_rect.x + 26, 44))
+        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
+
+    elif show_history_maker_page and current_page == "Search":
+        page_title = font_title.render("History Maker", True, COLOR_WHITE)
+        virtual_surface.blit(page_title, (content_pad_x, 40))
+        subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
+        sb_hov = subpage_back_rect.collidepoint(mouse_pos)
+        sb_clk = sb_hov and mouse_held
+        sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
+        pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
+        sb_lbl = font_small.render("Back", True, COLOR_WHITE)
+        virtual_surface.blit(sb_lbl, (subpage_back_rect.x + 26, 44))
+        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
+
     # --- SEARCH PAGE ---
     elif current_page == "Search":
         search_title = font_title.render("Search Results", True, COLOR_WHITE)
@@ -1416,51 +1764,97 @@ def draw_main_content():
             clip_surf.blit(search_text_surf, (0, 0))
             virtual_surface.blit(clip_surf, (search_box_rect.x + 15, search_box_rect.y + (52 - search_text_surf.get_height()) // 2))
 
-            # --- Button row: centred under search bar ---
+            # --- Button row: horizontally scrollable strip ---
             ph_add_w = 180
             ph_btn_h = 52
             ph_cog_w = 52
             ph_gap   = 12
-            if saved_directories:
-                # Total group width = add_folder + gap + cog
-                total_btns_w = ph_add_w + ph_gap + ph_cog_w
-                btn_group_x = (main_w - total_btns_w) // 2
-                add_folder_btn_rect = pygame.Rect(main_x + btn_group_x, btn_row_y, ph_add_w, ph_btn_h)
-                settings_btn_rect   = pygame.Rect(main_x + btn_group_x + ph_add_w + ph_gap, btn_row_y, ph_cog_w, ph_btn_h)
-            else:
-                # Only + Add Folder, centred
-                btn_group_x = (main_w - ph_add_w) // 2
-                add_folder_btn_rect = pygame.Rect(main_x + btn_group_x, btn_row_y, ph_add_w, ph_btn_h)
-                settings_btn_rect   = pygame.Rect(0, 0, 0, 0)  # hidden
 
-            # Draw + Add Folder
-            is_af_hovered = add_folder_btn_rect.collidepoint(mouse_pos)
-            is_af_clicked = is_af_hovered and mouse_held
-            if is_af_clicked:
-                pygame.draw.rect(virtual_surface, (20, 150, 65), add_folder_btn_rect, border_radius=20)
-                btn_color = COLOR_WHITE
-            elif is_af_hovered:
-                pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, add_folder_btn_rect, border_radius=20)
-                btn_color = COLOR_BLACK
-            else:
-                pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, add_folder_btn_rect, border_radius=20)
-                btn_color = COLOR_WHITE
-            btn_txt = font_small.render("+ Add Folder", True, btn_color)
-            virtual_surface.blit(btn_txt, (add_folder_btn_rect.x + (ph_add_w - btn_txt.get_width()) // 2,
-                                           add_folder_btn_rect.y + (ph_btn_h - btn_txt.get_height()) // 2))
+            row_inset  = content_pad_x - main_x
+            row_x      = content_pad_x
+            row_w      = main_w - row_inset * 2
+            row_clip_rect = pygame.Rect(row_x, btn_row_y, row_w, ph_btn_h)
+            btn_row_rect = row_clip_rect
 
-            # Draw settings cog (only when directories exist)
+            # Build the ordered list of buttons in the strip: (kind, label, width)
+            strip_buttons = [("add_folder", "+ Add Folder", ph_add_w)]
             if saved_directories:
-                is_st_hovered = settings_btn_rect.collidepoint(mouse_pos)
-                is_st_clicked = is_st_hovered and mouse_held
-                if is_st_clicked:
-                    box_bg_color = (20, 150, 65); st_color = COLOR_WHITE
-                elif is_st_hovered:
-                    box_bg_color = COLOR_SPOTIFY_GREEN; st_color = COLOR_BLACK
-                else:
-                    box_bg_color = COLOR_LIGHT_GREY; st_color = COLOR_WHITE
-                pygame.draw.rect(virtual_surface, box_bg_color, settings_btn_rect, border_radius=20)
-                draw_solid_cog_wheel(virtual_surface, settings_btn_rect.x + 16, settings_btn_rect.y + 16, 20, 20, st_color)
+                strip_buttons.append(("settings", None, ph_cog_w))
+            strip_buttons.append(("top100", "Top 100", 150))
+            strip_buttons.append(("song_of_day", "Song of Day", 170))
+            strip_buttons.append(("artist_of_day", "Artist of Day", 175))
+            strip_buttons.append(("history_maker", "History Maker", 185))
+
+            total_strip_w = sum(w for _, _, w in strip_buttons) + ph_gap * len(strip_buttons)
+            max_btn_row_scroll = total_strip_w
+
+            if not user_scrolled_btn_row:
+                group_w = ph_add_w + (ph_gap + ph_cog_w if saved_directories else 0)
+                center_shift = (row_w - group_w) / 2.0
+                initial_offset = (-center_shift) % total_strip_w
+                btn_row_scroll_offset = initial_offset
+                target_btn_row_scroll = initial_offset
+
+            settings_btn_rect = pygame.Rect(0, 0, 0, 0)
+            top100_btn_rect = pygame.Rect(0, 0, 0, 0)
+            song_of_day_btn_rect = pygame.Rect(0, 0, 0, 0)
+            artist_of_day_btn_rect = pygame.Rect(0, 0, 0, 0)
+            history_maker_btn_rect = pygame.Rect(0, 0, 0, 0)
+
+            virtual_surface.set_clip(row_clip_rect)
+            wrapped_offset = btn_row_scroll_offset % total_strip_w
+            x_cursor = row_x - wrapped_offset - total_strip_w
+            while x_cursor < row_x + row_w:
+                for kind, label, w in strip_buttons:
+                    btn_rect = pygame.Rect(int(x_cursor), btn_row_y, w, ph_btn_h)
+                    if btn_rect.colliderect(row_clip_rect):
+                        is_hov = btn_rect.collidepoint(mouse_pos)
+                        is_clk = is_hov and mouse_held
+
+                        if kind == "add_folder":
+                            add_folder_btn_rect = btn_rect
+                            if is_clk:
+                                pygame.draw.rect(virtual_surface, (20, 150, 65), btn_rect, border_radius=20)
+                                btn_color = COLOR_WHITE
+                            elif is_hov:
+                                pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, btn_rect, border_radius=20)
+                                btn_color = COLOR_BLACK
+                            else:
+                                pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, btn_rect, border_radius=20)
+                                btn_color = COLOR_WHITE
+                            btn_txt = font_small.render(label, True, btn_color)
+                            virtual_surface.blit(btn_txt, (btn_rect.x + (w - btn_txt.get_width()) // 2,
+                                                           btn_rect.y + (ph_btn_h - btn_txt.get_height()) // 2))
+                        elif kind == "settings":
+                            settings_btn_rect = btn_rect
+                            if is_clk:
+                                box_bg_color = (20, 150, 65); st_color = COLOR_WHITE
+                            elif is_hov:
+                                box_bg_color = COLOR_SPOTIFY_GREEN; st_color = COLOR_BLACK
+                            else:
+                                box_bg_color = COLOR_LIGHT_GREY; st_color = COLOR_WHITE
+                            pygame.draw.rect(virtual_surface, box_bg_color, btn_rect, border_radius=20)
+                            draw_solid_cog_wheel(virtual_surface, btn_rect.x + 16, btn_rect.y + 16, 20, 20, st_color)
+                        else:
+                            if kind == "top100": top100_btn_rect = btn_rect
+                            elif kind == "song_of_day": song_of_day_btn_rect = btn_rect
+                            elif kind == "artist_of_day": artist_of_day_btn_rect = btn_rect
+                            elif kind == "history_maker": history_maker_btn_rect = btn_rect
+
+                            if is_clk:
+                                pygame.draw.rect(virtual_surface, (20, 150, 65), btn_rect, border_radius=20)
+                                btn_color = COLOR_WHITE
+                            elif is_hov:
+                                pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, btn_rect, border_radius=20)
+                                btn_color = COLOR_BLACK
+                            else:
+                                pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, btn_rect, border_radius=20)
+                                btn_color = COLOR_WHITE
+                            btn_txt = font_small.render(label, True, btn_color)
+                            virtual_surface.blit(btn_txt, (btn_rect.x + (w - btn_txt.get_width()) // 2,
+                                                           btn_rect.y + (ph_btn_h - btn_txt.get_height()) // 2))
+                    x_cursor += w + ph_gap
+            virtual_surface.set_clip(None)
 
             grid_start_y = btn_row_y + 60
 
@@ -2136,7 +2530,7 @@ def draw_modals():
                 pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, lyrics_manual_title_rect, border_radius=6)
                 if search_input_active and active_input_field == "manual_title":
                     pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, lyrics_manual_title_rect, width=2, border_radius=6)
-                mt_disp = manual_title_text if manual_title_text else "e.g. Blinding Lights"
+                mt_disp = (manual_title_text if manual_title_text else "e.g. Blinding Lights").replace("\n", " ").replace("\r", "")
                 mt_color = COLOR_WHITE if manual_title_text else COLOR_TEXT_MUTED
                 mt_surf = font_small.render(mt_disp, True, mt_color)
                 virtual_surface.blit(mt_surf, (lyrics_manual_title_rect.x + 12, lyrics_manual_title_rect.y + 13))
@@ -2147,7 +2541,7 @@ def draw_modals():
                 pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, lyrics_manual_artist_rect, border_radius=6)
                 if search_input_active and active_input_field == "manual_artist":
                     pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, lyrics_manual_artist_rect, width=2, border_radius=6)
-                ma_disp = manual_artist_text if manual_artist_text else "e.g. The Weeknd"
+                ma_disp = (manual_artist_text if manual_artist_text else "e.g. The Weeknd").replace("\n", " ").replace("\r", "")
                 ma_color2 = COLOR_WHITE if manual_artist_text else COLOR_TEXT_MUTED
                 maa_surf = font_small.render(ma_disp, True, ma_color2)
                 virtual_surface.blit(maa_surf, (lyrics_manual_artist_rect.x + 12, lyrics_manual_artist_rect.y + 13))
@@ -2194,8 +2588,8 @@ def draw_modals():
                                 thumb_rect.x + (thumb_rect.width  - icon_surf.get_width())  // 2,
                                 thumb_rect.y + (thumb_rect.height - icon_surf.get_height()) // 2))
 
-                            cand_title  = cand.get("trackName")  or "Unknown title"
-                            cand_artist = cand.get("artistName") or "Unknown artist"
+                            cand_title  = (cand.get("trackName")  or "Unknown title").replace("\n", " ").replace("\r", "")
+                            cand_artist = (cand.get("artistName") or "Unknown artist").replace("\n", " ").replace("\r", "")
                             dur = cand.get("duration")
                             dur_str = f"{int(dur // 60)}:{int(dur % 60):02d}" if isinstance(dur, (int, float)) else "--:--"
                             if len(cand_title)  > 40: cand_title  = cand_title[:38]  + "\u2026"
@@ -2888,8 +3282,14 @@ while running:
     browser_scroll_offset += (target_browser_scroll - browser_scroll_offset) * (15.0 * dt)
     settings_scroll_offset += (target_settings_scroll - settings_scroll_offset) * (15.0 * dt)
     lyrics_scroll_offset += (target_lyrics_scroll - lyrics_scroll_offset) * (15.0 * dt)
+    top100_scroll_offset += (target_top100_scroll - top100_scroll_offset) * (15.0 * dt)
     art_search_scroll_offset += (target_art_search_scroll - art_search_scroll_offset) * min(0.3, 15.0 * dt)
     lyrics_search_scroll_offset += (target_lyrics_search_scroll - lyrics_search_scroll_offset) * min(0.3, 15.0 * dt)
+    btn_row_scroll_offset += (target_btn_row_scroll - btn_row_scroll_offset) * min(0.3, 15.0 * dt)
+    if max_btn_row_scroll > 0:
+        if target_btn_row_scroll > 100000 or target_btn_row_scroll < -100000:
+            target_btn_row_scroll %= max_btn_row_scroll
+            btn_row_scroll_offset %= max_btn_row_scroll
 
     if mouse_held or is_dragging_progress:
         frame_had_input = True
@@ -2924,10 +3324,11 @@ while running:
                     lyrics_cursor_pos += len(event.text)
                     lyrics_text_changed = True
                 elif show_lyrics_editor_view and show_lyrics_manual_modal:
+                    clean_text = event.text.replace("\n", "").replace("\r", "")
                     if active_input_field == "manual_title" and len(manual_title_text) < 60:
-                        manual_title_text += event.text
+                        manual_title_text += clean_text
                     elif active_input_field == "manual_artist" and len(manual_artist_text) < 40:
-                        manual_artist_text += event.text
+                        manual_artist_text += clean_text
                 elif show_art_search_modal and show_art_manual_modal:
                     if active_input_field == "art_manual_title" and len(manual_title_text) < 60:
                         manual_title_text += event.text
@@ -2963,10 +3364,11 @@ while running:
                         lyrics_cursor_pos += len(pasted_text)
                         lyrics_text_changed = True
                     elif show_lyrics_editor_view and show_lyrics_manual_modal:
+                        clean_paste = pasted_text.replace("\n", " ").replace("\r", "")
                         if active_input_field == "manual_title":
-                            manual_title_text = (manual_title_text + pasted_text)[:60]
+                            manual_title_text = (manual_title_text + clean_paste)[:60]
                         elif active_input_field == "manual_artist":
-                            manual_artist_text = (manual_artist_text + pasted_text)[:40]
+                            manual_artist_text = (manual_artist_text + clean_paste)[:40]
                     elif show_art_search_modal and show_art_manual_modal:
                         if active_input_field == "art_manual_title":
                             manual_title_text = (manual_title_text + pasted_text)[:60]
@@ -3134,10 +3536,18 @@ while running:
 
             if event.button == 1:
                 is_dragging_grid = True
+                is_dragging_row = False
                 last_touch_y = mouse_pos[1]
                 total_drag_dy = 0
                 if media_bar_rect.collidepoint(mouse_pos) and current_track["title"] != "Select a song":
                     is_dragging_grid = False
+                if (current_page == "Search" and is_portrait and layout_mode == "phone"
+                        and not is_browsing_storage and not viewing_settings_page
+                        and not (show_top100_page or show_song_of_day_page or show_artist_of_day_page or show_history_maker_page)
+                        and btn_row_rect.collidepoint(mouse_pos)):
+                    is_dragging_row = True
+                    is_dragging_grid = False
+                    last_touch_x = mouse_pos[0]
                 
         elif event.type == pygame.MOUSEMOTION:
             mouse_pos = get_virtual_mouse_pos()
@@ -3146,6 +3556,13 @@ while running:
                 relative_x = mouse_pos[0] - progress_bar_rect.x
                 fraction = min(1.0, max(0.0, relative_x / progress_bar_rect.width))
                 drag_seek_target = fraction * track_duration
+            elif is_dragging_row:
+                dx = last_touch_x - mouse_pos[0]
+                total_drag_dy += abs(dx)
+                if abs(dx) > 0:
+                    user_scrolled_btn_row = True
+                target_btn_row_scroll += dx * 1.5
+                last_touch_x = mouse_pos[0]
             elif is_dragging_grid:
                 dy = last_touch_y - mouse_pos[1]
                 total_drag_dy += abs(dy)
@@ -3157,6 +3574,10 @@ while running:
                 elif show_lyrics_search_modal:
                     target_lyrics_search_scroll += dy * 1.5
                     target_lyrics_search_scroll = max(0.0, min(max_lyrics_search_scroll, target_lyrics_search_scroll))
+                    last_touch_y = mouse_pos[1]
+                elif show_top100_page:
+                    target_top100_scroll += dy * 1.5
+                    target_top100_scroll = max(0.0, min(float(max_top100_scroll), target_top100_scroll))
                     last_touch_y = mouse_pos[1]
                 elif show_create_playlist_modal:
                     if is_browsing_for_cover:
@@ -3203,6 +3624,7 @@ while running:
                     continue 
 
                 is_dragging_grid = False
+                is_dragging_row = False
 
                 tap_on_media_bar = media_bar_rect.collidepoint(mouse_pos) and current_track["title"] != "Select a song"
 
@@ -3597,6 +4019,27 @@ while running:
                     elif viewing_settings_page and current_page == "Search":
                         if close_settings_btn_rect.collidepoint(mouse_pos):
                             viewing_settings_page = False
+                    elif (show_top100_page or show_song_of_day_page or show_artist_of_day_page or show_history_maker_page) and current_page == "Search":
+                        if subpage_back_rect.collidepoint(mouse_pos):
+                            show_top100_page = False
+                            show_song_of_day_page = False
+                            show_artist_of_day_page = False
+                            show_history_maker_page = False
+                        elif show_top100_page:
+                            # Refresh button
+                            refresh_rect_hit = pygame.Rect(
+                                main_x + main_w - (240 if is_portrait else 360), 35, 90, 35)
+                            if refresh_rect_hit.collidepoint(mouse_pos) and not top100_loading:
+                                start_top100_fetch()
+                            else:
+                                # Link button taps
+                                for lr, url in top100_link_rects:
+                                    if lr.collidepoint(mouse_pos):
+                                        try:
+                                            webbrowser.open(url)
+                                        except Exception:
+                                            pass
+                                        break
                     else:
                         if current_page == "Search" and add_folder_btn_rect.collidepoint(mouse_pos):
                             is_browsing_storage = True
@@ -3606,6 +4049,20 @@ while running:
                         if current_page == "Search" and saved_directories and settings_btn_rect.collidepoint(mouse_pos):
                             viewing_settings_page = True
                             target_settings_scroll = 0.0
+
+                        if current_page == "Search" and top100_btn_rect.collidepoint(mouse_pos):
+                            show_top100_page = True
+                            # Fetch if never loaded or data is older than 1 hour
+                            if not top100_tracks and not top100_loading:
+                                start_top100_fetch()
+                            elif top100_last_fetched > 0 and (time.time() - top100_last_fetched) > 3600 and not top100_loading:
+                                start_top100_fetch()
+                        if current_page == "Search" and song_of_day_btn_rect.collidepoint(mouse_pos):
+                            show_song_of_day_page = True
+                        if current_page == "Search" and artist_of_day_btn_rect.collidepoint(mouse_pos):
+                            show_artist_of_day_page = True
+                        if current_page == "Search" and history_maker_btn_rect.collidepoint(mouse_pos):
+                            show_history_maker_page = True
                                 
                         if current_page in ["Search"] or (current_page == "Your Library" and (viewing_liked_playlist or selected_custom_playlist_name)):
                             for rect, track in track_rects:
@@ -3771,7 +4228,8 @@ while running:
         abs(target_music_scroll - music_grid_scroll_offset) > 0.5 or
         abs(target_browser_scroll - browser_scroll_offset) > 0.5 or
         abs(target_settings_scroll - settings_scroll_offset) > 0.5 or
-        abs(target_lyrics_scroll - lyrics_scroll_offset) > 0.5
+        abs(target_lyrics_scroll - lyrics_scroll_offset) > 0.5 or
+        abs(target_top100_scroll - top100_scroll_offset) > 0.5
     )
     _needs_continuous_frames = (
         is_playing or
@@ -3779,7 +4237,9 @@ while running:
         _scroll_settling or
         show_lyrics_editor_view or
         selected_custom_playlist_name is not None or
-        viewing_liked_playlist
+        viewing_liked_playlist or
+        top100_loading or
+        (show_top100_page and len(top100_art_cache) < len(top100_tracks))
     )
     clock.tick(DEVICE_REFRESH_RATE if _needs_continuous_frames else 10)
 
@@ -3795,4 +4255,3 @@ if HAS_ANDROID_MEDIA and android_media_player:
 
 pygame.quit()
 sys.exit()
-
