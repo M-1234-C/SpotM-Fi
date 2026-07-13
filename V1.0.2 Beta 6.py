@@ -12,6 +12,7 @@ import urllib.request
 import urllib.parse
 import urllib.error
 import webbrowser
+import datetime
 
 # --- WINDOW & SCALING CONFIGURATION ---
 pygame.mixer.pre_init(44100, -16, 2, 2048)
@@ -227,6 +228,343 @@ search_input_active = False
 search_query = ""
 viewing_liked_playlist = False
 viewing_settings_page = False  
+
+# --- Daily-rotating content for Song / Artist of the Day and History Maker ---
+# Picked deterministically from the current date, so the choice stays the
+# same all day and moves on to the next entry tomorrow.
+SOTD_ENTRIES = [
+    {
+        "title": "What a Wonderful World", "artist": "Louis Armstrong",
+        "search": "What a Wonderful World Louis Armstrong",
+        "description": (
+            "Released in 1967, \"What a Wonderful World\" was written by Bob Thiele and "
+            "George David Weiss and recorded by the legendary Louis Armstrong. At a time "
+            "when the world was gripped by the Vietnam War, civil rights struggles and deep "
+            "social division, Armstrong chose to record a song of pure, quiet wonder \u2014 "
+            "an act of radical optimism that transcended politics entirely.\n\n"
+            "The song asks nothing of the listener except to pause and notice: the colours "
+            "of trees and roses, the handshakes of friends, the laughter of children. "
+            "Armstrong\u2019s warm, weathered voice carries the weight of a life fully "
+            "lived, making even the simplest observations feel earned and true.\n\n"
+            "It was initially a commercial failure in the United States but became a number "
+            "one hit in the United Kingdom, and its second life came after it was featured "
+            "in the 1987 film \u2018Good Morning, Vietnam\u2019, introducing it to an "
+            "entirely new generation. Since then it has become one of the most recognisable "
+            "songs ever recorded, covered by hundreds of artists across every genre.\n\n"
+            "What makes it the Song of the Day is its extraordinary staying power and "
+            "universality. It holds no bitterness, no agenda and no boundary. Whether you "
+            "are eight years old or eighty, hearing it for the first time or the thousandth, "
+            "it reliably does what very few songs can \u2014 it makes the world feel, just "
+            "for a moment, genuinely and completely wonderful."
+        ),
+    },
+    {
+        "title": "Redemption Song", "artist": "Bob Marley",
+        "search": "Redemption Song Bob Marley",
+        "description": (
+            "Closing out 1980's \"Uprising\", \"Redemption Song\" is Bob Marley stripped "
+            "down to just an acoustic guitar and his voice \u2014 a striking departure from "
+            "the reggae rhythm section that defined nearly everything else he ever recorded.\n\n"
+            "The lyrics draw partly from a 1937 speech by Marcus Garvey, weaving in the line "
+            "\"none but ourselves can free our minds\", turning the song into a piece of "
+            "protest poetry as much as a piece of music.\n\n"
+            "Marley recorded it while already fighting the cancer that would take his life "
+            "the following year, which lends the song's talk of freedom, mortality and legacy "
+            "an extra, aching weight in hindsight.\n\n"
+            "It endures as one of the most covered protest songs of all time, precisely "
+            "because it says so much with so little \u2014 just a voice, a guitar, and a "
+            "message that hasn't aged a day."
+        ),
+    },
+    {
+        "title": "Dreams", "artist": "Fleetwood Mac",
+        "search": "Dreams Fleetwood Mac",
+        "description": (
+            "Written by Stevie Nicks in about ten minutes on a bed at the Sausalito studio "
+            "where Fleetwood Mac were recording 1977's \"Rumours\", \"Dreams\" became the "
+            "band's only US number one single \u2014 born out of the very breakup chaos "
+            "that made the rest of the album so raw.\n\n"
+            "Its hushed verses and cryptic imagery, all thunder and rain and players only "
+            "loving you when they're playing, sit on top of one of the simplest bass "
+            "grooves in the band's catalogue, proof that restraint can be just as "
+            "hypnotic as excess.\n\n"
+            "The song found an unexpected second life in 2020 when a video of a man "
+            "skateboarding to it while drinking cranberry juice went viral, introducing an "
+            "entire new generation to a track already over forty years old.\n\n"
+            "Few songs manage to sound that timeless twice, decades apart, which is exactly "
+            "why it earns its spot here."
+        ),
+    },
+    {
+        "title": "Hallelujah", "artist": "Jeff Buckley",
+        "search": "Hallelujah Jeff Buckley",
+        "description": (
+            "Leonard Cohen wrote \"Hallelujah\" first, but it's Jeff Buckley's 1994 cover, "
+            "recorded for his only studio album \"Grace\", that most people picture when "
+            "they hear the song today.\n\n"
+            "Buckley slowed it down, stripped the arrangement to just his voice and a "
+            "clean electric guitar, and turned Cohen's dense, biblical lyric into something "
+            "far more intimate and devastating.\n\n"
+            "It sold modestly during Buckley's lifetime \u2014 he drowned in 1997 at just "
+            "30 \u2014 and only became a genuine phenomenon years later, eventually "
+            "topping charts and soundtracking films and talent-show finales alike.\n\n"
+            "That a quiet, six-minute cover of an already-obscure song could grow into one "
+            "of the most performed pieces of the last thirty years is exactly the kind of "
+            "story worth a moment's pause."
+        ),
+    },
+    {
+        "title": "Bohemian Rhapsody", "artist": "Queen",
+        "search": "Bohemian Rhapsody Queen",
+        "description": (
+            "At just under six minutes, with no chorus, an operatic middle section and a "
+            "hard-rock finale, \"Bohemian Rhapsody\" broke essentially every rule of what a "
+            "1975 single was supposed to be \u2014 and topped the UK charts anyway.\n\n"
+            "Freddie Mercury reportedly worked out much of the song on a piano at his own "
+            "home before the band spent weeks in the studio layering as many as 180 "
+            "separate vocal overdubs to build the operatic section alone.\n\n"
+            "Radio programmers thought it was commercial suicide at over twice the usual "
+            "single length, until DJ Kenny Everett played it repeatedly on air and public "
+            "demand forced its release.\n\n"
+            "Its second wave of fame, thanks to \"Wayne's World\" in 1992 and the 2018 "
+            "biopic of the same name, has kept introducing it to listeners who weren't even "
+            "born when it first topped the charts."
+        ),
+    },
+]
+
+AOTD_ENTRIES = [
+    {
+        "name": "Fela Kuti", "genre": "Afrobeat Pioneer",
+        "search": "Fela Kuti",
+        "description": (
+            "Fela Anikulapo Kuti was a Nigerian multi-instrumentalist, bandleader and "
+            "outspoken political activist who, through the 1970s, forged an entirely new "
+            "genre out of highlife, jazz, funk and traditional Yoruba rhythms \u2014 a "
+            "sound he named Afrobeat. His songs were rarely short: sprawling, "
+            "horn-driven grooves built around interlocking drums and bass, often "
+            "stretching past fifteen minutes, with call-and-response vocals sung half "
+            "in English and half in pidgin.\n\n"
+            "He isn\u2019t a chart-topping name the way some of his contemporaries "
+            "became, and that\u2019s rather the point of picking him \u2014 the Artist "
+            "of the Day doesn\u2019t have to be the biggest name in music, just one "
+            "worth spending a little time with. Fela used his music as a direct "
+            "weapon against the corrupt Nigerian military government of his era, "
+            "founding his own compound, Kalakuta Republic, which he declared "
+            "independent from the state entirely.\n\n"
+            "That defiance came at enormous personal cost: his home was raided and "
+            "burned by soldiers in 1977, and his mother, the activist Funmilayo "
+            "Ransome-Kuti, later died from injuries sustained in the attack. Rather "
+            "than retreat, Fela responded with some of his most furious and enduring "
+            "records, including \u2018Zombie\u2019, a searing critique of military "
+            "obedience that remains one of the most powerful protest songs ever "
+            "recorded.\n\n"
+            "Decades on, his influence runs through Afrobeats, hip-hop and jazz alike, "
+            "carried forward by his sons Femi and Seun Kuti, who still tour his songs "
+            "today. Whether or not you\u2019d ever heard his name before this page, "
+            "that\u2019s exactly why he\u2019s here."
+        ),
+    },
+    {
+        "name": "Nina Simone", "genre": "Singer, Pianist & Civil Rights Icon",
+        "search": "Nina Simone",
+        "description": (
+            "Classically trained on piano from childhood, Nina Simone was rejected from "
+            "the Curtis Institute of Music in 1951 in what she always believed was a "
+            "racially motivated decision \u2014 a wound that shaped much of her life and "
+            "art that followed.\n\n"
+            "She moved between jazz, blues, folk and classical with total ease, often "
+            "inside the same song, and became one of the defining musical voices of the "
+            "American civil rights movement with tracks like \u2018Mississippi Goddam\u2019 "
+            "and \u2018Four Women\u2019.\n\n"
+            "Her performances were famously uncompromising; she would stop mid-song to "
+            "reprimand a talking audience, and refused for most of her career to soften her "
+            "message for commercial comfort.\n\n"
+            "Whether or not she's a household name to a given listener today, her fingerprints "
+            "are all over decades of soul, hip-hop and pop that sampled or covered her "
+            "work long after her death in 2003."
+        ),
+    },
+    {
+        "name": "Rodriguez", "genre": "Folk-Rock Singer-Songwriter",
+        "search": "Rodriguez Sugar Man",
+        "description": (
+            "Sixto Rodriguez recorded two folk-rock albums in Detroit in the early 1970s "
+            "that went almost completely unnoticed in the United States \u2014 and he "
+            "went back to working construction, believing his music career was over.\n\n"
+            "Unbeknownst to him, bootleg copies of his record had spread through apartheid-era "
+            "South Africa, where he became, without exaggeration, one of the biggest rock "
+            "stars in the country's history \u2014 all while rumours circulated that he had "
+            "died on stage.\n\n"
+            "He had no idea any of this was happening until the late 1990s, when fans "
+            "tracked him down and he was finally flown out to play sold-out arena shows to "
+            "crowds who already knew every word.\n\n"
+            "The 2012 documentary \u2018Searching for Sugar Man\u2019 told the story to a "
+            "global audience and won an Academy Award, decades after the music itself was "
+            "made \u2014 proof that importance and fame don't always arrive on the same "
+            "schedule."
+        ),
+    },
+    {
+        "name": "Big Mama Thornton", "genre": "Blues Singer",
+        "search": "Big Mama Thornton",
+        "description": (
+            "Willie Mae \u201cBig Mama\u201d Thornton recorded the original version of "
+            "\u2018Hound Dog\u2019 in 1952, three years before Elvis Presley's cover made "
+            "the song a global phenomenon and Presley a household name.\n\n"
+            "A powerhouse blues singer and drummer from Alabama, she toured relentlessly "
+            "through the segregated South, and also wrote and first recorded \u2018Ball "
+            "and Chain\u2019, later made famous by Janis Joplin.\n\n"
+            "She saw comparatively little of the money or credit that followed from either "
+            "song's massive success elsewhere, a common story for Black blues artists of "
+            "her era whose songs were covered into the mainstream.\n\n"
+            "Her raw, commanding voice remains a direct line back to the roots of rock and "
+            "roll itself \u2014 a reminder that some of music's biggest hits started with "
+            "artists far less famous than the ones who made them stars."
+        ),
+    },
+    {
+        "name": "Sister Rosetta Tharpe", "genre": "Gospel & Rock Guitar Pioneer",
+        "search": "Sister Rosetta Tharpe",
+        "description": (
+            "Long before Chuck Berry or Elvis Presley, Sister Rosetta Tharpe was playing "
+            "distorted, driving electric guitar lines in the 1930s and 40s that would "
+            "later become the entire vocabulary of rock and roll.\n\n"
+            "She came up performing gospel music but scandalised some of her religious "
+            "audience by playing it in nightclubs alongside secular blues and swing, "
+            "blending the sacred and the secular in a way almost nobody else dared to at "
+            "the time.\n\n"
+            "Her 1944 recording of \u2018Strange Things Happening Every Day\u2019 is "
+            "often cited by historians as one of the very first rock and roll records, "
+            "years before the genre had a name.\n\n"
+            "She's rarely mentioned in the same breath as the rock pioneers she directly "
+            "influenced, which is exactly why she's worth featuring here."
+        ),
+    },
+]
+
+HM_ENTRIES = [
+    {
+        "title": "The British Invasion Begins",
+        "date": "The Beatles on The Ed Sullivan Show \u2014 February 9, 1964",
+        "search": "The Beatles Meet The Beatles",
+        "description": (
+            "On the evening of February 9, 1964, an estimated 73 million Americans \u2014 "
+            "roughly 40% of the entire population \u2014 tuned in to watch four young "
+            "musicians from Liverpool play five songs on live television. It remains "
+            "one of the most-watched broadcasts in US television history, and it is "
+            "widely regarded as the moment the British Invasion truly began.\n\n"
+            "The Beatles had already topped the American charts with \u2018I Want to "
+            "Hold Your Hand\u2019 a few weeks earlier, but the Sullivan performance is "
+            "what turned chart success into cultural upheaval. Screaming audiences, "
+            "mop-top haircuts and a wave of British guitar bands chasing the same "
+            "opportunity followed almost overnight.\n\n"
+            "Within two years, acts like The Rolling Stones, The Who, The Kinks and "
+            "The Animals had all crossed the Atlantic on the same wave, permanently "
+            "reshaping American pop music and setting the template for the "
+            "guitar-driven rock that would dominate the rest of the decade.\n\n"
+            "What earns this moment its place here isn\u2019t just the ratings record "
+            "\u2014 it\u2019s that a single television appearance can, occasionally, "
+            "genuinely rewrite the direction of an entire industry. That's what makes "
+            "it history."
+        ),
+    },
+    {
+        "title": "Woodstock Opens Its Gates",
+        "date": "Woodstock Music & Art Fair \u2014 August 15, 1969",
+        "search": "Woodstock Various Artists",
+        "description": (
+            "What was planned as a modest, ticketed music festival for around 50,000 "
+            "people in rural New York State turned, almost by accident, into a gathering "
+            "of nearly half a million \u2014 forcing organisers to simply declare it a "
+            "free event once the fences came down.\n\n"
+            "Over three rain-soaked days, acts including Jimi Hendrix, Janis Joplin, "
+            "The Who and Santana played to a crowd stretching further than most performers "
+            "could see, with food, medical care and basic infrastructure stretched far "
+            "past what anyone had planned for.\n\n"
+            "Hendrix's closing performance of \u2018The Star-Spangled Banner\u2019, all "
+            "feedback and distortion, became one of the defining musical images of the "
+            "entire decade, played to a crowd exhausted after three days on a muddy farm.\n\n"
+            "Despite the chaos \u2014 or perhaps because of it \u2014 Woodstock became "
+            "shorthand for an entire era's ideals, and remains the reference point every "
+            "festival since has been measured against."
+        ),
+    },
+    {
+        "title": "Live Aid Spans Two Continents",
+        "date": "Live Aid, Wembley Stadium & JFK Stadium \u2014 July 13, 1985",
+        "search": "Live Aid Queen Wembley",
+        "description": (
+            "Organised in just twelve weeks by Bob Geldof and Midge Ure to raise money "
+            "for the Ethiopian famine, Live Aid linked simultaneous concerts in London "
+            "and Philadelphia, broadcast live to an estimated global audience of nearly "
+            "two billion people.\n\n"
+            "Queen's twenty-minute set at Wembley is still regularly named the greatest "
+            "live performance in rock history, with Freddie Mercury commanding a stadium "
+            "of 72,000 people with nothing more than a piano and a single held note.\n\n"
+            "The event raised over \u00a3150 million for famine relief and proved, for "
+            "the first time at that scale, that a satellite broadcast could turn a benefit "
+            "concert into a genuinely unifying global event.\n\n"
+            "Nearly forty years on, it's still the standard every charity concert since "
+            "has tried, and largely failed, to match."
+        ),
+    },
+    {
+        "title": "Elvis Shakes Up The Ed Sullivan Show",
+        "date": "Elvis Presley's third Ed Sullivan appearance \u2014 January 6, 1957",
+        "search": "Elvis Presley Jailhouse Rock",
+        "description": (
+            "By his third and final appearance on The Ed Sullivan Show, Elvis Presley "
+            "was already the most controversial performer in America, having been "
+            "filmed only from the waist up on earlier broadcasts to avoid showing his "
+            "hip movements to a nationwide audience.\n\n"
+            "The appearance drew an audience of over 60 million viewers, a staggering "
+            "share of American television sets at the time, and effectively confirmed "
+            "rock and roll as mainstream, unstoppable entertainment rather than a passing "
+            "fad.\n\n"
+            "Sullivan himself, initially wary of booking Presley at all, ended the night "
+            "by publicly calling him \u201ca real decent, fine boy\u201d on air, a moment "
+            "credited with softening a great deal of the moral panic surrounding rock "
+            "music at the time.\n\n"
+            "It's a reminder that some of music's biggest cultural shifts happened not "
+            "in a studio, but live, in front of an audience of millions, in a single "
+            "unrepeatable television moment."
+        ),
+    },
+    {
+        "title": "Napster Changes Music Forever",
+        "date": "Napster launches \u2014 June 1, 1999",
+        "search": "Napster era hits 1999",
+        "description": (
+            "Built by a 19-year-old college dropout named Shawn Fanning, Napster let "
+            "anyone with an internet connection share MP3 files directly with strangers "
+            "\u2014 and within a year it had tens of millions of users trading music for "
+            "free.\n\n"
+            "The recording industry sued almost immediately, and a very public 2000 "
+            "lawsuit from Metallica turned the fight over file-sharing into front-page "
+            "news, with Napster shut down by court order in 2001 having barely existed "
+            "for two years.\n\n"
+            "But the genie didn't go back in the bottle: the model of instant, on-demand "
+            "access to nearly any song ever recorded had already reset listener "
+            "expectations for good, paving the way for iTunes and, eventually, for "
+            "streaming services entirely.\n\n"
+            "Two short years of a scrappy piece of college software changed how the "
+            "entire industry sells music to this day \u2014 which is about as clear a "
+            "definition of \u201chistory maker\u201d as it gets."
+        ),
+    },
+]
+
+def _pick_daily_entry(entries):
+    """Deterministically picks today's entry from a list, based on the date,
+    so it stays the same all day and moves on to the next one tomorrow."""
+    idx = datetime.date.today().toordinal() % len(entries)
+    return idx, entries[idx]
+
+sotd_shown_day_idx = None   # which SOTD_ENTRIES index is currently loaded/cached
+aotd_shown_day_idx = None
+hm_shown_day_idx   = None
+
 show_top100_page = False
 top100_tracks        = []        # list of dicts: rank, title, artist, spotify_url, youtube_url, apple_url
 top100_loading       = False
@@ -239,8 +577,26 @@ top100_link_rects    = []        # list of (rect, url) for link buttons
 top100_thread        = None
 top100_art_cache     = {}        # { rank(int): pygame.Surface or None }
 show_song_of_day_page = False
+sotd_cover_surface   = None      # pygame.Surface once downloaded
+sotd_cover_loading   = False
+sotd_link_rects      = []        # [(rect, url), ...]
+sotd_scroll_offset   = 0.0
+target_sotd_scroll   = 0.0
+max_sotd_scroll      = 0
 show_artist_of_day_page = False
+aotd_cover_surface   = None      # pygame.Surface once downloaded
+aotd_cover_loading   = False
+aotd_link_rects      = []        # [(rect, url), ...]
+aotd_scroll_offset   = 0.0
+target_aotd_scroll   = 0.0
+max_aotd_scroll      = 0
 show_history_maker_page = False
+hm_cover_surface     = None      # pygame.Surface once downloaded
+hm_cover_loading     = False
+hm_link_rects        = []        # [(rect, url), ...]
+hm_scroll_offset     = 0.0
+target_hm_scroll     = 0.0
+max_hm_scroll        = 0
 subpage_back_rect = pygame.Rect(0, 0, 0, 0)
 top100_btn_rect = pygame.Rect(0, 0, 0, 0)
 song_of_day_btn_rect = pygame.Rect(0, 0, 0, 0)
@@ -670,6 +1026,96 @@ def start_top100_fetch():
     target_top100_scroll = 0.0
     top100_thread = threading.Thread(target=_fetch_top100_worker, daemon=True)
     top100_thread.start()
+
+
+def _fetch_sotd_cover():
+    """Fetch cover art for today's Song of the Day pick from iTunes."""
+    global sotd_cover_surface, sotd_cover_loading
+    import io
+    try:
+        _, entry = _pick_daily_entry(SOTD_ENTRIES)
+        params = urllib.parse.urlencode({
+            "term": entry["search"],
+            "entity": "song", "media": "music", "limit": 1
+        })
+        req = urllib.request.Request(
+            f"https://itunes.apple.com/search?{params}",
+            headers={"User-Agent": "SpotMFi/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        results = data.get("results", [])
+        if results:
+            art_url = results[0].get("artworkUrl100", "").replace("100x100bb", "600x600bb")
+            if art_url:
+                req2 = urllib.request.Request(art_url, headers={"User-Agent": "SpotMFi/1.0"})
+                with urllib.request.urlopen(req2, timeout=12) as r2:
+                    img_bytes = r2.read()
+                surf = pygame.image.load(io.BytesIO(img_bytes))
+                sotd_cover_surface = surf
+    except Exception:
+        pass
+    finally:
+        sotd_cover_loading = False
+
+
+def _fetch_aotd_cover():
+    """Fetch representative artwork for today's Artist of the Day pick from iTunes."""
+    global aotd_cover_surface, aotd_cover_loading
+    import io
+    try:
+        _, entry = _pick_daily_entry(AOTD_ENTRIES)
+        params = urllib.parse.urlencode({
+            "term": entry["search"],
+            "entity": "album", "media": "music", "limit": 1
+        })
+        req = urllib.request.Request(
+            f"https://itunes.apple.com/search?{params}",
+            headers={"User-Agent": "SpotMFi/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        results = data.get("results", [])
+        if results:
+            art_url = results[0].get("artworkUrl100", "").replace("100x100bb", "600x600bb")
+            if art_url:
+                req2 = urllib.request.Request(art_url, headers={"User-Agent": "SpotMFi/1.0"})
+                with urllib.request.urlopen(req2, timeout=12) as r2:
+                    img_bytes = r2.read()
+                surf = pygame.image.load(io.BytesIO(img_bytes))
+                aotd_cover_surface = surf
+    except Exception:
+        pass
+    finally:
+        aotd_cover_loading = False
+
+
+def _fetch_hm_cover():
+    """Fetch representative artwork for today's History Maker entry from iTunes."""
+    global hm_cover_surface, hm_cover_loading
+    import io
+    try:
+        _, entry = _pick_daily_entry(HM_ENTRIES)
+        params = urllib.parse.urlencode({
+            "term": entry["search"],
+            "entity": "album", "media": "music", "limit": 1
+        })
+        req = urllib.request.Request(
+            f"https://itunes.apple.com/search?{params}",
+            headers={"User-Agent": "SpotMFi/1.0"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        results = data.get("results", [])
+        if results:
+            art_url = results[0].get("artworkUrl100", "").replace("100x100bb", "600x600bb")
+            if art_url:
+                req2 = urllib.request.Request(art_url, headers={"User-Agent": "SpotMFi/1.0"})
+                with urllib.request.urlopen(req2, timeout=12) as r2:
+                    img_bytes = r2.read()
+                surf = pygame.image.load(io.BytesIO(img_bytes))
+                hm_cover_surface = surf
+    except Exception:
+        pass
+    finally:
+        hm_cover_loading = False
 
 
 def save_app_data():
@@ -1703,6 +2149,9 @@ def draw_main_content():
                 virtual_surface.blit(err_surf, (content_pad_x, HEIGHT - portrait_sidebar_h - 28))
 
     elif show_song_of_day_page and current_page == "Search":
+        pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
+
+        # Header
         page_title = font_title.render("Song of the Day", True, COLOR_WHITE)
         virtual_surface.blit(page_title, (content_pad_x, 40))
         subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
@@ -1710,11 +2159,102 @@ def draw_main_content():
         sb_clk = sb_hov and mouse_held
         sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
-        sb_lbl = font_small.render("Back", True, COLOR_WHITE)
-        virtual_surface.blit(sb_lbl, (subpage_back_rect.x + 26, 44))
+        virtual_surface.blit(font_small.render("Back", True, COLOR_WHITE), (subpage_back_rect.x + 26, 44))
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
 
+        # --- Scrollable body ---
+        body_top  = 125
+        body_h    = HEIGHT - portrait_sidebar_h - body_top
+        body_rect = pygame.Rect(main_x, body_top, main_w, body_h)
+        virtual_surface.set_clip(body_rect)
+        global max_sotd_scroll, sotd_link_rects
+        sotd_link_rects = []
+        _sotd_idx, _sotd_entry = _pick_daily_entry(SOTD_ENTRIES)
+
+        # All content drawn relative to scroll
+        cy = body_top + 20 - int(sotd_scroll_offset)
+
+        # Cover art box
+        cover_size = min(main_w - 80, 260)
+        cover_x    = main_x + (main_w - cover_size) // 2
+        cover_rect = pygame.Rect(cover_x, cy, cover_size, cover_size)
+        if sotd_cover_surface:
+            scaled = pygame.transform.smoothscale(sotd_cover_surface, (cover_size, cover_size))
+            virtual_surface.blit(scaled, cover_rect)
+            pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, width=1, border_radius=8)
+        else:
+            pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, border_radius=8)
+            note = font_huge.render("\u266a", True, (80, 80, 80))
+            virtual_surface.blit(note, (cover_rect.x + (cover_size - note.get_width())  // 2,
+                                        cover_rect.y + (cover_size - note.get_height()) // 2))
+            if sotd_cover_loading:
+                lbl = font_small.render("Loading art...", True, COLOR_TEXT_MUTED)
+                virtual_surface.blit(lbl, (cover_rect.x + (cover_size - lbl.get_width()) // 2,
+                                           cover_rect.bottom + 8))
+        cy += cover_size + 22
+
+        # Song title and artist
+        song_title_surf = font_huge.render(_sotd_entry["title"], True, COLOR_WHITE)
+        if song_title_surf.get_width() > main_w - 60:
+            song_title_surf = font_title.render(_sotd_entry["title"], True, COLOR_WHITE)
+        virtual_surface.blit(song_title_surf, (main_x + (main_w - song_title_surf.get_width()) // 2, cy))
+        cy += song_title_surf.get_height() + 8
+
+        artist_surf = font_body.render(_sotd_entry["artist"], True, COLOR_TEXT_MUTED)
+        virtual_surface.blit(artist_surf, (main_x + (main_w - artist_surf.get_width()) // 2, cy))
+        cy += artist_surf.get_height() + 24
+
+        # Link buttons row
+        sotd_q    = urllib.parse.quote_plus(_sotd_entry["search"])
+        sotd_links = [
+            ("Spotify",  f"https://open.spotify.com/search/{urllib.parse.quote(_sotd_entry['search'])}",
+             (30, 215, 96)),
+            ("YouTube",  f"https://music.youtube.com/search?q={sotd_q}",  (255, 80,  80)),
+            ("Apple",    f"https://music.apple.com/us/search?term={sotd_q}", (250, 110, 200)),
+        ]
+        btn_w   = 110
+        btn_h   = 38
+        btn_gap = 12
+        total_btns_w = len(sotd_links) * btn_w + (len(sotd_links) - 1) * btn_gap
+        bx = main_x + (main_w - total_btns_w) // 2
+        for lbl, url, txt_col in sotd_links:
+            br = pygame.Rect(bx, cy, btn_w, btn_h)
+            b_hov = br.collidepoint(mouse_pos)
+            b_clk = b_hov and mouse_held
+            bg    = (50, 50, 50) if b_clk else (COLOR_HOVER if b_hov else COLOR_LIGHT_GREY)
+            pygame.draw.rect(virtual_surface, bg, br, border_radius=19)
+            bs = font_body.render(lbl, True, txt_col)
+            virtual_surface.blit(bs, (br.x + (btn_w - bs.get_width()) // 2,
+                                      br.y + (btn_h - bs.get_height()) // 2))
+            sotd_link_rects.append((br, url))
+            bx += btn_w + btn_gap
+        cy += btn_h + 30
+
+        # Divider
+        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY,
+                         (content_pad_x, cy), (main_x + main_w - 40, cy), 1)
+        cy += 18
+
+        # Description
+        description = _sotd_entry["description"]
+        desc_x     = content_pad_x
+        desc_max_w = main_w - (content_pad_x - main_x) * 2
+        for para in description.split("\n\n"):
+            for line in get_wrapped_lines(para.strip(), font_small, desc_max_w):
+                if cy > body_top + body_h + 40:
+                    break
+                ls = font_small.render(line, True, (200, 200, 200))
+                virtual_surface.blit(ls, (desc_x, cy))
+                cy += ls.get_height() + 4
+            cy += 12  # paragraph gap
+
+        max_sotd_scroll = max(0, cy + int(sotd_scroll_offset) - (body_top + body_h) + 40)
+        virtual_surface.set_clip(None)
+
     elif show_artist_of_day_page and current_page == "Search":
+        pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
+
+        # Header
         page_title = font_title.render("Artist of the Day", True, COLOR_WHITE)
         virtual_surface.blit(page_title, (content_pad_x, 40))
         subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
@@ -1722,11 +2262,102 @@ def draw_main_content():
         sb_clk = sb_hov and mouse_held
         sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
-        sb_lbl = font_small.render("Back", True, COLOR_WHITE)
-        virtual_surface.blit(sb_lbl, (subpage_back_rect.x + 26, 44))
+        virtual_surface.blit(font_small.render("Back", True, COLOR_WHITE), (subpage_back_rect.x + 26, 44))
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
 
+        # --- Scrollable body ---
+        body_top  = 125
+        body_h    = HEIGHT - portrait_sidebar_h - body_top
+        body_rect = pygame.Rect(main_x, body_top, main_w, body_h)
+        virtual_surface.set_clip(body_rect)
+        global max_aotd_scroll, aotd_link_rects
+        aotd_link_rects = []
+        _aotd_idx, _aotd_entry = _pick_daily_entry(AOTD_ENTRIES)
+
+        # All content drawn relative to scroll
+        cy = body_top + 20 - int(aotd_scroll_offset)
+
+        # Cover art box (circular-feeling square, same treatment as Song of Day)
+        cover_size = min(main_w - 80, 260)
+        cover_x    = main_x + (main_w - cover_size) // 2
+        cover_rect = pygame.Rect(cover_x, cy, cover_size, cover_size)
+        if aotd_cover_surface:
+            scaled = pygame.transform.smoothscale(aotd_cover_surface, (cover_size, cover_size))
+            virtual_surface.blit(scaled, cover_rect)
+            pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, width=1, border_radius=8)
+        else:
+            pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, border_radius=8)
+            note = font_huge.render("\u266a", True, (80, 80, 80))
+            virtual_surface.blit(note, (cover_rect.x + (cover_size - note.get_width())  // 2,
+                                        cover_rect.y + (cover_size - note.get_height()) // 2))
+            if aotd_cover_loading:
+                lbl = font_small.render("Loading art...", True, COLOR_TEXT_MUTED)
+                virtual_surface.blit(lbl, (cover_rect.x + (cover_size - lbl.get_width()) // 2,
+                                           cover_rect.bottom + 8))
+        cy += cover_size + 22
+
+        # Artist name
+        artist_name_surf = font_huge.render(_aotd_entry["name"], True, COLOR_WHITE)
+        if artist_name_surf.get_width() > main_w - 60:
+            artist_name_surf = font_title.render(_aotd_entry["name"], True, COLOR_WHITE)
+        virtual_surface.blit(artist_name_surf, (main_x + (main_w - artist_name_surf.get_width()) // 2, cy))
+        cy += artist_name_surf.get_height() + 8
+
+        genre_surf = font_body.render(_aotd_entry["genre"], True, COLOR_TEXT_MUTED)
+        virtual_surface.blit(genre_surf, (main_x + (main_w - genre_surf.get_width()) // 2, cy))
+        cy += genre_surf.get_height() + 24
+
+        # Link buttons row
+        aotd_q    = urllib.parse.quote_plus(_aotd_entry["search"])
+        aotd_links = [
+            ("Spotify",  f"https://open.spotify.com/search/{urllib.parse.quote(_aotd_entry['search'])}",
+             (30, 215, 96)),
+            ("YouTube",  f"https://music.youtube.com/search?q={aotd_q}",  (255, 80,  80)),
+            ("Apple",    f"https://music.apple.com/us/search?term={aotd_q}", (250, 110, 200)),
+        ]
+        btn_w   = 110
+        btn_h   = 38
+        btn_gap = 12
+        total_btns_w = len(aotd_links) * btn_w + (len(aotd_links) - 1) * btn_gap
+        bx = main_x + (main_w - total_btns_w) // 2
+        for lbl, url, txt_col in aotd_links:
+            br = pygame.Rect(bx, cy, btn_w, btn_h)
+            b_hov = br.collidepoint(mouse_pos)
+            b_clk = b_hov and mouse_held
+            bg    = (50, 50, 50) if b_clk else (COLOR_HOVER if b_hov else COLOR_LIGHT_GREY)
+            pygame.draw.rect(virtual_surface, bg, br, border_radius=19)
+            bs = font_body.render(lbl, True, txt_col)
+            virtual_surface.blit(bs, (br.x + (btn_w - bs.get_width()) // 2,
+                                      br.y + (btn_h - bs.get_height()) // 2))
+            aotd_link_rects.append((br, url))
+            bx += btn_w + btn_gap
+        cy += btn_h + 30
+
+        # Divider
+        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY,
+                         (content_pad_x, cy), (main_x + main_w - 40, cy), 1)
+        cy += 18
+
+        # Description
+        description = _aotd_entry["description"]
+        desc_x     = content_pad_x
+        desc_max_w = main_w - (content_pad_x - main_x) * 2
+        for para in description.split("\n\n"):
+            for line in get_wrapped_lines(para.strip(), font_small, desc_max_w):
+                if cy > body_top + body_h + 40:
+                    break
+                ls = font_small.render(line, True, (200, 200, 200))
+                virtual_surface.blit(ls, (desc_x, cy))
+                cy += ls.get_height() + 4
+            cy += 12  # paragraph gap
+
+        max_aotd_scroll = max(0, cy + int(aotd_scroll_offset) - (body_top + body_h) + 40)
+        virtual_surface.set_clip(None)
+
     elif show_history_maker_page and current_page == "Search":
+        pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
+
+        # Header
         page_title = font_title.render("History Maker", True, COLOR_WHITE)
         virtual_surface.blit(page_title, (content_pad_x, 40))
         subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
@@ -1734,9 +2365,99 @@ def draw_main_content():
         sb_clk = sb_hov and mouse_held
         sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
-        sb_lbl = font_small.render("Back", True, COLOR_WHITE)
-        virtual_surface.blit(sb_lbl, (subpage_back_rect.x + 26, 44))
+        virtual_surface.blit(font_small.render("Back", True, COLOR_WHITE), (subpage_back_rect.x + 26, 44))
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
+
+        # --- Scrollable body ---
+        body_top  = 125
+        body_h    = HEIGHT - portrait_sidebar_h - body_top
+        body_rect = pygame.Rect(main_x, body_top, main_w, body_h)
+        virtual_surface.set_clip(body_rect)
+        global max_hm_scroll, hm_link_rects
+        hm_link_rects = []
+        _hm_idx, _hm_entry = _pick_daily_entry(HM_ENTRIES)
+
+        # All content drawn relative to scroll
+        cy = body_top + 20 - int(hm_scroll_offset)
+
+        # Cover art box
+        cover_size = min(main_w - 80, 260)
+        cover_x    = main_x + (main_w - cover_size) // 2
+        cover_rect = pygame.Rect(cover_x, cy, cover_size, cover_size)
+        if hm_cover_surface:
+            scaled = pygame.transform.smoothscale(hm_cover_surface, (cover_size, cover_size))
+            virtual_surface.blit(scaled, cover_rect)
+            pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, width=1, border_radius=8)
+        else:
+            pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, border_radius=8)
+            note = font_huge.render("\u266a", True, (80, 80, 80))
+            virtual_surface.blit(note, (cover_rect.x + (cover_size - note.get_width())  // 2,
+                                        cover_rect.y + (cover_size - note.get_height()) // 2))
+            if hm_cover_loading:
+                lbl = font_small.render("Loading art...", True, COLOR_TEXT_MUTED)
+                virtual_surface.blit(lbl, (cover_rect.x + (cover_size - lbl.get_width()) // 2,
+                                           cover_rect.bottom + 8))
+        cy += cover_size + 22
+
+        # Event title and date
+        hm_title_surf = font_huge.render(_hm_entry["title"], True, COLOR_WHITE)
+        if hm_title_surf.get_width() > main_w - 60:
+            hm_title_surf = font_title.render(_hm_entry["title"], True, COLOR_WHITE)
+        virtual_surface.blit(hm_title_surf, (main_x + (main_w - hm_title_surf.get_width()) // 2, cy))
+        cy += hm_title_surf.get_height() + 8
+
+        date_surf = font_body.render(_hm_entry["date"], True, COLOR_TEXT_MUTED)
+        if date_surf.get_width() > main_w - 60:
+            date_surf = font_small.render(_hm_entry["date"], True, COLOR_TEXT_MUTED)
+        virtual_surface.blit(date_surf, (main_x + (main_w - date_surf.get_width()) // 2, cy))
+        cy += date_surf.get_height() + 24
+
+        # Link buttons row
+        hm_q    = urllib.parse.quote_plus(_hm_entry["search"])
+        hm_links = [
+            ("Spotify",  f"https://open.spotify.com/search/{urllib.parse.quote(_hm_entry['search'])}",
+             (30, 215, 96)),
+            ("YouTube",  f"https://music.youtube.com/search?q={hm_q}",  (255, 80,  80)),
+            ("Apple",    f"https://music.apple.com/us/search?term={hm_q}", (250, 110, 200)),
+        ]
+        btn_w   = 110
+        btn_h   = 38
+        btn_gap = 12
+        total_btns_w = len(hm_links) * btn_w + (len(hm_links) - 1) * btn_gap
+        bx = main_x + (main_w - total_btns_w) // 2
+        for lbl, url, txt_col in hm_links:
+            br = pygame.Rect(bx, cy, btn_w, btn_h)
+            b_hov = br.collidepoint(mouse_pos)
+            b_clk = b_hov and mouse_held
+            bg    = (50, 50, 50) if b_clk else (COLOR_HOVER if b_hov else COLOR_LIGHT_GREY)
+            pygame.draw.rect(virtual_surface, bg, br, border_radius=19)
+            bs = font_body.render(lbl, True, txt_col)
+            virtual_surface.blit(bs, (br.x + (btn_w - bs.get_width()) // 2,
+                                      br.y + (btn_h - bs.get_height()) // 2))
+            hm_link_rects.append((br, url))
+            bx += btn_w + btn_gap
+        cy += btn_h + 30
+
+        # Divider
+        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY,
+                         (content_pad_x, cy), (main_x + main_w - 40, cy), 1)
+        cy += 18
+
+        # Description
+        description = _hm_entry["description"]
+        desc_x     = content_pad_x
+        desc_max_w = main_w - (content_pad_x - main_x) * 2
+        for para in description.split("\n\n"):
+            for line in get_wrapped_lines(para.strip(), font_small, desc_max_w):
+                if cy > body_top + body_h + 40:
+                    break
+                ls = font_small.render(line, True, (200, 200, 200))
+                virtual_surface.blit(ls, (desc_x, cy))
+                cy += ls.get_height() + 4
+            cy += 12  # paragraph gap
+
+        max_hm_scroll = max(0, cy + int(hm_scroll_offset) - (body_top + body_h) + 40)
+        virtual_surface.set_clip(None)
 
     # --- SEARCH PAGE ---
     elif current_page == "Search":
@@ -1783,7 +2504,7 @@ def draw_main_content():
             strip_buttons.append(("top100", "Top 100", 150))
             strip_buttons.append(("song_of_day", "Song of Day", 170))
             strip_buttons.append(("artist_of_day", "Artist of Day", 175))
-            strip_buttons.append(("history_maker", "History Maker", 185))
+            strip_buttons.append(("history_maker", "History", 140))
 
             total_strip_w = sum(w for _, _, w in strip_buttons) + ph_gap * len(strip_buttons)
             max_btn_row_scroll = total_strip_w
@@ -3283,6 +4004,9 @@ while running:
     settings_scroll_offset += (target_settings_scroll - settings_scroll_offset) * (15.0 * dt)
     lyrics_scroll_offset += (target_lyrics_scroll - lyrics_scroll_offset) * (15.0 * dt)
     top100_scroll_offset += (target_top100_scroll - top100_scroll_offset) * (15.0 * dt)
+    sotd_scroll_offset   += (target_sotd_scroll   - sotd_scroll_offset)   * (15.0 * dt)
+    aotd_scroll_offset   += (target_aotd_scroll   - aotd_scroll_offset)   * (15.0 * dt)
+    hm_scroll_offset     += (target_hm_scroll     - hm_scroll_offset)     * (15.0 * dt)
     art_search_scroll_offset += (target_art_search_scroll - art_search_scroll_offset) * min(0.3, 15.0 * dt)
     lyrics_search_scroll_offset += (target_lyrics_search_scroll - lyrics_search_scroll_offset) * min(0.3, 15.0 * dt)
     btn_row_scroll_offset += (target_btn_row_scroll - btn_row_scroll_offset) * min(0.3, 15.0 * dt)
@@ -3578,6 +4302,18 @@ while running:
                 elif show_top100_page:
                     target_top100_scroll += dy * 1.5
                     target_top100_scroll = max(0.0, min(float(max_top100_scroll), target_top100_scroll))
+                    last_touch_y = mouse_pos[1]
+                elif show_song_of_day_page:
+                    target_sotd_scroll += dy * 1.5
+                    target_sotd_scroll = max(0.0, min(float(max_sotd_scroll), target_sotd_scroll))
+                    last_touch_y = mouse_pos[1]
+                elif show_artist_of_day_page:
+                    target_aotd_scroll += dy * 1.5
+                    target_aotd_scroll = max(0.0, min(float(max_aotd_scroll), target_aotd_scroll))
+                    last_touch_y = mouse_pos[1]
+                elif show_history_maker_page:
+                    target_hm_scroll += dy * 1.5
+                    target_hm_scroll = max(0.0, min(float(max_hm_scroll), target_hm_scroll))
                     last_touch_y = mouse_pos[1]
                 elif show_create_playlist_modal:
                     if is_browsing_for_cover:
@@ -4040,6 +4776,30 @@ while running:
                                         except Exception:
                                             pass
                                         break
+                        elif show_song_of_day_page:
+                            for lr, url in sotd_link_rects:
+                                if lr.collidepoint(mouse_pos):
+                                    try:
+                                        webbrowser.open(url)
+                                    except Exception:
+                                        pass
+                                    break
+                        elif show_artist_of_day_page:
+                            for lr, url in aotd_link_rects:
+                                if lr.collidepoint(mouse_pos):
+                                    try:
+                                        webbrowser.open(url)
+                                    except Exception:
+                                        pass
+                                    break
+                        elif show_history_maker_page:
+                            for lr, url in hm_link_rects:
+                                if lr.collidepoint(mouse_pos):
+                                    try:
+                                        webbrowser.open(url)
+                                    except Exception:
+                                        pass
+                                    break
                     else:
                         if current_page == "Search" and add_folder_btn_rect.collidepoint(mouse_pos):
                             is_browsing_storage = True
@@ -4059,10 +4819,37 @@ while running:
                                 start_top100_fetch()
                         if current_page == "Search" and song_of_day_btn_rect.collidepoint(mouse_pos):
                             show_song_of_day_page = True
+                            sotd_scroll_offset  = 0.0
+                            target_sotd_scroll  = 0.0
+                            _idx, _ = _pick_daily_entry(SOTD_ENTRIES)
+                            if _idx != sotd_shown_day_idx:
+                                sotd_cover_surface = None
+                                sotd_shown_day_idx = _idx
+                            if sotd_cover_surface is None and not sotd_cover_loading:
+                                sotd_cover_loading = True
+                                threading.Thread(target=_fetch_sotd_cover, daemon=True).start()
                         if current_page == "Search" and artist_of_day_btn_rect.collidepoint(mouse_pos):
                             show_artist_of_day_page = True
+                            aotd_scroll_offset  = 0.0
+                            target_aotd_scroll  = 0.0
+                            _idx, _ = _pick_daily_entry(AOTD_ENTRIES)
+                            if _idx != aotd_shown_day_idx:
+                                aotd_cover_surface = None
+                                aotd_shown_day_idx = _idx
+                            if aotd_cover_surface is None and not aotd_cover_loading:
+                                aotd_cover_loading = True
+                                threading.Thread(target=_fetch_aotd_cover, daemon=True).start()
                         if current_page == "Search" and history_maker_btn_rect.collidepoint(mouse_pos):
                             show_history_maker_page = True
+                            hm_scroll_offset  = 0.0
+                            target_hm_scroll  = 0.0
+                            _idx, _ = _pick_daily_entry(HM_ENTRIES)
+                            if _idx != hm_shown_day_idx:
+                                hm_cover_surface = None
+                                hm_shown_day_idx = _idx
+                            if hm_cover_surface is None and not hm_cover_loading:
+                                hm_cover_loading = True
+                                threading.Thread(target=_fetch_hm_cover, daemon=True).start()
                                 
                         if current_page in ["Search"] or (current_page == "Your Library" and (viewing_liked_playlist or selected_custom_playlist_name)):
                             for rect, track in track_rects:
@@ -4225,11 +5012,14 @@ while running:
     # idle screen, nothing playing, nothing animating) we drop to a low tick rate to
     # save CPU/battery, since there's nothing new to show until something changes.
     _scroll_settling = (
-        abs(target_music_scroll - music_grid_scroll_offset) > 0.5 or
-        abs(target_browser_scroll - browser_scroll_offset) > 0.5 or
-        abs(target_settings_scroll - settings_scroll_offset) > 0.5 or
-        abs(target_lyrics_scroll - lyrics_scroll_offset) > 0.5 or
-        abs(target_top100_scroll - top100_scroll_offset) > 0.5
+        abs(target_music_scroll    - music_grid_scroll_offset) > 0.5 or
+        abs(target_browser_scroll  - browser_scroll_offset)    > 0.5 or
+        abs(target_settings_scroll - settings_scroll_offset)   > 0.5 or
+        abs(target_lyrics_scroll   - lyrics_scroll_offset)     > 0.5 or
+        abs(target_top100_scroll   - top100_scroll_offset)     > 0.5 or
+        abs(target_sotd_scroll     - sotd_scroll_offset)       > 0.5 or
+        abs(target_aotd_scroll     - aotd_scroll_offset)       > 0.5 or
+        abs(target_hm_scroll       - hm_scroll_offset)         > 0.5
     )
     _needs_continuous_frames = (
         is_playing or
@@ -4239,6 +5029,8 @@ while running:
         selected_custom_playlist_name is not None or
         viewing_liked_playlist or
         top100_loading or
+        aotd_cover_loading or
+        hm_cover_loading or
         (show_top100_page and len(top100_art_cache) < len(top100_tracks))
     )
     clock.tick(DEVICE_REFRESH_RATE if _needs_continuous_frames else 10)
