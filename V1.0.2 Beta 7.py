@@ -727,6 +727,15 @@ _LYRICS_SEARCH_NOISE_WORDS = {
     "full", "track", "single"
 }
 
+def _safe_str(s):
+    """Strip null bytes and non-printable control characters that crash
+    pygame.font.render, then return a plain ASCII-safe unicode string."""
+    if not isinstance(s, str):
+        s = str(s) if s is not None else ""
+    # Remove null bytes and C0/C1 control chars except tab/newline
+    s = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', s)
+    return s
+
 def shorten_title_keywords(raw_title):
     """Strips filler noise (bracketed tags, file extensions, words like
     'Official Video', 'Remastered', etc.) from a messy song title and
@@ -795,10 +804,24 @@ def fetch_synced_lyrics_candidates(title, artist):
                 last_error = f"Failed - {type(e).__name__}: {e}"
                 continue
             if isinstance(data, list) and len(data) > 0:
-                lyrics_search_results = data[:12]
-                lyrics_search_error = ""
-                lyrics_search_loading = False
-                return
+                clean = []
+                for item in data[:12]:
+                    try:
+                        clean.append({
+                            "trackName":    _safe_str(item.get("trackName",   "")),
+                            "artistName":   _safe_str(item.get("artistName",  "")),
+                            "albumName":    _safe_str(item.get("albumName",   "")),
+                            "duration":     item.get("duration"),
+                            "syncedLyrics": item.get("syncedLyrics") or "",
+                            "plainLyrics":  item.get("plainLyrics")  or "",
+                        })
+                    except Exception:
+                        pass
+                if clean:
+                    lyrics_search_results = clean
+                    lyrics_search_error = ""
+                    lyrics_search_loading = False
+                    return
         lyrics_search_results = []
         lyrics_search_error = last_error
     except Exception as e:
@@ -4370,6 +4393,8 @@ while running:
                             if lyrics_manual_go_rect.collidepoint(mouse_pos):
                                 if manual_title_text.strip():
                                     try:
+                                        show_lyrics_manual_modal = False
+                                        search_input_active = False
                                         start_lyrics_search(manual_title_text.strip(), manual_artist_text.strip())
                                     except Exception as e:
                                         show_lyrics_search_modal = True
@@ -4377,7 +4402,6 @@ while running:
                                         lyrics_search_loading = False
                                         lyrics_search_results = []
                                         lyrics_search_error = f"Failed - {type(e).__name__}: {e}"
-                                    search_input_active = False
                             elif lyrics_manual_title_rect.collidepoint(mouse_pos):
                                 search_input_active = True
                                 active_input_field = "manual_title"
@@ -4401,6 +4425,8 @@ while running:
                             else:
                                 for item_rect, idx in lyrics_search_item_rects:
                                     if item_rect.collidepoint(mouse_pos):
+                                        if idx >= len(lyrics_search_results):
+                                            break
                                         candidate = lyrics_search_results[idx]
                                         synced = candidate.get("syncedLyrics")
                                         if synced:
