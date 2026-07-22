@@ -615,6 +615,7 @@ is_dragging_row = False
 last_touch_y = 0
 last_touch_x = 0
 total_drag_dy = 0
+_scroll_velocity_samples = []   # [(time, dy), ...] rolling window for momentum on lift
 
 music_grid_scroll_offset = 0.0  
 target_music_scroll = 0.0
@@ -680,6 +681,8 @@ target_art_search_scroll = 0.0
 max_art_search_scroll    = 0
 cancel_browser_btn_rect = pygame.Rect(0, 0, 0, 0)
 close_settings_btn_rect = pygame.Rect(0, 0, 0, 0)
+grid_toggle_btn_rect = pygame.Rect(0, 0, 0, 0)
+grid_cols_override = None   # None = default column count; otherwise the user-chosen override
 progress_bar_rect = pygame.Rect(0, 0, 0, 0)
 media_bar_rect = pygame.Rect(0, 0, 0, 0)
 desktop_btn_rect = pygame.Rect(0, 0, 0, 0)
@@ -712,8 +715,10 @@ max_lyrics_search_scroll = 0
 
 # --- MANUAL SONG/ARTIST ENTRY MODAL STATE (for the synced lyrics search) ---
 show_lyrics_manual_modal = False
-manual_title_text = ""
-manual_artist_text = ""
+manual_title_text    = ""
+manual_artist_text   = ""
+manual_title_cursor  = 0
+manual_artist_cursor = 0
 lyrics_manual_rect = pygame.Rect(0, 0, 0, 0)
 lyrics_manual_title_rect = pygame.Rect(0, 0, 0, 0)
 lyrics_manual_artist_rect = pygame.Rect(0, 0, 0, 0)
@@ -1150,6 +1155,7 @@ def save_app_data():
         "song_lyrics_database": song_lyrics_database,
         "green_toggled_tracks": list(green_toggled_tracks),
         "layout_mode": layout_mode,
+        "grid_cols_override": grid_cols_override,
         "track_covers": {p: {"image_path": v.get("image_path")} for p, v in track_covers.items()}
     }
     
@@ -1169,6 +1175,7 @@ def save_app_data():
 def load_app_data():
     global saved_directories, liked_tracks, liked_songs_custom_cover
     global custom_playlists, song_lyrics_database, green_toggled_tracks, layout_mode, track_covers
+    global grid_cols_override
     
     if not os.path.exists(DATA_FILE):
         layout_mode = detect_device_layout_mode()
@@ -1181,6 +1188,7 @@ def load_app_data():
         saved_directories = data.get("saved_directories", [])
         liked_tracks = data.get("liked_tracks", [])
         layout_mode = data.get("layout_mode", detect_device_layout_mode())
+        grid_cols_override = data.get("grid_cols_override", None)
         
         lsc = data.get("liked_songs_custom_cover", {})
         liked_songs_custom_cover["image_path"] = lsc.get("image_path")
@@ -1724,7 +1732,7 @@ def draw_sidebar():
             virtual_surface.blit(text_surf, (tx, ty))
 
 def draw_main_content():
-    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, browser_extra_search_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction, desktop_btn_rect, phone_btn_rect, search_box_rect, top100_btn_rect, song_of_day_btn_rect, artist_of_day_btn_rect, history_maker_btn_rect, subpage_back_rect, max_btn_row_scroll, btn_row_rect, user_scrolled_btn_row, btn_row_scroll_offset, target_btn_row_scroll
+    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, browser_extra_search_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction, desktop_btn_rect, phone_btn_rect, search_box_rect, top100_btn_rect, song_of_day_btn_rect, artist_of_day_btn_rect, history_maker_btn_rect, subpage_back_rect, max_btn_row_scroll, btn_row_rect, user_scrolled_btn_row, btn_row_scroll_offset, target_btn_row_scroll, grid_toggle_btn_rect, grid_cols_override
     track_rects = []
     browser_rects = []
     settings_dir_rects = []
@@ -1862,7 +1870,7 @@ def draw_main_content():
         clip_rect = pygame.Rect(main_x, 315, main_w, main_h - 315)
         virtual_surface.set_clip(clip_rect)
         
-        y_offset = 315 - int(music_grid_scroll_offset)
+        y_offset = 315 - round(music_grid_scroll_offset)
         for index, track in enumerate(active_tracks):
             row_rect = pygame.Rect(main_x + 20, y_offset, main_w - 50, 45)
             if row_rect.colliderect(clip_rect):
@@ -1961,7 +1969,7 @@ def draw_main_content():
         clip_rect = pygame.Rect(main_x, 130, main_w, browser_available_h - 130)
         virtual_surface.set_clip(clip_rect)
         
-        y_offset = 130 - int(browser_scroll_offset)
+        y_offset = 130 - round(browser_scroll_offset)
         for item in browser_items:
             item_row_rect = pygame.Rect(main_x + 20, y_offset - 4, main_w - 50, 35)
             if item_row_rect.colliderect(clip_rect):
@@ -2015,7 +2023,7 @@ def draw_main_content():
         clip_rect = pygame.Rect(main_x, 130, main_w, main_h - 130)
         virtual_surface.set_clip(clip_rect)
         
-        y_offset = 130 - int(settings_scroll_offset)
+        y_offset = 130 - round(settings_scroll_offset)
         for d_path in saved_directories:
             row_item_rect = pygame.Rect(main_x + 20, y_offset - 4, main_w - 50, 42)
             if row_item_rect.colliderect(clip_rect):
@@ -2090,7 +2098,7 @@ def draw_main_content():
             rank_w      = 52
             art_w       = 48
 
-            y_row = body_top - int(top100_scroll_offset)
+            y_row = body_top - round(top100_scroll_offset)
             total_h = len(top100_tracks) * row_h
             max_top100_scroll = max(0, total_h - body_h + 20)
 
@@ -2195,7 +2203,7 @@ def draw_main_content():
         _sotd_idx, _sotd_entry = _pick_daily_entry(SOTD_ENTRIES)
 
         # All content drawn relative to scroll
-        cy = body_top + 20 - int(sotd_scroll_offset)
+        cy = body_top + 20 - round(sotd_scroll_offset)
 
         # Cover art box
         cover_size = min(main_w - 80, 260)
@@ -2271,7 +2279,7 @@ def draw_main_content():
                 cy += ls.get_height() + 4
             cy += 12  # paragraph gap
 
-        max_sotd_scroll = max(0, cy + int(sotd_scroll_offset) - (body_top + body_h) + 40)
+        max_sotd_scroll = max(0, cy + round(sotd_scroll_offset) - (body_top + body_h) + 40)
         virtual_surface.set_clip(None)
 
     elif show_artist_of_day_page and current_page == "Search":
@@ -2298,7 +2306,7 @@ def draw_main_content():
         _aotd_idx, _aotd_entry = _pick_daily_entry(AOTD_ENTRIES)
 
         # All content drawn relative to scroll
-        cy = body_top + 20 - int(aotd_scroll_offset)
+        cy = body_top + 20 - round(aotd_scroll_offset)
 
         # Cover art box (circular-feeling square, same treatment as Song of Day)
         cover_size = min(main_w - 80, 260)
@@ -2374,7 +2382,7 @@ def draw_main_content():
                 cy += ls.get_height() + 4
             cy += 12  # paragraph gap
 
-        max_aotd_scroll = max(0, cy + int(aotd_scroll_offset) - (body_top + body_h) + 40)
+        max_aotd_scroll = max(0, cy + round(aotd_scroll_offset) - (body_top + body_h) + 40)
         virtual_surface.set_clip(None)
 
     elif show_history_maker_page and current_page == "Search":
@@ -2401,7 +2409,7 @@ def draw_main_content():
         _hm_idx, _hm_entry = _pick_daily_entry(HM_ENTRIES)
 
         # All content drawn relative to scroll
-        cy = body_top + 20 - int(hm_scroll_offset)
+        cy = body_top + 20 - round(hm_scroll_offset)
 
         # Cover art box
         cover_size = min(main_w - 80, 260)
@@ -2479,7 +2487,7 @@ def draw_main_content():
                 cy += ls.get_height() + 4
             cy += 12  # paragraph gap
 
-        max_hm_scroll = max(0, cy + int(hm_scroll_offset) - (body_top + body_h) + 40)
+        max_hm_scroll = max(0, cy + round(hm_scroll_offset) - (body_top + body_h) + 40)
         virtual_surface.set_clip(None)
 
     # --- SEARCH PAGE ---
@@ -2668,38 +2676,49 @@ def draw_main_content():
         else:
             start_y = grid_start_y
             if layout_mode == "phone":
-                # Always 2 cards side by side — size them to fill the available width
-                cols = 2
+                # Cards side by side — size them to fill the available width.
+                # Column count defaults to 2, but can be bumped up via the
+                # Settings "Grid" button (up to 4).
+                cols = grid_cols_override if grid_cols_override else 2
                 gap_x = 16
                 side_pad = 16
-                card_width = (main_w - side_pad * 2 - gap_x) // 2
+                card_width = (main_w - side_pad * 2 - gap_x * (cols - 1)) // cols
                 # Compensate for vertical stretch between virtual surface and real screen
                 # so cards appear square on the actual device display
                 stretch_ratio = (REAL_WIDTH * HEIGHT) / (REAL_HEIGHT * WIDTH)
                 card_height = int(card_width * max(0.65, min(1.0, stretch_ratio)))
                 gap_y = 65
             else:
-                card_width = 140
-                card_height = 140
                 gap_x = 14
                 gap_y = 55
                 side_pad = 0
+                # Column count defaults to 5, and can be bumped up via the
+                # Settings "Grid" button (up to 7).
+                cols = grid_cols_override if grid_cols_override else 5
+                card_width = (main_w - 20 - gap_x * (cols - 1)) // cols
+                if card_width < 60: card_width = 60
+                card_height = card_width
 
             if layout_mode == "phone":
-                # Phone: 2-column grid, flush left with side padding
+                # Phone: fixed-column grid, flush left with side padding
                 actual_grid_w = (cols * card_width) + ((cols - 1) * gap_x)
                 start_x = main_x + side_pad
             elif is_portrait:
                 # Portrait desktop: keep grid centred
-                cols = (main_w - 20) // (card_width + gap_x)
-                if cols < 1: cols = 1
                 actual_grid_w = (cols * card_width) + ((cols - 1) * gap_x)
                 start_x = main_x + (main_w - actual_grid_w) // 2
             else:
-                cols = (main_w - 20) // (card_width + gap_x)
-                if cols < 1: cols = 1
                 actual_grid_w = (cols * card_width) + ((cols - 1) * gap_x)
-                # Landscape: left edge lines up with search bar / content padding
+                # Landscape: left edge lines up with search bar / content padding,
+                # and leave a matching gap on the right instead of running to the
+                # screen edge.
+                right_budget = main_w - (content_pad_x - main_x) - 30
+                if cols > 0:
+                    landscape_card_width = (right_budget - gap_x * (cols - 1)) // cols
+                    if landscape_card_width < 60: landscape_card_width = 60
+                    card_width = landscape_card_width
+                    card_height = card_width
+                    actual_grid_w = (cols * card_width) + ((cols - 1) * gap_x)
                 start_x = content_pad_x
 
             rows = (len(filtered_tracks) + cols - 1) // cols if cols > 0 else 0
@@ -2714,7 +2733,7 @@ def draw_main_content():
                 row = index // cols
                 
                 box_x = start_x + (col * (card_width + gap_x))
-                box_y = start_y + (row * (card_height + gap_y)) - int(music_grid_scroll_offset)
+                box_y = start_y + (row * (card_height + gap_y)) - round(music_grid_scroll_offset)
                 
                 card_rect = pygame.Rect(box_x, box_y, card_width, card_height + 40)
                 
@@ -2760,10 +2779,22 @@ def draw_main_content():
                         title_color = COLOR_WHITE
                         sub_color = COLOR_TEXT_MUTED
                         
-                    title_surf = font_small.render(track["title"], True, title_color)
+                    max_text_w = card_width - 24
+
+                    title_text = track["title"]
+                    title_surf = font_small.render(title_text, True, title_color)
+                    if title_surf.get_width() > max_text_w:
+                        while title_text and font_small.size(title_text + "...")[0] > max_text_w:
+                            title_text = title_text[:-1]
+                        title_surf = font_small.render(title_text + "...", True, title_color)
                     virtual_surface.blit(title_surf, (box_x + 12, box_y + card_height - 4))
-                    
-                    sub_surf = font_small.render(track["album"], True, sub_color)
+
+                    sub_text = track["album"]
+                    sub_surf = font_small.render(sub_text, True, sub_color)
+                    if sub_surf.get_width() > max_text_w:
+                        while sub_text and font_small.size(sub_text + "...")[0] > max_text_w:
+                            sub_text = sub_text[:-1]
+                        sub_surf = font_small.render(sub_text + "...", True, sub_color)
                     virtual_surface.blit(sub_surf, (box_x + 12, box_y + card_height + 14))
             virtual_surface.set_clip(None)
 
@@ -2820,6 +2851,21 @@ def draw_main_content():
         ph_lbl_x = phone_btn_rect.x + (btn_w - ph_lbl.get_width()) // 2
         ph_lbl_y = phone_btn_rect.y + (btn_h - ph_lbl.get_height()) // 2
         virtual_surface.blit(ph_lbl, (ph_lbl_x, ph_lbl_y))
+
+        # Grid columns button
+        grid_toggle_btn_rect = pygame.Rect(phone_btn_rect.x + btn_w + btn_gap, btn_y, btn_w, btn_h)
+        gt_hovered = grid_toggle_btn_rect.collidepoint(mouse_pos)
+        gt_clicked = gt_hovered and mouse_held
+        gt_color = (30, 30, 30) if gt_clicked else (COLOR_HOVER if gt_hovered else COLOR_LIGHT_GREY)
+        pygame.draw.rect(virtual_surface, gt_color, grid_toggle_btn_rect, border_radius=20)
+        if layout_mode == "phone":
+            _grid_lbl_n = grid_cols_override if grid_cols_override else 2
+        else:
+            _grid_lbl_n = grid_cols_override if grid_cols_override else 5
+        gt_lbl = font_small.render(f"Grid: {_grid_lbl_n}", True, COLOR_WHITE)
+        gt_lbl_x = grid_toggle_btn_rect.x + (btn_w - gt_lbl.get_width()) // 2
+        gt_lbl_y = grid_toggle_btn_rect.y + (btn_h - gt_lbl.get_height()) // 2
+        virtual_surface.blit(gt_lbl, (gt_lbl_x, gt_lbl_y))
 
     # --- YOUR LIBRARY GRID VIEW ---
     elif current_page == "Your Library":
@@ -2883,7 +2929,7 @@ def draw_main_content():
             row = layout_index // columns_count
             
             box_x = start_x + (col * (card_w + gap_x))
-            box_y = start_y + (row * (card_h + gap_y)) - int(music_grid_scroll_offset)
+            box_y = start_y + (row * (card_h + gap_y)) - round(music_grid_scroll_offset)
             
             c_rect = pygame.Rect(box_x, box_y, card_w, card_h)
             custom_playlist_rects.append((c_rect, p_name))
@@ -2977,23 +3023,39 @@ def draw_modals():
             virtual_surface.blit(name_lbl, (body_rect.x + 25, body_rect.y + 25))
             art_manual_title_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 47, body_rect.width - 50, 44)
             pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, art_manual_title_rect, border_radius=6)
-            if search_input_active and active_input_field == "art_manual_title":
+            _amt_active = search_input_active and active_input_field == "art_manual_title"
+            if _amt_active:
                 pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, art_manual_title_rect, width=2, border_radius=6)
-            amt_disp = manual_title_text if manual_title_text else "e.g. Blinding Lights"
-            amt_color = COLOR_WHITE if manual_title_text else COLOR_TEXT_MUTED
-            amt_surf = font_small.render(amt_disp, True, amt_color)
-            virtual_surface.blit(amt_surf, (art_manual_title_rect.x + 12, art_manual_title_rect.y + 13))
+            if manual_title_text:
+                amt_surf = font_small.render(manual_title_text, True, COLOR_WHITE)
+                virtual_surface.blit(amt_surf, (art_manual_title_rect.x + 12, art_manual_title_rect.y + 13))
+                if _amt_active and not HAS_ANDROID_MEDIA and int(time.time() * 2) % 2 == 0:
+                    _tc = min(manual_title_cursor, len(manual_title_text))
+                    _cx = art_manual_title_rect.x + 12 + font_small.size(manual_title_text[:_tc])[0]
+                    pygame.draw.line(virtual_surface, COLOR_WHITE,
+                                     (_cx, art_manual_title_rect.y + 8), (_cx, art_manual_title_rect.y + 36), 2)
+            else:
+                virtual_surface.blit(font_small.render("e.g. Blinding Lights", True, COLOR_TEXT_MUTED),
+                                     (art_manual_title_rect.x + 12, art_manual_title_rect.y + 13))
 
             artist_lbl = font_small.render("Artist", True, COLOR_TEXT_MUTED)
             virtual_surface.blit(artist_lbl, (body_rect.x + 25, body_rect.y + 107))
             art_manual_artist_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 129, body_rect.width - 50, 44)
             pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, art_manual_artist_rect, border_radius=6)
-            if search_input_active and active_input_field == "art_manual_artist":
+            _ama_active = search_input_active and active_input_field == "art_manual_artist"
+            if _ama_active:
                 pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, art_manual_artist_rect, width=2, border_radius=6)
-            ama_disp = manual_artist_text if manual_artist_text else "e.g. The Weeknd"
-            ama_color = COLOR_WHITE if manual_artist_text else COLOR_TEXT_MUTED
-            ama_surf = font_small.render(ama_disp, True, ama_color)
-            virtual_surface.blit(ama_surf, (art_manual_artist_rect.x + 12, art_manual_artist_rect.y + 13))
+            if manual_artist_text:
+                ama_surf = font_small.render(manual_artist_text, True, COLOR_WHITE)
+                virtual_surface.blit(ama_surf, (art_manual_artist_rect.x + 12, art_manual_artist_rect.y + 13))
+                if _ama_active and not HAS_ANDROID_MEDIA and int(time.time() * 2) % 2 == 0:
+                    _ac = min(manual_artist_cursor, len(manual_artist_text))
+                    _cx = art_manual_artist_rect.x + 12 + font_small.size(manual_artist_text[:_ac])[0]
+                    pygame.draw.line(virtual_surface, COLOR_WHITE,
+                                     (_cx, art_manual_artist_rect.y + 8), (_cx, art_manual_artist_rect.y + 36), 2)
+            else:
+                virtual_surface.blit(font_small.render("e.g. The Weeknd", True, COLOR_TEXT_MUTED),
+                                     (art_manual_artist_rect.x + 12, art_manual_artist_rect.y + 13))
 
             art_manual_go_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 195, 140, 44)
             amg_hovered = art_manual_go_rect.collidepoint(mouse_pos)
@@ -3012,7 +3074,7 @@ def draw_modals():
         else:
             virtual_surface.set_clip(body_rect)
             item_h = 68
-            y_item = body_top - int(art_search_scroll_offset)
+            y_item = body_top - round(art_search_scroll_offset)
             max_art_search_scroll = max(0, len(art_search_results) * item_h - body_rect.height + 10)
 
             for idx, result in enumerate(art_search_results):
@@ -3111,7 +3173,7 @@ def draw_modals():
 
             virtual_surface.set_clip(lyrics_textarea_rect)
 
-            y_pos = lyrics_textarea_rect.y + 15 - int(lyrics_scroll_offset)
+            y_pos = lyrics_textarea_rect.y + 15 - round(lyrics_scroll_offset)
             
             temp_idx = 0
             target_line_idx = 0
@@ -3272,23 +3334,39 @@ def draw_modals():
                 virtual_surface.blit(name_lbl, (body_rect.x + 25, body_rect.y + 25))
                 lyrics_manual_title_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 47, body_rect.width - 50, 44)
                 pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, lyrics_manual_title_rect, border_radius=6)
-                if search_input_active and active_input_field == "manual_title":
+                _lmt_active = search_input_active and active_input_field == "manual_title"
+                if _lmt_active:
                     pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, lyrics_manual_title_rect, width=2, border_radius=6)
-                mt_disp = (manual_title_text if manual_title_text else "e.g. Blinding Lights").replace("\n", " ").replace("\r", "")
-                mt_color = COLOR_WHITE if manual_title_text else COLOR_TEXT_MUTED
-                mt_surf = font_small.render(mt_disp, True, mt_color)
-                virtual_surface.blit(mt_surf, (lyrics_manual_title_rect.x + 12, lyrics_manual_title_rect.y + 13))
+                if manual_title_text:
+                    mt_surf = font_small.render(manual_title_text.replace("\n", " ").replace("\r", ""), True, COLOR_WHITE)
+                    virtual_surface.blit(mt_surf, (lyrics_manual_title_rect.x + 12, lyrics_manual_title_rect.y + 13))
+                    if _lmt_active and not HAS_ANDROID_MEDIA and int(time.time() * 2) % 2 == 0:
+                        _tc = min(manual_title_cursor, len(manual_title_text))
+                        _cx = lyrics_manual_title_rect.x + 12 + font_small.size(manual_title_text[:_tc])[0]
+                        pygame.draw.line(virtual_surface, COLOR_WHITE,
+                                         (_cx, lyrics_manual_title_rect.y + 8), (_cx, lyrics_manual_title_rect.y + 36), 2)
+                else:
+                    virtual_surface.blit(font_small.render("e.g. Blinding Lights", True, COLOR_TEXT_MUTED),
+                                         (lyrics_manual_title_rect.x + 12, lyrics_manual_title_rect.y + 13))
 
                 artist_lbl = font_small.render("Artist", True, COLOR_TEXT_MUTED)
                 virtual_surface.blit(artist_lbl, (body_rect.x + 25, body_rect.y + 107))
                 lyrics_manual_artist_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 129, body_rect.width - 50, 44)
                 pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, lyrics_manual_artist_rect, border_radius=6)
-                if search_input_active and active_input_field == "manual_artist":
+                _lma_active = search_input_active and active_input_field == "manual_artist"
+                if _lma_active:
                     pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, lyrics_manual_artist_rect, width=2, border_radius=6)
-                ma_disp = (manual_artist_text if manual_artist_text else "e.g. The Weeknd").replace("\n", " ").replace("\r", "")
-                ma_color2 = COLOR_WHITE if manual_artist_text else COLOR_TEXT_MUTED
-                maa_surf = font_small.render(ma_disp, True, ma_color2)
-                virtual_surface.blit(maa_surf, (lyrics_manual_artist_rect.x + 12, lyrics_manual_artist_rect.y + 13))
+                if manual_artist_text:
+                    maa_surf = font_small.render(manual_artist_text.replace("\n", " ").replace("\r", ""), True, COLOR_WHITE)
+                    virtual_surface.blit(maa_surf, (lyrics_manual_artist_rect.x + 12, lyrics_manual_artist_rect.y + 13))
+                    if _lma_active and not HAS_ANDROID_MEDIA and int(time.time() * 2) % 2 == 0:
+                        _ac = min(manual_artist_cursor, len(manual_artist_text))
+                        _cx = lyrics_manual_artist_rect.x + 12 + font_small.size(manual_artist_text[:_ac])[0]
+                        pygame.draw.line(virtual_surface, COLOR_WHITE,
+                                         (_cx, lyrics_manual_artist_rect.y + 8), (_cx, lyrics_manual_artist_rect.y + 36), 2)
+                else:
+                    virtual_surface.blit(font_small.render("e.g. The Weeknd", True, COLOR_TEXT_MUTED),
+                                         (lyrics_manual_artist_rect.x + 12, lyrics_manual_artist_rect.y + 13))
 
                 lyrics_manual_go_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 195, 140, 44)
                 mg_hovered = lyrics_manual_go_rect.collidepoint(mouse_pos)
@@ -3310,7 +3388,7 @@ def draw_modals():
                 else:
                     virtual_surface.set_clip(body_rect)
                     item_h = 68
-                    y_item = body_top - int(lyrics_search_scroll_offset)
+                    y_item = body_top - round(lyrics_search_scroll_offset)
                     max_lyrics_search_scroll = max(0, len(lyrics_search_results) * item_h - body_rect.height + 10)
 
                     for idx, cand in enumerate(lyrics_search_results):
@@ -3489,7 +3567,7 @@ def draw_modals():
             clip_rect = pygame.Rect(main_x, 130, main_w, playlist_available_h - 130)
             virtual_surface.set_clip(clip_rect)
             
-            y_item = 130 - int(music_grid_scroll_offset)
+            y_item = 130 - round(music_grid_scroll_offset)
             for p_name in p_names:
                 item_rect = pygame.Rect(main_x + 20, y_item, main_w - 50, 45)
                 if item_rect.colliderect(clip_rect):
@@ -4022,17 +4100,17 @@ while running:
 
     frame_had_input = False
     
-    music_grid_scroll_offset += (target_music_scroll - music_grid_scroll_offset) * (15.0 * dt)
-    browser_scroll_offset += (target_browser_scroll - browser_scroll_offset) * (15.0 * dt)
-    settings_scroll_offset += (target_settings_scroll - settings_scroll_offset) * (15.0 * dt)
-    lyrics_scroll_offset += (target_lyrics_scroll - lyrics_scroll_offset) * (15.0 * dt)
-    top100_scroll_offset += (target_top100_scroll - top100_scroll_offset) * (15.0 * dt)
-    sotd_scroll_offset   += (target_sotd_scroll   - sotd_scroll_offset)   * (15.0 * dt)
-    aotd_scroll_offset   += (target_aotd_scroll   - aotd_scroll_offset)   * (15.0 * dt)
-    hm_scroll_offset     += (target_hm_scroll     - hm_scroll_offset)     * (15.0 * dt)
-    art_search_scroll_offset += (target_art_search_scroll - art_search_scroll_offset) * min(0.3, 15.0 * dt)
-    lyrics_search_scroll_offset += (target_lyrics_search_scroll - lyrics_search_scroll_offset) * min(0.3, 15.0 * dt)
-    btn_row_scroll_offset += (target_btn_row_scroll - btn_row_scroll_offset) * min(0.3, 15.0 * dt)
+    music_grid_scroll_offset     += (target_music_scroll          - music_grid_scroll_offset)     * (12.0 * dt)
+    browser_scroll_offset        += (target_browser_scroll        - browser_scroll_offset)        * (12.0 * dt)
+    settings_scroll_offset       += (target_settings_scroll       - settings_scroll_offset)       * (12.0 * dt)
+    lyrics_scroll_offset         += (target_lyrics_scroll         - lyrics_scroll_offset)         * (12.0 * dt)
+    top100_scroll_offset         += (target_top100_scroll         - top100_scroll_offset)         * (12.0 * dt)
+    sotd_scroll_offset           += (target_sotd_scroll           - sotd_scroll_offset)           * (12.0 * dt)
+    aotd_scroll_offset           += (target_aotd_scroll           - aotd_scroll_offset)           * (12.0 * dt)
+    hm_scroll_offset             += (target_hm_scroll             - hm_scroll_offset)             * (12.0 * dt)
+    art_search_scroll_offset     += (target_art_search_scroll     - art_search_scroll_offset)     * (12.0 * dt)
+    lyrics_search_scroll_offset  += (target_lyrics_search_scroll  - lyrics_search_scroll_offset)  * (12.0 * dt)
+    btn_row_scroll_offset        += (target_btn_row_scroll        - btn_row_scroll_offset)        * (12.0 * dt)
     if max_btn_row_scroll > 0:
         if target_btn_row_scroll > 100000 or target_btn_row_scroll < -100000:
             target_btn_row_scroll %= max_btn_row_scroll
@@ -4073,14 +4151,38 @@ while running:
                 elif show_lyrics_editor_view and show_lyrics_manual_modal:
                     clean_text = event.text.replace("\n", "").replace("\r", "")
                     if active_input_field == "manual_title" and len(manual_title_text) < 60:
-                        manual_title_text += clean_text
+                        if HAS_ANDROID_MEDIA:
+                            manual_title_text += clean_text
+                            manual_title_cursor = len(manual_title_text)
+                        else:
+                            c = min(manual_title_cursor, len(manual_title_text))
+                            manual_title_text = manual_title_text[:c] + clean_text + manual_title_text[c:]
+                            manual_title_cursor = c + len(clean_text)
                     elif active_input_field == "manual_artist" and len(manual_artist_text) < 40:
-                        manual_artist_text += clean_text
+                        if HAS_ANDROID_MEDIA:
+                            manual_artist_text += clean_text
+                            manual_artist_cursor = len(manual_artist_text)
+                        else:
+                            c = min(manual_artist_cursor, len(manual_artist_text))
+                            manual_artist_text = manual_artist_text[:c] + clean_text + manual_artist_text[c:]
+                            manual_artist_cursor = c + len(clean_text)
                 elif show_art_search_modal and show_art_manual_modal:
                     if active_input_field == "art_manual_title" and len(manual_title_text) < 60:
-                        manual_title_text += event.text
+                        if HAS_ANDROID_MEDIA:
+                            manual_title_text += event.text
+                            manual_title_cursor = len(manual_title_text)
+                        else:
+                            c = min(manual_title_cursor, len(manual_title_text))
+                            manual_title_text = manual_title_text[:c] + event.text + manual_title_text[c:]
+                            manual_title_cursor = c + len(event.text)
                     elif active_input_field == "art_manual_artist" and len(manual_artist_text) < 40:
-                        manual_artist_text += event.text
+                        if HAS_ANDROID_MEDIA:
+                            manual_artist_text += event.text
+                            manual_artist_cursor = len(manual_artist_text)
+                        else:
+                            c = min(manual_artist_cursor, len(manual_artist_text))
+                            manual_artist_text = manual_artist_text[:c] + event.text + manual_artist_text[c:]
+                            manual_artist_cursor = c + len(event.text)
                 elif show_create_playlist_modal:
                     if active_input_field == "name" and len(playlist_input_text) < 20:
                         playlist_input_text += event.text
@@ -4174,16 +4276,46 @@ while running:
                         
             elif show_lyrics_editor_view and show_lyrics_manual_modal and search_input_active:
                 if event.key == pygame.K_BACKSPACE:
+                    if active_input_field == "manual_title" and manual_title_text:
+                        c = min(manual_title_cursor, len(manual_title_text))
+                        if c > 0:
+                            manual_title_text   = manual_title_text[:c-1] + manual_title_text[c:]
+                            manual_title_cursor = c - 1
+                    elif active_input_field == "manual_artist" and manual_artist_text:
+                        c = min(manual_artist_cursor, len(manual_artist_text))
+                        if c > 0:
+                            manual_artist_text   = manual_artist_text[:c-1] + manual_artist_text[c:]
+                            manual_artist_cursor = c - 1
+                elif event.key == pygame.K_DELETE and not HAS_ANDROID_MEDIA:
                     if active_input_field == "manual_title":
-                        manual_title_text = manual_title_text[:-1]
+                        c = min(manual_title_cursor, len(manual_title_text))
+                        manual_title_text = manual_title_text[:c] + manual_title_text[c+1:]
                     elif active_input_field == "manual_artist":
-                        manual_artist_text = manual_artist_text[:-1]
+                        c = min(manual_artist_cursor, len(manual_artist_text))
+                        manual_artist_text = manual_artist_text[:c] + manual_artist_text[c+1:]
+                elif event.key == pygame.K_LEFT and not HAS_ANDROID_MEDIA:
+                    if active_input_field == "manual_title":
+                        manual_title_cursor  = max(0, manual_title_cursor - 1)
+                    elif active_input_field == "manual_artist":
+                        manual_artist_cursor = max(0, manual_artist_cursor - 1)
+                elif event.key == pygame.K_RIGHT and not HAS_ANDROID_MEDIA:
+                    if active_input_field == "manual_title":
+                        manual_title_cursor  = min(len(manual_title_text),  manual_title_cursor  + 1)
+                    elif active_input_field == "manual_artist":
+                        manual_artist_cursor = min(len(manual_artist_text), manual_artist_cursor + 1)
+                elif event.key == pygame.K_HOME and not HAS_ANDROID_MEDIA:
+                    if active_input_field == "manual_title":   manual_title_cursor  = 0
+                    elif active_input_field == "manual_artist": manual_artist_cursor = 0
+                elif event.key == pygame.K_END and not HAS_ANDROID_MEDIA:
+                    if active_input_field == "manual_title":   manual_title_cursor  = len(manual_title_text)
+                    elif active_input_field == "manual_artist": manual_artist_cursor = len(manual_artist_text)
                 elif event.key == pygame.K_TAB:
                     active_input_field = "manual_artist" if active_input_field == "manual_title" else "manual_title"
                 elif event.key == pygame.K_RETURN:
                     if manual_title_text.strip():
                         show_lyrics_manual_modal = False
                         search_input_active = False
+                        if not HAS_ANDROID_MEDIA: pygame.key.set_repeat(0, 0)
                         try:
                             start_lyrics_search(manual_title_text.strip(), manual_artist_text.strip())
                         except Exception as e:
@@ -4193,22 +4325,54 @@ while running:
                             lyrics_search_error = f"Failed - {type(e).__name__}: {e}"
                 elif event.key == pygame.K_ESCAPE:
                     search_input_active = False
+                    if not HAS_ANDROID_MEDIA: pygame.key.set_repeat(0, 0)
 
             elif show_art_search_modal and show_art_manual_modal and search_input_active:
                 if event.key == pygame.K_BACKSPACE:
+                    if active_input_field == "art_manual_title" and manual_title_text:
+                        c = min(manual_title_cursor, len(manual_title_text))
+                        if c > 0:
+                            manual_title_text   = manual_title_text[:c-1] + manual_title_text[c:]
+                            manual_title_cursor = c - 1
+                    elif active_input_field == "art_manual_artist" and manual_artist_text:
+                        c = min(manual_artist_cursor, len(manual_artist_text))
+                        if c > 0:
+                            manual_artist_text   = manual_artist_text[:c-1] + manual_artist_text[c:]
+                            manual_artist_cursor = c - 1
+                elif event.key == pygame.K_DELETE and not HAS_ANDROID_MEDIA:
                     if active_input_field == "art_manual_title":
-                        manual_title_text = manual_title_text[:-1]
+                        c = min(manual_title_cursor, len(manual_title_text))
+                        manual_title_text = manual_title_text[:c] + manual_title_text[c+1:]
                     elif active_input_field == "art_manual_artist":
-                        manual_artist_text = manual_artist_text[:-1]
+                        c = min(manual_artist_cursor, len(manual_artist_text))
+                        manual_artist_text = manual_artist_text[:c] + manual_artist_text[c+1:]
+                elif event.key == pygame.K_LEFT and not HAS_ANDROID_MEDIA:
+                    if active_input_field == "art_manual_title":
+                        manual_title_cursor  = max(0, manual_title_cursor  - 1)
+                    elif active_input_field == "art_manual_artist":
+                        manual_artist_cursor = max(0, manual_artist_cursor - 1)
+                elif event.key == pygame.K_RIGHT and not HAS_ANDROID_MEDIA:
+                    if active_input_field == "art_manual_title":
+                        manual_title_cursor  = min(len(manual_title_text),  manual_title_cursor  + 1)
+                    elif active_input_field == "art_manual_artist":
+                        manual_artist_cursor = min(len(manual_artist_text), manual_artist_cursor + 1)
+                elif event.key == pygame.K_HOME and not HAS_ANDROID_MEDIA:
+                    if active_input_field == "art_manual_title":   manual_title_cursor  = 0
+                    elif active_input_field == "art_manual_artist": manual_artist_cursor = 0
+                elif event.key == pygame.K_END and not HAS_ANDROID_MEDIA:
+                    if active_input_field == "art_manual_title":   manual_title_cursor  = len(manual_title_text)
+                    elif active_input_field == "art_manual_artist": manual_artist_cursor = len(manual_artist_text)
                 elif event.key == pygame.K_TAB:
                     active_input_field = "art_manual_artist" if active_input_field == "art_manual_title" else "art_manual_title"
                 elif event.key == pygame.K_RETURN:
                     if manual_title_text.strip():
                         show_art_manual_modal = False
                         search_input_active = False
+                        if not HAS_ANDROID_MEDIA: pygame.key.set_repeat(0, 0)
                         start_art_search(manual_title_text.strip(), manual_artist_text.strip())
                 elif event.key == pygame.K_ESCAPE:
                     search_input_active = False
+                    if not HAS_ANDROID_MEDIA: pygame.key.set_repeat(0, 0)
 
             elif show_create_playlist_modal and search_input_active:
                 if event.key == pygame.K_BACKSPACE:
@@ -4286,6 +4450,7 @@ while running:
                 is_dragging_row = False
                 last_touch_y = mouse_pos[1]
                 total_drag_dy = 0
+                _scroll_velocity_samples.clear()
                 if media_bar_rect.collidepoint(mouse_pos) and current_track["title"] != "Select a song":
                     is_dragging_grid = False
                 if (current_page == "Search" and is_portrait and layout_mode == "phone"
@@ -4308,65 +4473,115 @@ while running:
                 total_drag_dy += abs(dx)
                 if abs(dx) > 0:
                     user_scrolled_btn_row = True
-                target_btn_row_scroll += dx * 1.5
+                target_btn_row_scroll += dx * 2.5
                 last_touch_x = mouse_pos[0]
             elif is_dragging_grid:
                 dy = last_touch_y - mouse_pos[1]
                 total_drag_dy += abs(dy)
+
+                # Record for momentum — keep only the last 120ms
+                _now = time.time()
+                _scroll_velocity_samples.append((_now, dy))
+                _scroll_velocity_samples[:] = [s for s in _scroll_velocity_samples if _now - s[0] < 0.12]
                 
                 if show_art_search_modal:
-                    target_art_search_scroll += dy * 1.5
+                    target_art_search_scroll += dy * 2.5
                     target_art_search_scroll = max(0.0, min(max_art_search_scroll, target_art_search_scroll))
                     last_touch_y = mouse_pos[1]
                 elif show_lyrics_search_modal:
-                    target_lyrics_search_scroll += dy * 1.5
+                    target_lyrics_search_scroll += dy * 2.5
                     target_lyrics_search_scroll = max(0.0, min(max_lyrics_search_scroll, target_lyrics_search_scroll))
                     last_touch_y = mouse_pos[1]
                 elif show_top100_page:
-                    target_top100_scroll += dy * 1.5
+                    target_top100_scroll += dy * 2.5
                     target_top100_scroll = max(0.0, min(float(max_top100_scroll), target_top100_scroll))
                     last_touch_y = mouse_pos[1]
                 elif show_song_of_day_page:
-                    target_sotd_scroll += dy * 1.5
+                    target_sotd_scroll += dy * 2.5
                     target_sotd_scroll = max(0.0, min(float(max_sotd_scroll), target_sotd_scroll))
                     last_touch_y = mouse_pos[1]
                 elif show_artist_of_day_page:
-                    target_aotd_scroll += dy * 1.5
+                    target_aotd_scroll += dy * 2.5
                     target_aotd_scroll = max(0.0, min(float(max_aotd_scroll), target_aotd_scroll))
                     last_touch_y = mouse_pos[1]
                 elif show_history_maker_page:
-                    target_hm_scroll += dy * 1.5
+                    target_hm_scroll += dy * 2.5
                     target_hm_scroll = max(0.0, min(float(max_hm_scroll), target_hm_scroll))
                     last_touch_y = mouse_pos[1]
                 elif show_create_playlist_modal:
                     if is_browsing_for_cover:
-                        target_browser_scroll += dy * 1.5
+                        target_browser_scroll += dy * 2.5
                         target_browser_scroll = max(0.0, min(max_browser_scroll, target_browser_scroll))
                         last_touch_y = mouse_pos[1]
                 elif show_lyrics_editor_view:
-                    target_lyrics_scroll += dy * 1.5
+                    target_lyrics_scroll += dy * 2.5
                     target_lyrics_scroll = max(0.0, min(max_lyrics_scroll, target_lyrics_scroll))
                     last_touch_y = mouse_pos[1]
                 else:
                     if show_add_to_playlist_modal or current_page == "Search" or (current_page == "Your Library" and (viewing_liked_playlist or selected_custom_playlist_name)):
                         if is_browsing_storage or is_browsing_for_cover:
-                            target_browser_scroll += dy * 1.5
+                            target_browser_scroll += dy * 2.5
                             target_browser_scroll = max(0.0, min(max_browser_scroll, target_browser_scroll))
                             last_touch_y = mouse_pos[1]
                         elif viewing_settings_page:
-                            target_settings_scroll += dy * 1.5
+                            target_settings_scroll += dy * 2.5
                             target_settings_scroll = max(0.0, min(max_settings_scroll, target_settings_scroll))
                             last_touch_y = mouse_pos[1]
                         else:
-                            target_music_scroll += dy * 1.5
+                            target_music_scroll += dy * 2.5
                             target_music_scroll = max(0.0, min(max_music_scroll, target_music_scroll))
                             last_touch_y = mouse_pos[1]
 
         elif event.type == pygame.MOUSEBUTTONUP:
             mouse_pos = get_virtual_mouse_pos()
             if event.button == 1:
+                # Compute momentum from recent velocity samples and kick the target
+                if _scroll_velocity_samples and is_dragging_grid:
+                    total_dy = sum(s[1] for s in _scroll_velocity_samples)
+                    elapsed  = max(0.001, _scroll_velocity_samples[-1][0] - _scroll_velocity_samples[0][0])
+                    velocity = total_dy / elapsed   # px/sec
+                    kick = velocity * 0.28          # momentum factor — tune here
+                    kick = max(-2400.0, min(2400.0, kick))  # cap so it can't fly off screen
+
+                    if show_art_search_modal:
+                        target_art_search_scroll = max(0.0, min(float(max_art_search_scroll),
+                                                                 target_art_search_scroll + kick))
+                    elif show_lyrics_search_modal:
+                        target_lyrics_search_scroll = max(0.0, min(float(max_lyrics_search_scroll),
+                                                                    target_lyrics_search_scroll + kick))
+                    elif show_top100_page:
+                        target_top100_scroll = max(0.0, min(float(max_top100_scroll),
+                                                             target_top100_scroll + kick))
+                    elif show_song_of_day_page:
+                        target_sotd_scroll = max(0.0, min(float(max_sotd_scroll),
+                                                           target_sotd_scroll + kick))
+                    elif show_artist_of_day_page:
+                        target_aotd_scroll = max(0.0, min(float(max_aotd_scroll),
+                                                           target_aotd_scroll + kick))
+                    elif show_history_maker_page:
+                        target_hm_scroll = max(0.0, min(float(max_hm_scroll),
+                                                         target_hm_scroll + kick))
+                    elif show_lyrics_editor_view:
+                        target_lyrics_scroll = max(0.0, min(float(max_lyrics_scroll),
+                                                             target_lyrics_scroll + kick))
+                    elif is_browsing_storage or is_browsing_for_cover:
+                        target_browser_scroll = max(0.0, min(float(max_browser_scroll),
+                                                              target_browser_scroll + kick))
+                    elif viewing_settings_page:
+                        target_settings_scroll = max(0.0, min(float(max_settings_scroll),
+                                                               target_settings_scroll + kick))
+                    else:
+                        target_music_scroll = max(0.0, min(float(max_music_scroll),
+                                                            target_music_scroll + kick))
+                _scroll_velocity_samples.clear()
                 if search_input_active:
+                    _was_in_manual = (
+                        (show_lyrics_editor_view and show_lyrics_manual_modal) or
+                        (show_art_search_modal and show_art_manual_modal)
+                    )
                     search_input_active = False
+                    if not HAS_ANDROID_MEDIA and not _was_in_manual:
+                        pygame.key.set_repeat(0, 0)
                 if is_dragging_progress:
                     is_dragging_progress = False
                     track_start_accumulator = drag_seek_target
@@ -4405,9 +4620,13 @@ while running:
                             elif lyrics_manual_title_rect.collidepoint(mouse_pos):
                                 search_input_active = True
                                 active_input_field = "manual_title"
+                                manual_title_cursor = len(manual_title_text)
+                                if not HAS_ANDROID_MEDIA: pygame.key.set_repeat(400, 45)
                             elif lyrics_manual_artist_rect.collidepoint(mouse_pos):
                                 search_input_active = True
                                 active_input_field = "manual_artist"
+                                manual_artist_cursor = len(manual_artist_text)
+                                if not HAS_ANDROID_MEDIA: pygame.key.set_repeat(400, 45)
                             elif lyrics_search_close_rect.collidepoint(mouse_pos):
                                 show_lyrics_search_modal = False
                                 show_lyrics_manual_modal = False
@@ -4419,9 +4638,12 @@ while running:
                             elif lyrics_manual_rect.collidepoint(mouse_pos):
                                 manual_title_text = current_track.get("title", "") if current_track.get("title") != "Select a song" else ""
                                 manual_artist_text = ""
+                                manual_title_cursor  = len(manual_title_text)
+                                manual_artist_cursor = 0
                                 show_lyrics_manual_modal = True
                                 search_input_active = True
                                 active_input_field = "manual_title"
+                                if not HAS_ANDROID_MEDIA: pygame.key.set_repeat(400, 45)
                             else:
                                 for item_rect, idx in lyrics_search_item_rects:
                                     if item_rect.collidepoint(mouse_pos):
@@ -4584,16 +4806,32 @@ while running:
                     if current_page == "Settings":
                         if desktop_btn_rect.collidepoint(mouse_pos):
                             layout_mode = "desktop"
+                            grid_cols_override = None
                             set_android_orientation(False)
                             WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, "desktop")
                             virtual_surface = pygame.Surface((WIDTH, HEIGHT))
                             save_app_data()
                         elif phone_btn_rect.collidepoint(mouse_pos):
                             layout_mode = "phone"
+                            grid_cols_override = None
                             set_android_orientation(True)
                             is_portrait = True
                             WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, "phone")
                             virtual_surface = pygame.Surface((WIDTH, HEIGHT))
+                            save_app_data()
+                        elif grid_toggle_btn_rect.collidepoint(mouse_pos):
+                            if layout_mode == "phone":
+                                current_val = grid_cols_override if grid_cols_override else 2
+                                current_val += 1
+                                if current_val > 4:
+                                    current_val = 2
+                                grid_cols_override = current_val
+                            else:
+                                current_val = grid_cols_override if grid_cols_override else 5
+                                current_val += 1
+                                if current_val > 7:
+                                    current_val = 5
+                                grid_cols_override = current_val
                             save_app_data()
 
                     if show_art_search_modal:
@@ -4606,9 +4844,13 @@ while running:
                             elif art_manual_title_rect.collidepoint(mouse_pos):
                                 search_input_active = True
                                 active_input_field = "art_manual_title"
+                                manual_title_cursor = len(manual_title_text)
+                                if not HAS_ANDROID_MEDIA: pygame.key.set_repeat(400, 45)
                             elif art_manual_artist_rect.collidepoint(mouse_pos):
                                 search_input_active = True
                                 active_input_field = "art_manual_artist"
+                                manual_artist_cursor = len(manual_artist_text)
+                                if not HAS_ANDROID_MEDIA: pygame.key.set_repeat(400, 45)
                             elif art_search_close_rect.collidepoint(mouse_pos):
                                 show_art_search_modal = False
                                 show_art_manual_modal = False
@@ -4619,9 +4861,12 @@ while running:
                         elif art_manual_rect.collidepoint(mouse_pos):
                             manual_title_text = current_track.get("title", "") if current_track.get("title") != "Select a song" else ""
                             manual_artist_text = ""
+                            manual_title_cursor  = len(manual_title_text)
+                            manual_artist_cursor = 0
                             show_art_manual_modal = True
                             search_input_active = True
                             active_input_field = "art_manual_title"
+                            if not HAS_ANDROID_MEDIA: pygame.key.set_repeat(400, 45)
                         else:
                             for row_rect, idx in art_search_item_rects:
                                 if row_rect.collidepoint(mouse_pos):
