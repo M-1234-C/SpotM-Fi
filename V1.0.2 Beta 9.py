@@ -55,6 +55,31 @@ def set_android_orientation(portrait_locked):
 
 set_android_orientation(False)  # default: sensor/auto-rotate
 
+# Opening links (Spotify/YouTube/Apple search URLs) needs different handling on
+# Android — webbrowser.open() has no registered handler there and raises.
+# Try firing a native ACTION_VIEW intent first, then fall back to webbrowser.
+def open_url(url):
+    try:
+        from jnius import autoclass, cast
+        Intent = autoclass('android.content.Intent')
+        Uri = autoclass('android.net.Uri')
+        try:
+            SDLActivity = autoclass('org.libsdl.app.SDLActivity')
+            activity = SDLActivity.mSingleton if hasattr(SDLActivity, 'mSingleton') else SDLActivity.mActivity
+        except Exception:
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            activity = PythonActivity.mActivity
+        intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        activity.startActivity(intent)
+        return
+    except Exception:
+        pass
+    try:
+        webbrowser.open(url)
+    except Exception:
+        pass
+
 is_portrait = REAL_HEIGHT > REAL_WIDTH
 
 # --- AUTOMATIC DEVICE TYPE DETECTION ---
@@ -331,6 +356,178 @@ SOTD_ENTRIES = [
             "born when it first topped the charts."
         ),
     },
+    {
+        "title": "Respect", "artist": "Aretha Franklin",
+        "search": "Respect Aretha Franklin",
+        "description": (
+            "Otis Redding wrote and recorded \"Respect\" first in 1965, but it was Aretha "
+            "Franklin's 1967 version, reworked with her sisters' backing vocals and the "
+            "iconic spelled-out chorus, that turned it into something entirely new.\n\n"
+            "Franklin flipped the song's perspective from a man demanding respect at home "
+            "to a woman demanding it on her own terms, and it landed right in the middle "
+            "of both the civil rights and women's movements of the era.\n\n"
+            "Redding reportedly said, half-joking, that the song belonged to Aretha now "
+            "\u2014 a rare and generous admission that her cover had eclipsed the "
+            "original completely.\n\n"
+            "It remains one of the most instantly recognisable openings in music, and "
+            "arguably the definitive record of what soul music could do at its peak."
+        ),
+    },
+    {
+        "title": "Billie Jean", "artist": "Michael Jackson",
+        "search": "Billie Jean Michael Jackson",
+        "description": (
+            "Built around one of the most instantly recognisable basslines in pop, "
+            "\"Billie Jean\" was almost left off 1982's \"Thriller\" entirely until "
+            "producer Quincy Jones was convinced otherwise.\n\n"
+            "Its accompanying video, with Jackson's light-up sidewalk, was one of the "
+            "first by a Black artist in heavy rotation on MTV, breaking down a barrier "
+            "the network had been criticised for maintaining.\n\n"
+            "The song's paranoid, tightly wound production and Jackson's falsetto "
+            "delivery turned a personal anecdote about an obsessive fan into one of the "
+            "most meticulously crafted pop records ever made.\n\n"
+            "Decades on, that bassline alone is still enough for a dance floor to "
+            "recognise the song within half a second."
+        ),
+    },
+    {
+        "title": "Like a Rolling Stone", "artist": "Bob Dylan",
+        "search": "Like a Rolling Stone Bob Dylan",
+        "description": (
+            "At over six minutes with a snarling vocal and no conventional love-song "
+            "subject matter, \"Like a Rolling Stone\" broke almost every rule of 1965 "
+            "AM radio \u2014 and reached number two on the charts anyway.\n\n"
+            "It arrived just as Dylan was moving from acoustic folk into electric rock, "
+            "a shift that famously drew boos from purists at the Newport Folk Festival "
+            "that same year.\n\n"
+            "Al Kooper's organ part, played almost by accident after he talked his way "
+            "onto the session, became one of the most quietly influential parts of the "
+            "entire recording.\n\n"
+            "Rolling Stone magazine itself later named it the greatest song of all time, "
+            "and whether or not you'd rank it there, its influence on turning rock "
+            "lyrics into serious writing is hard to overstate."
+        ),
+    },
+    {
+        "title": "Purple Rain", "artist": "Prince",
+        "search": "Purple Rain Prince",
+        "description": (
+            "Recorded live at Minneapolis's First Avenue club in 1983, \"Purple Rain\" "
+            "is one of the rare power ballads that's also, quietly, a genuine guitar "
+            "showcase \u2014 Prince's extended solo remains one of his most celebrated.\n\n"
+            "It anchored the film of the same name, which turned Prince into a "
+            "bona fide movie star alongside his existing reputation as one of the most "
+            "gifted musicians of his generation.\n\n"
+            "The song blends gospel, rock balladry and orchestral strings into "
+            "something that never quite resolves into a single genre, mirroring "
+            "Prince's own refusal to be easily categorised.\n\n"
+            "Nearly every arena still plays it as fans hold their phone lights aloft, "
+            "which is about the highest tribute a power ballad can receive."
+        ),
+    },
+    {
+        "title": "Fast Car", "artist": "Tracy Chapman",
+        "search": "Fast Car Tracy Chapman",
+        "description": (
+            "Tracy Chapman's 1988 debut single tells a plain, devastating story of "
+            "poverty and stalled escape entirely through a folk arrangement of just "
+            "voice and acoustic guitar, with barely any embellishment at all.\n\n"
+            "Her performance at the Nelson Mandela 70th Birthday Tribute concert, "
+            "filling in on short notice, introduced her to a global audience almost "
+            "overnight and sent the song to the top of charts worldwide.\n\n"
+            "It found a surprising second life in 2023 when country singer Luke Combs "
+            "covered it note for note, introducing an entirely new generation and "
+            "audience to Chapman's original songwriting.\n\n"
+            "Few songs manage to say so much about class and circumstance with so few "
+            "chords, which is exactly why it still lands as hard today as it did in 1988."
+        ),
+    },
+    {
+        "title": "Take Five", "artist": "The Dave Brubeck Quartet",
+        "search": "Take Five Dave Brubeck Quartet",
+        "description": (
+            "Written by saxophonist Paul Desmond in the unusual 5/4 time signature that "
+            "gives the song its name, \"Take Five\" became, against all odds, one of "
+            "the best-selling jazz singles ever recorded.\n\n"
+            "Drummer Joe Morello's rolling solo section, unusual for a mainstream jazz "
+            "single of 1959, gave the track a rhythmic identity that still sounds "
+            "instantly recognisable today.\n\n"
+            "Radio stations at the time were sceptical an odd-metre jazz instrumental "
+            "could ever be a hit, yet it eventually sold over a million copies and "
+            "helped bring modern jazz into mainstream listening rooms.\n\n"
+            "It remains proof that an unconventional time signature, played with "
+            "enough cool confidence, can become genuinely catchy."
+        ),
+    },
+    {
+        "title": "Losing My Religion", "artist": "R.E.M.",
+        "search": "Losing My Religion R.E.M.",
+        "description": (
+            "Built around a mandolin riff that guitarist Peter Buck was still learning "
+            "to play, \"Losing My Religion\" became R.E.M.'s biggest hit almost by "
+            "accident, despite having no chorus in the traditional sense.\n\n"
+            "The title is a Southern American expression for being at the end of one's "
+            "rope, not a statement about faith, something widely misunderstood at the "
+            "time of release.\n\n"
+            "Its stark, symbolism-heavy music video won six MTV Video Music Awards and "
+            "helped push the song, and the band, into mainstream rotation worldwide.\n\n"
+            "It's a rare example of a genuinely strange, mandolin-led alternative rock "
+            "song becoming a true global hit on its own terms."
+        ),
+    },
+    {
+        "title": "Wuthering Heights", "artist": "Kate Bush",
+        "search": "Wuthering Heights Kate Bush",
+        "description": (
+            "Written when Kate Bush was just eighteen, inspired by the final scenes of "
+            "Emily Bronte's novel, \"Wuthering Heights\" made her the first woman to "
+            "reach UK number one with a self-written song.\n\n"
+            "Her soaring, theatrical vocal delivery and the song's unusual, swooping "
+            "melody were unlike anything else on the charts in 1978, and she reportedly "
+            "insisted on it as her debut single against her label's wishes.\n\n"
+            "The accompanying video, with Bush in flowing red, became just as iconic as "
+            "the song itself and helped define her singular, uncompromising public "
+            "image from the very start of her career.\n\n"
+            "Few debut singles announce a wholly original artist this clearly, on the "
+            "very first attempt."
+        ),
+    },
+    {
+        "title": "A Change Is Gonna Come", "artist": "Sam Cooke",
+        "search": "A Change Is Gonna Come Sam Cooke",
+        "description": (
+            "Inspired partly by Bob Dylan's \"Blowin' in the Wind\" and partly by "
+            "Cooke's own experience being turned away from a whites-only motel, "
+            "\"A Change Is Gonna Come\" became one of the defining anthems of the "
+            "civil rights era.\n\n"
+            "Its lush orchestral arrangement was a marked departure from Cooke's usual "
+            "pop sound, giving the song a gravity that matched its subject matter.\n\n"
+            "Tragically, Cooke was shot and killed in December 1964, just weeks before "
+            "the song's release, and never got to see the impact it would go on to "
+            "have.\n\n"
+            "It's been covered and referenced ever since by artists across soul, rock "
+            "and hip-hop, and remains one of the most quietly devastating protest "
+            "songs ever recorded."
+        ),
+    },
+    {
+        "title": "Ohio", "artist": "Crosby, Stills, Nash & Young",
+        "search": "Ohio Crosby Stills Nash Young",
+        "description": (
+            "Neil Young wrote \"Ohio\" within days of the Kent State shootings in May "
+            "1970, when National Guardsmen opened fire on unarmed student protesters, "
+            "killing four.\n\n"
+            "The band rushed it into a studio and released it almost immediately, an "
+            "unusually fast turnaround for the era, driven purely by the urgency of "
+            "the moment.\n\n"
+            "Some radio stations refused to play it given its direct reference to "
+            "President Nixon, but it still became a defining protest record of the "
+            "Vietnam War period.\n\n"
+            "Few songs have ever been written, recorded and released in response to a "
+            "real news event this quickly, which is exactly what gives it its raw, "
+            "unfiltered urgency."
+        ),
+    },
 ]
 
 AOTD_ENTRIES = [
@@ -439,6 +636,176 @@ AOTD_ENTRIES = [
             "years before the genre had a name.\n\n"
             "She's rarely mentioned in the same breath as the rock pioneers she directly "
             "influenced, which is exactly why she's worth featuring here."
+        ),
+    },
+    {
+        "name": "Woody Guthrie", "genre": "Folk Singer-Songwriter",
+        "search": "Woody Guthrie",
+        "description": (
+            "Travelling across Depression-era America on freight trains and highways, "
+            "Woody Guthrie wrote hundreds of songs documenting the lives of migrant "
+            "workers, union organisers and the rural poor he met along the way.\n\n"
+            "His best-known song, \u2018This Land Is Your Land\u2019, was written partly "
+            "as a pointed response to \u2018God Bless America\u2019, though the verses "
+            "critical of inequality are rarely sung in schools today.\n\n"
+            "His guitar famously bore the handwritten slogan \u201cThis Machine Kills "
+            "Fascists\u201d, a blunt statement of the political convictions running "
+            "through nearly everything he recorded.\n\n"
+            "Bob Dylan, Bruce Springsteen and countless folk and protest artists since "
+            "have named him as a direct and foundational influence."
+        ),
+    },
+    {
+        "name": "Betty Davis", "genre": "Funk Singer",
+        "search": "Betty Davis",
+        "description": (
+            "Betty Davis released three albums of raw, sexually explicit funk in the "
+            "early-to-mid 1970s that were too far ahead of their time for mainstream "
+            "radio, and too confrontational for many stations to touch at all.\n\n"
+            "She briefly married Miles Davis and is widely credited with introducing "
+            "him to Jimi Hendrix and Sly Stone, nudging his sound toward the "
+            "electric fusion period that followed.\n\n"
+            "Her own records were commercial flops on release, and she largely retreated "
+            "from the industry by the end of the decade, reportedly worn down by the "
+            "backlash to her image and lyrics.\n\n"
+            "Reissued decades later, her catalogue is now widely regarded as some of "
+            "the boldest and most uncompromising funk ever recorded."
+        ),
+    },
+    {
+        "name": "Karen Dalton", "genre": "Folk & Blues Singer",
+        "search": "Karen Dalton",
+        "description": (
+            "A fixture of the early-1960s Greenwich Village folk scene alongside Bob "
+            "Dylan, who called her his favourite singer in the whole scene, Karen "
+            "Dalton nonetheless resisted recording for years.\n\n"
+            "Her two studio albums, released almost reluctantly, feature a cracked, "
+            "aching voice often compared to Billie Holiday, wrapped around traditional "
+            "folk and blues songs rather than originals.\n\n"
+            "She struggled with addiction and poverty for most of her life and died "
+            "largely unrecognised in 1993, her records having sold poorly at the time.\n\n"
+            "A wave of reissues and tributes since has slowly built her a devoted "
+            "following she never got to see in her own lifetime."
+        ),
+    },
+    {
+        "name": "Mississippi John Hurt", "genre": "Delta Blues Guitarist",
+        "search": "Mississippi John Hurt",
+        "description": (
+            "Mississippi John Hurt recorded a handful of songs in 1928 that sold "
+            "poorly, then returned to farming in rural Mississippi for over thirty "
+            "years, apparently content to be forgotten by the record industry.\n\n"
+            "A folk music researcher tracked him down in 1963 after decoding a place "
+            "name in one of his old lyrics, and Hurt was suddenly performing at "
+            "folk festivals to enthusiastic young audiences in his seventies.\n\n"
+            "His fingerpicking guitar style, gentle and melodic rather than raw and "
+            "aggressive, became hugely influential on the folk revival guitarists who "
+            "discovered him during this unexpected second act.\n\n"
+            "He died just a few years into his rediscovery, but left behind a style "
+            "still taught to fingerstyle guitarists today."
+        ),
+    },
+    {
+        "name": "Alice Coltrane", "genre": "Jazz Pianist & Harpist",
+        "search": "Alice Coltrane",
+        "description": (
+            "A classically trained pianist who later took up the harp, Alice Coltrane "
+            "built a body of spiritual jazz recordings in the 1970s that blended free "
+            "jazz, Indian classical music and Hindu devotional themes.\n\n"
+            "She was married to saxophonist John Coltrane until his death in 1967, "
+            "after which she continued to develop his final, most experimental "
+            "musical ideas on her own terms.\n\n"
+            "Later in life she largely stepped back from the commercial music industry "
+            "to lead an ashram in California, recording devotional cassette tapes for "
+            "her community rather than for public release.\n\n"
+            "Her catalogue has found a substantial new audience through reissues and "
+            "sampling in the decades since, introducing her far beyond jazz circles."
+        ),
+    },
+    {
+        "name": "Gil Scott-Heron", "genre": "Spoken-Word Poet & Musician",
+        "search": "Gil Scott-Heron",
+        "description": (
+            "Often cited as a forerunner of hip-hop, Gil Scott-Heron blended jazz, "
+            "soul and spoken-word poetry into sharp, political recordings throughout "
+            "the 1970s, most famously \u2018The Revolution Will Not Be Televised\u2019.\n\n"
+            "His work directly addressed racism, poverty and consumer culture at a "
+            "time when few artists on major labels were willing to be so explicit.\n\n"
+            "Decades later, artists across hip-hop routinely cite him as foundational, "
+            "both for his rhythmic delivery and his willingness to use music as direct "
+            "social commentary.\n\n"
+            "He struggled publicly with addiction later in life, but his final album, "
+            "released in 2010, was widely praised as a genuine late-career return to "
+            "form."
+        ),
+    },
+    {
+        "name": "Broadcast", "genre": "Electronic & Psychedelic Pop Band",
+        "search": "Broadcast band",
+        "description": (
+            "Formed in Birmingham, England in the early 1990s, Broadcast built a "
+            "sound out of vintage synthesisers, library-music textures and Trish "
+            "Keenan's cool, detached vocals that felt like it belonged to no single "
+            "decade.\n\n"
+            "Their records drew heavily on 1960s and 70s soundtrack and public "
+            "information film music, filtered through a distinctly modern, "
+            "melancholic pop sensibility.\n\n"
+            "Keenan died suddenly from pneumonia in 2011, cutting short a catalogue "
+            "that had quietly influenced a generation of electronic and dream-pop "
+            "artists.\n\n"
+            "Their records remain a reference point for anyone chasing that specific, "
+            "hard-to-name blend of warmth and unease."
+        ),
+    },
+    {
+        "name": "Arthur Russell", "genre": "Cellist & Composer",
+        "search": "Arthur Russell",
+        "description": (
+            "Arthur Russell moved between disco, minimalist composition, folk-pop and "
+            "avant-garde cello performance, often within the same year, releasing "
+            "music under a dozen different names and projects.\n\n"
+            "Much of his catalogue existed only as unfinished demos and tapes at the "
+            "time of his death from AIDS-related illness in 1992, since he rarely "
+            "considered any recording truly finished.\n\n"
+            "Posthumous archival releases in the 2000s introduced his work to a much "
+            "wider audience than he ever reached during his own lifetime.\n\n"
+            "He's now regularly cited across dance, indie and classical circles alike "
+            "as one of the most genuinely uncategorisable musicians of his era."
+        ),
+    },
+    {
+        "name": "Shuggie Otis", "genre": "Multi-Instrumentalist & Songwriter",
+        "search": "Shuggie Otis",
+        "description": (
+            "A teenage guitar prodigy who had already toured with his father's blues "
+            "revue and recorded with Frank Zappa, Shuggie Otis released \u2018Inspiration "
+            "Information\u2019 in 1974 as a one-man band, playing nearly every "
+            "instrument himself.\n\n"
+            "The album sold poorly on release and his label dropped him shortly "
+            "after, effectively ending his mainstream recording career at just "
+            "twenty years old.\n\n"
+            "A 2001 reissue found the record decades ahead of its time, its "
+            "drum-machine-and-guitar sound directly anticipating neo-soul and "
+            "bedroom production that followed decades later.\n\n"
+            "He largely stepped away from the industry afterward, making his "
+            "rediscovery all the more striking when it finally arrived."
+        ),
+    },
+    {
+        "name": "Roky Erickson", "genre": "Psychedelic Rock Pioneer",
+        "search": "Roky Erickson 13th Floor Elevators",
+        "description": (
+            "As frontman of The 13th Floor Elevators, Roky Erickson helped originate "
+            "the term \u201cpsychedelic rock\u201d itself in 1966, years before the "
+            "genre became a mainstream label.\n\n"
+            "A 1969 marijuana arrest led to him pleading insanity to avoid prison, "
+            "resulting in years of institutionalisation and psychiatric treatment "
+            "that permanently affected his health.\n\n"
+            "He continued recording sporadically for decades afterward, blending "
+            "horror-movie imagery with genuinely melodic rock songwriting in a way "
+            "few artists have matched.\n\n"
+            "A wave of tribute concerts and reissues in the 2000s helped restore him "
+            "to something like the recognition his influence always deserved."
         ),
     },
 ]
@@ -551,6 +918,189 @@ HM_ENTRIES = [
             "Two short years of a scrappy piece of college software changed how the "
             "entire industry sells music to this day \u2014 which is about as clear a "
             "definition of \u201chistory maker\u201d as it gets."
+        ),
+    },
+    {
+        "title": "Disco Demolition Night",
+        "date": "Comiskey Park, Chicago \u2014 July 12, 1979",
+        "search": "Chic Good Times",
+        "description": (
+            "Between games of a baseball double-header, a Chicago radio DJ invited "
+            "fans to bring disco records to be blown up on the field in exchange for "
+            "cheap admission \u2014 and roughly 50,000 people showed up, far more than "
+            "expected.\n\n"
+            "The explosion tore up the outfield turf and triggered a full pitch "
+            "invasion, forcing the second game to be forfeited entirely amid the "
+            "chaos.\n\n"
+            "Critics have long pointed out the event's uncomfortable undertones, given "
+            "disco's roots in Black and gay club culture, framing the backlash as "
+            "about more than just musical taste.\n\n"
+            "Whatever the intent, it's remembered today as the moment mainstream "
+            "disco's commercial dominance visibly, dramatically cracked."
+        ),
+    },
+    {
+        "title": "MTV Signs On",
+        "date": "MTV launches with 'Video Killed the Radio Star' \u2014 August 1, 1981",
+        "search": "Video Killed the Radio Star Buggles",
+        "description": (
+            "MTV's very first broadcast opened with the Buggles' \u2018Video Killed "
+            "the Radio Star\u2019, an almost too-perfect choice given what the channel "
+            "was about to do to the music industry.\n\n"
+            "Overnight, how a song looked became just as important as how it sounded, "
+            "reshaping artist budgets, image and even chart performance around the "
+            "music video format.\n\n"
+            "Acts like Duran Duran and Michael Jackson thrived in this new visual "
+            "economy, while others who couldn't adapt to the camera found their "
+            "careers stalling almost immediately.\n\n"
+            "It's hard to overstate how completely MTV rewired the relationship "
+            "between artist, image and audience for the following two decades."
+        ),
+    },
+    {
+        "title": "The First Grammy Awards",
+        "date": "1st Annual Grammy Awards \u2014 May 4, 1959",
+        "search": "Domenico Modugno Nel Blu Dipinto Di Blu",
+        "description": (
+            "Held quietly at two hotel ceremonies in Los Angeles and New York with no "
+            "television broadcast at all, the first Grammy Awards were a modest, "
+            "industry-only affair compared to the show they'd later become.\n\n"
+            "Domenico Modugno's Italian song \u2018Nel Blu Dipinto Di Blu (Volare)\u2019 "
+            "won both Record and Song of the Year, a choice that looks almost "
+            "unthinkable by today's Grammy standards.\n\n"
+            "The ceremony was created partly in response to rock and roll's rise, as "
+            "an attempt by the recording industry to keep honouring more "
+            "traditional musicianship and songcraft.\n\n"
+            "It would take until 1971 for the show to move to national television, "
+            "beginning its transformation into the major broadcast event it is today."
+        ),
+    },
+    {
+        "title": "Sgt. Pepper Redefines the Album",
+        "date": "The Beatles release 'Sgt. Pepper's Lonely Hearts Club Band' \u2014 June 1, 1967",
+        "search": "Sgt Peppers Lonely Hearts Club Band",
+        "description": (
+            "Recorded over more studio hours than any pop record before it, "
+            "\u2018Sgt. Pepper's\u2019 was conceived as a continuous concept album "
+            "rather than a simple collection of singles, complete with a fictional "
+            "alter-ego band.\n\n"
+            "Its lavish, collage-style cover art and printed lyric sheet were nearly "
+            "as influential as the music, helping establish the album itself as a "
+            "serious artistic statement rather than disposable pop product.\n\n"
+            "Critics and rival musicians alike, including Brian Wilson of the Beach "
+            "Boys, described feeling both inspired and daunted by how far it pushed "
+            "studio production.\n\n"
+            "It's widely credited with helping shift the entire industry's focus from "
+            "singles-driven pop toward the album as a complete artistic work."
+        ),
+    },
+    {
+        "title": "The First Billboard Hot 100",
+        "date": "Billboard publishes its first Hot 100 chart \u2014 August 4, 1958",
+        "search": "Poor Little Fool Ricky Nelson",
+        "description": (
+            "Before 1958, Billboard ran three separate, inconsistent singles charts "
+            "based on sales, jukebox plays and radio airplay. The Hot 100 combined "
+            "them into one definitive weekly ranking, and Ricky Nelson's \u2018Poor "
+            "Little Fool\u2019 became its very first number one.\n\n"
+            "The unified chart gave the whole industry, for the first time, a single "
+            "shared scoreboard to compete over \u2014 turning chart position itself "
+            "into something artists, labels and radio stations all began chasing "
+            "directly.\n\n"
+            "Updated weekly ever since, it remains the most quoted measure of a "
+            "song's popularity in America more than sixty years later, adapting "
+            "along the way to count streams and downloads alongside sales and "
+            "airplay."
+        ),
+    },
+    {
+        "title": "Live 8 Circles the Globe",
+        "date": "Live 8 concerts held across eight countries \u2014 July 2, 2005",
+        "search": "Pink Floyd Comfortably Numb Live 8",
+        "description": (
+            "Timed deliberately to pressure G8 leaders meeting in Scotland days "
+            "later, Live 8 staged free concerts simultaneously across London, "
+            "Philadelphia, Paris, Berlin, Rome, Tokyo, Johannesburg and Toronto.\n\n"
+            "Unlike 1985's Live Aid, the goal wasn't direct donations but political "
+            "pressure \u2014 pushing wealthy nations toward debt relief and increased "
+            "aid for the world's poorest countries.\n\n"
+            "Pink Floyd reunited with Roger Waters for the first time in over two "
+            "decades for the London show, a reunion many fans had assumed would "
+            "never happen again.\n\n"
+            "It remains one of the largest coordinated multi-city concert events ever "
+            "staged, reaching a television audience estimated in the billions."
+        ),
+    },
+    {
+        "title": "The iPod Changes How Music Is Carried",
+        "date": "Apple releases the first iPod \u2014 October 23, 2001",
+        "search": "iPod launch 2001 music",
+        "description": (
+            "Announced with the tagline \u201c1,000 songs in your pocket\u201d, the "
+            "original iPod held a five-gigabyte hard drive at a time when portable "
+            "CD and MiniDisc players were still the norm.\n\n"
+            "Paired a couple of years later with the iTunes Store, it gave listeners "
+            "a simple, legal way to buy individual songs for a dollar each, directly "
+            "challenging the album as the default unit of music sales.\n\n"
+            "Music piracy through services like Napster had already reset listener "
+            "expectations around instant access; the iPod and iTunes gave the "
+            "industry a legitimate business model to catch up with those habits.\n\n"
+            "Within a few years, physical CD sales began a decline they never "
+            "recovered from, a shift that traces directly back to this one device."
+        ),
+    },
+    {
+        "title": "Spotify Launches in Sweden",
+        "date": "Spotify's public launch \u2014 October 7, 2008",
+        "search": "Spotify launch 2008",
+        "description": (
+            "Founded by Daniel Ek and Martin Lorentzon, Spotify launched first in "
+            "Sweden with a free, ad-supported streaming model built specifically to "
+            "compete directly with music piracy rather than just other retailers.\n\n"
+            "Convincing major record labels to license their catalogues for "
+            "unlimited on-demand streaming took years of negotiation, with several "
+            "labels reportedly deeply skeptical it could ever work commercially.\n\n"
+            "It expanded to the United States in 2011, arriving alongside competitors "
+            "but quickly becoming the dominant name most listeners now associate with "
+            "streaming itself.\n\n"
+            "The shift from owning music to renting access to nearly all of it, "
+            "which now feels completely normal, traces back to this single launch."
+        ),
+    },
+    {
+        "title": "Rapper's Delight Breaks Hip-Hop Into the Mainstream",
+        "date": "The Sugarhill Gang release 'Rapper's Delight' \u2014 September 16, 1979",
+        "search": "Rapper's Delight Sugarhill Gang",
+        "description": (
+            "Built over a looped bassline from Chic's \u2018Good Times\u2019, "
+            "\u2018Rapper's Delight\u2019 was the first rap record to become a "
+            "genuine mainstream hit, reaching the top 40 in the United States.\n\n"
+            "The Sugarhill Gang were assembled specifically to record it and weren't "
+            "well-known figures from the Bronx hip-hop scene the style had grown out "
+            "of, a point of some controversy among early hip-hop artists at the time.\n\n"
+            "At over fourteen minutes in its full version, it was also a radical "
+            "departure from typical single-length pop records of the era.\n\n"
+            "Whatever the arguments over its authenticity, it's the record that proved "
+            "to labels rap could sell records well beyond its original scene."
+        ),
+    },
+    {
+        "title": "The Sex Pistols Shock Live Television",
+        "date": "Sex Pistols on the Bill Grundy Show \u2014 December 1, 1976",
+        "search": "Sex Pistols Anarchy in the UK",
+        "description": (
+            "Booked as a last-minute replacement guest, the Sex Pistols appeared on "
+            "a British teatime talk show and, goaded by host Bill Grundy, responded "
+            "with a string of swear words live on air.\n\n"
+            "The resulting tabloid uproar, with headlines calling them \u201cthe "
+            "filth and the fury\u201d, made the band infamous virtually overnight "
+            "across the entire country.\n\n"
+            "Grundy was suspended from the network shortly after, while the Sex "
+            "Pistols found several tour dates cancelled by venues nervous about the "
+            "backlash.\n\n"
+            "The controversy did more to launch British punk into the national "
+            "conversation than any amount of conventional promotion could have "
+            "managed."
         ),
     },
 ]
@@ -5043,7 +5593,7 @@ while running:
                                 for lr, url in top100_link_rects:
                                     if lr.collidepoint(mouse_pos):
                                         try:
-                                            webbrowser.open(url)
+                                            open_url(url)
                                         except Exception:
                                             pass
                                         break
@@ -5051,7 +5601,7 @@ while running:
                             for lr, url in sotd_link_rects:
                                 if lr.collidepoint(mouse_pos):
                                     try:
-                                        webbrowser.open(url)
+                                        open_url(url)
                                     except Exception:
                                         pass
                                     break
@@ -5059,7 +5609,7 @@ while running:
                             for lr, url in aotd_link_rects:
                                 if lr.collidepoint(mouse_pos):
                                     try:
-                                        webbrowser.open(url)
+                                        open_url(url)
                                     except Exception:
                                         pass
                                     break
@@ -5067,7 +5617,7 @@ while running:
                             for lr, url in hm_link_rects:
                                 if lr.collidepoint(mouse_pos):
                                     try:
-                                        webbrowser.open(url)
+                                        open_url(url)
                                     except Exception:
                                         pass
                                     break
