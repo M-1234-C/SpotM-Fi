@@ -166,6 +166,8 @@ is_shuffle = False
 
 green_toggled_tracks = set()
 track_covers = {}  # { track_path: {"image_path": str, "surface": pygame.Surface} }
+listen_stats = {}          # keyed by track path — all per-track listening data
+_listen_session_start = None   # wall-clock float when current play session began
 
 # --- AUDIO TRACKING STATE ---
 track_duration = 0.0          
@@ -1696,6 +1698,44 @@ def _fetch_hm_cover():
         hm_cover_loading = False
 
 
+def _get_stats(path):
+    """Return the listen_stats entry for path, creating it with zero values if missing."""
+    if path not in listen_stats:
+        listen_stats[path] = {
+            "play_count":             0,      # times playback started
+            "total_seconds_listened": 0.0,    # cumulative real seconds of active play
+            "completed_count":        0,      # times listened past 80% of duration
+            "skip_count":             0,      # times skipped before 80%
+            "last_played_timestamp":  None,   # ISO-8601 string of most recent play start
+            "session_count":          0,      # distinct listening sessions (play → pause/stop cycles)
+        }
+    return listen_stats[path]
+
+def _flush_listen_session(path, completed=False, skipped=False):
+    """Flush elapsed real-play seconds from the current session into stats, then clear it."""
+    global _listen_session_start
+    if path and _listen_session_start is not None:
+        delta = time.time() - _listen_session_start
+        if delta > 0.5:   # ignore sub-half-second blips
+            s = _get_stats(path)
+            s["total_seconds_listened"] += delta
+            s["session_count"]          += 1
+            if completed:
+                s["completed_count"] += 1
+            if skipped:
+                s["skip_count"] += 1
+    _listen_session_start = None
+
+def _start_listen_session(path):
+    """Record that a track has started playing: increment play count and note timestamp."""
+    global _listen_session_start
+    import datetime
+    s = _get_stats(path)
+    s["play_count"] += 1
+    s["last_played_timestamp"] = datetime.datetime.now().isoformat(timespec="seconds")
+    _listen_session_start = time.time()
+
+
 def save_app_data():
     data = {
         "saved_directories": saved_directories,
@@ -1706,7 +1746,8 @@ def save_app_data():
         "green_toggled_tracks": list(green_toggled_tracks),
         "layout_mode": layout_mode,
         "grid_cols_override": grid_cols_override,
-        "track_covers": {p: {"image_path": v.get("image_path")} for p, v in track_covers.items()}
+        "track_covers": {p: {"image_path": v.get("image_path")} for p, v in track_covers.items()},
+        "listen_stats": listen_stats,
     }
     
     for p_name, p_data in custom_playlists.items():
@@ -1725,7 +1766,7 @@ def save_app_data():
 def load_app_data():
     global saved_directories, liked_tracks, liked_songs_custom_cover
     global custom_playlists, song_lyrics_database, green_toggled_tracks, layout_mode, track_covers
-    global grid_cols_override
+    global grid_cols_override, listen_stats
     
     if not os.path.exists(DATA_FILE):
         layout_mode = detect_device_layout_mode()
@@ -1751,6 +1792,7 @@ def load_app_data():
                 
         song_lyrics_database = data.get("song_lyrics_database", {})
         green_toggled_tracks = set(data.get("green_toggled_tracks", []))
+        listen_stats = data.get("listen_stats", {})
         
         loaded_track_covers = data.get("track_covers", {})
         track_covers = {}
@@ -1839,6 +1881,12 @@ def advance_track(backward=False):
 
 def load_and_play_track(track_path):
     global track_duration, track_start_accumulator, TEMP_WAV_PATH, current_backend, music_loaded
+
+    # Flush listening time for whatever was playing before
+    prev_path = current_track.get("path", "")
+    if prev_path:
+        elapsed_ratio = (track_start_accumulator / track_duration) if track_duration > 0 else 0
+        _flush_listen_session(prev_path, completed=False, skipped=elapsed_ratio < 0.8)
     
     music_loaded = False
     try: 
@@ -1866,6 +1914,7 @@ def load_and_play_track(track_path):
             track_duration = android_media_player.getDuration() / 1000.0
             android_media_player.start()
             music_loaded = True
+            _start_listen_session(track_path)
         except Exception as e:
             print(f"Android Native Decoder Error: {e}")
             music_loaded = False
@@ -1921,6 +1970,7 @@ def load_and_play_track(track_path):
             music_loaded = True
             current_track["_play_start_time"] = time.time()
             current_track["_has_started"] = False
+            _start_listen_session(track_path)
         except Exception as e:
             print(f"Playback engine error: {e}")
             music_loaded = False
@@ -2641,7 +2691,8 @@ def draw_main_content():
             top100_link_rects.clear()
             global max_top100_scroll
 
-            row_h       = 80
+            phone_rows = (layout_mode == "phone")
+            row_h       = 128 if phone_rows else 80
             link_w      = 96
             link_h      = 30
             link_gap    = 8
@@ -2666,7 +2717,8 @@ def draw_main_content():
                 # Rank number — uniform muted colour
                 rank_surf = font_body.render(str(track["rank"]), True, COLOR_TEXT_MUTED)
                 rx = row_rect.x + 10 + (rank_w - rank_surf.get_width()) // 2
-                virtual_surface.blit(rank_surf, (rx, y_row + (row_h - 6 - rank_surf.get_height()) // 2))
+                info_h = 68 if phone_rows else (row_h - 6)
+                virtual_surface.blit(rank_surf, (rx, y_row + (info_h - rank_surf.get_height()) // 2))
 
                 # Art box — show downloaded surface or placeholder while loading
                 art_rect = pygame.Rect(row_rect.x + rank_w + 8, y_row + 8, art_w, art_w)
@@ -2682,8 +2734,14 @@ def draw_main_content():
 
                 # Title + artist
                 tx = row_rect.x + rank_w + art_w + 20
-                link_area_w = (link_w + link_gap) * 3 - link_gap
-                text_max_w  = row_rect.right - tx - link_area_w - 14
+                if phone_rows:
+                    # Links move to their own full-width row below, so text can
+                    # use the entire row width here instead of squeezing next
+                    # to three link buttons.
+                    text_max_w = row_rect.right - tx - 14
+                else:
+                    link_area_w = (link_w + link_gap) * 3 - link_gap
+                    text_max_w  = row_rect.right - tx - link_area_w - 14
 
                 title_str  = track["title"]
                 artist_str = track["artist"]
@@ -2703,19 +2761,39 @@ def draw_main_content():
                     ("YouTube",  track["youtube_url"],  (255, 80,  80)),
                     ("Apple",    track["apple_url"],    (250, 110, 200)),
                 ]
-                lx = row_rect.right - link_area_w - 8
-                ly = y_row + (row_h - 6 - link_h) // 2
-                for lbl, url, txt_col in link_defs:
-                    lr = pygame.Rect(lx, ly, link_w, link_h)
-                    l_hov = lr.collidepoint(mouse_pos)
-                    l_clk = l_hov and mouse_held
-                    bg = (50, 50, 50) if l_clk else (COLOR_HOVER if l_hov else COLOR_LIGHT_GREY)
-                    pygame.draw.rect(virtual_surface, bg, lr, border_radius=15)
-                    ls = font_small.render(lbl, True, txt_col)
-                    virtual_surface.blit(ls, (lr.x + (lr.width - ls.get_width()) // 2,
-                                             lr.y + (lr.height - ls.get_height()) // 2))
-                    top100_link_rects.append((lr, url))
-                    lx += link_w + link_gap
+                if phone_rows:
+                    # Full-width row of three evenly-spaced link buttons below
+                    # the title/artist line, so each one has a real tap target.
+                    phone_link_gap = 8
+                    phone_link_w = (row_rect.width - 16 - phone_link_gap * 2) // 3
+                    lx = row_rect.x + 8
+                    ly = y_row + info_h + 6
+                    for lbl, url, txt_col in link_defs:
+                        lr = pygame.Rect(lx, ly, phone_link_w, link_h)
+                        l_hov = lr.collidepoint(mouse_pos)
+                        l_clk = l_hov and mouse_held
+                        bg = (50, 50, 50) if l_clk else (COLOR_HOVER if l_hov else COLOR_LIGHT_GREY)
+                        pygame.draw.rect(virtual_surface, bg, lr, border_radius=15)
+                        ls = font_small.render(lbl, True, txt_col)
+                        virtual_surface.blit(ls, (lr.x + (lr.width - ls.get_width()) // 2,
+                                                 lr.y + (lr.height - ls.get_height()) // 2))
+                        top100_link_rects.append((lr, url))
+                        lx += phone_link_w + phone_link_gap
+                else:
+                    link_area_w = (link_w + link_gap) * 3 - link_gap
+                    lx = row_rect.right - link_area_w - 8
+                    ly = y_row + (row_h - 6 - link_h) // 2
+                    for lbl, url, txt_col in link_defs:
+                        lr = pygame.Rect(lx, ly, link_w, link_h)
+                        l_hov = lr.collidepoint(mouse_pos)
+                        l_clk = l_hov and mouse_held
+                        bg = (50, 50, 50) if l_clk else (COLOR_HOVER if l_hov else COLOR_LIGHT_GREY)
+                        pygame.draw.rect(virtual_surface, bg, lr, border_radius=15)
+                        ls = font_small.render(lbl, True, txt_col)
+                        virtual_surface.blit(ls, (lr.x + (lr.width - ls.get_width()) // 2,
+                                                 lr.y + (lr.height - ls.get_height()) // 2))
+                        top100_link_rects.append((lr, url))
+                        lx += link_w + link_gap
 
                 pygame.draw.line(virtual_surface, (35, 35, 35),
                                  (row_rect.x + rank_w, row_rect.bottom + 2),
@@ -5524,9 +5602,11 @@ while running:
                                     if is_playing:
                                         if current_backend == "android": android_media_player.start()
                                         else: pygame.mixer.music.unpause()
+                                        _start_listen_session(current_track.get("path", ""))
                                     else:
                                         if current_backend == "android": android_media_player.pause()
                                         else: pygame.mixer.music.pause()
+                                        _flush_listen_session(current_track.get("path", ""))
                                 else:
                                     current_track = active_tracks[0]  
                                     playlist_is_playing = p_title_text  
@@ -5747,9 +5827,11 @@ while running:
                                 if is_playing:
                                     if current_backend == "android": android_media_player.start()
                                     else: pygame.mixer.music.unpause()
+                                    _start_listen_session(current_track.get("path", ""))
                                 else:
                                     if current_backend == "android": android_media_player.pause()
                                     else: pygame.mixer.music.pause()
+                                    _flush_listen_session(current_track.get("path", ""))
 
                         if next_btn_rect.collidepoint(mouse_pos):
                             advance_track(backward=False)
@@ -5790,6 +5872,7 @@ while running:
             try: elapsed = android_media_player.getCurrentPosition() / 1000.0
             except: elapsed = 0.0
             if elapsed >= track_duration:
+                _flush_listen_session(current_track.get("path", ""), completed=True)
                 advance_track(backward=False)
         else:
             mix_pos = pygame.mixer.music.get_pos()
@@ -5801,6 +5884,7 @@ while running:
             
             if (current_track.get("_has_started", False) and (mix_pos == -1 or mix_pos == 0 or elapsed >= track_duration - 0.5)) or (mix_pos == -1 and time_elapsed > 2.0):
                 current_track["_has_started"] = False
+                _flush_listen_session(current_track.get("path", ""), completed=True)
                 advance_track(backward=False)
 
     virtual_surface.fill(COLOR_BLACK)
@@ -5856,6 +5940,7 @@ while running:
     )
     clock.tick(DEVICE_REFRESH_RATE if _needs_continuous_frames else 10)
 
+_flush_listen_session(current_track.get("path", ""))
 save_app_data()
 
 if TEMP_WAV_PATH and os.path.exists(TEMP_WAV_PATH):
