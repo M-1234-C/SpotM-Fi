@@ -4724,7 +4724,7 @@ while running:
         except: pass
         virtual_keyboard_active = False
 
-    dt = min(0.1, clock.get_time() / 1000.0)
+    dt = min(0.05, clock.get_time() / 1000.0)
 
     frame_had_input = False
     
@@ -5917,23 +5917,32 @@ while running:
     # idle screen, nothing playing, nothing animating) we drop to a low tick rate to
     # save CPU/battery, since there's nothing new to show until something changes.
     _scroll_settling = (
-        abs(target_music_scroll    - music_grid_scroll_offset) > 0.5 or
-        abs(target_browser_scroll  - browser_scroll_offset)    > 0.5 or
-        abs(target_settings_scroll - settings_scroll_offset)   > 0.5 or
-        abs(target_lyrics_scroll   - lyrics_scroll_offset)     > 0.5 or
-        abs(target_top100_scroll   - top100_scroll_offset)     > 0.5 or
-        abs(target_sotd_scroll     - sotd_scroll_offset)       > 0.5 or
-        abs(target_aotd_scroll     - aotd_scroll_offset)       > 0.5 or
-        abs(target_hm_scroll       - hm_scroll_offset)         > 0.5
+        abs(target_music_scroll          - music_grid_scroll_offset)    > 0.5 or
+        abs(target_browser_scroll        - browser_scroll_offset)       > 0.5 or
+        abs(target_settings_scroll       - settings_scroll_offset)      > 0.5 or
+        abs(target_lyrics_scroll         - lyrics_scroll_offset)        > 0.5 or
+        abs(target_top100_scroll         - top100_scroll_offset)        > 0.5 or
+        abs(target_sotd_scroll           - sotd_scroll_offset)          > 0.5 or
+        abs(target_aotd_scroll           - aotd_scroll_offset)          > 0.5 or
+        abs(target_hm_scroll             - hm_scroll_offset)            > 0.5 or
+        abs(target_art_search_scroll     - art_search_scroll_offset)    > 0.5 or
+        abs(target_lyrics_search_scroll  - lyrics_search_scroll_offset) > 0.5 or
+        abs(target_btn_row_scroll        - btn_row_scroll_offset)       > 0.5
     )
     _needs_continuous_frames = (
         is_playing or
         frame_had_input or
         _scroll_settling or
         show_lyrics_editor_view or
+        show_lyrics_search_modal or
+        show_art_search_modal or
+        search_input_active or
         selected_custom_playlist_name is not None or
         viewing_liked_playlist or
         top100_loading or
+        art_search_loading or
+        lyrics_search_loading or
+        sotd_cover_loading or
         aotd_cover_loading or
         hm_cover_loading or
         (show_top100_page and len(top100_art_cache) < len(top100_tracks))
