@@ -24,7 +24,7 @@ This is an offline music player that recreates the popular online msuic service 
 
 Playlist Covers: When you create a playlist, you can assign a cover image to it — just find it through the storage browser that opens when you click the cover. If you want to change it later, open the playlist and click the cover again to pick a new image. Supported formats: `.png`, `.jpg`, `.jpeg`.
 
-The same applies to individual tracks: open a song in the media bar and tap the picture-frame icon to set or replace a custom cover for that track, overriding any embedded art.
+The same applies to individual tracks: open a song in the media bar and tap the picture-frame icon to set or replace a custom cover for that track, overriding any embedded art. 
 
 <img width="2880" height="1800" alt="1001161327" src="https://github.com/user-attachments/assets/5eaefa00-e687-43bc-ad3d-c63240d74d51" />
 
@@ -43,7 +43,9 @@ By itself, plain text won't sync to anything — to sync the lyrics, put a times
 ```
 Once you've timed each line, hit **Save**. From then on, while the song plays, the matching line will highlight in the media bar in sync with playback (assuming the timestamps are accurate). All lyrics are written into the same `.json` save file as everything else, so they'll still be there even if the app is closed or force-closed by accident.
 
-<img width="2880" height="1800" alt="1001161326" src="https://github.com/user-attachments/assets/fd2192eb-a7cc-4d15-a0be-73bc9805bba3" />
+<img width="2880" height="1800" alt="1001193715" src="https://github.com/user-attachments/assets/59898256-411a-4302-9fc5-ab86b75c3fec" />
+
+How Album Covers Work & What to Do: The application automatically manages and caches custom artwork for your tracks within dedicated local storage directories (SpotMFi_Covers). To assign or update a custom cover, navigate to the creation or editing modal for your track or playlist, select the browsing option to choose an image file from your device, and the application will load, render, and bind the selected image surface directly to your song. But now their is also a built in search button that finds the covers for you this helps save time and helps you personlize your song covers with whatever you want weather its the correct album cover or a fan art all in the app no external sources needed
 
 # Installation
 
