@@ -1,6 +1,7 @@
 import pygame
 import sys
 import os
+import uuid
 import tempfile
 import time
 import math
@@ -55,26 +56,10 @@ def set_android_orientation(portrait_locked):
 
 set_android_orientation(False)  # default: sensor/auto-rotate
 
-# Opening links (Spotify/YouTube/Apple search URLs) needs different handling on
-# Android — webbrowser.open() has no registered handler there and raises.
-# Try firing a native ACTION_VIEW intent first, then fall back to webbrowser.
+# Opening links (Spotify/YouTube/Apple search URLs). webbrowser.open() is the
+# safe, standard way to do this and works reliably across devices; wrapped in
+# a try/except so a bad URL or missing handler never takes the app down.
 def open_url(url):
-    try:
-        from jnius import autoclass, cast
-        Intent = autoclass('android.content.Intent')
-        Uri = autoclass('android.net.Uri')
-        try:
-            SDLActivity = autoclass('org.libsdl.app.SDLActivity')
-            activity = SDLActivity.mSingleton if hasattr(SDLActivity, 'mSingleton') else SDLActivity.mActivity
-        except Exception:
-            PythonActivity = autoclass('org.kivy.android.PythonActivity')
-            activity = PythonActivity.mActivity
-        intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        activity.startActivity(intent)
-        return
-    except Exception:
-        pass
     try:
         webbrowser.open(url)
     except Exception:
@@ -218,6 +203,8 @@ def get_clipboard_text():
 
 # --- DATA STORAGE ---
 DATA_FILE = "SpotM-Fi.json"
+COVERS_DIR = "SpotMFi_Covers"
+os.makedirs(COVERS_DIR, exist_ok=True)
 sidebar_items = ["Search", "Your Library", "Settings"] 
 track_list = []
 imported_tracks = []
@@ -1311,25 +1298,49 @@ def shorten_title_keywords(raw_title):
 
 def _query_lrclib(params):
     """Runs a single lrclib.net search request and returns the parsed
-    JSON list (or raises on network/HTTP error)."""
+    JSON list (or raises on network/HTTP error). Retries a couple of times
+    on transient 502/503/504 gateway errors, which lrclib's infrastructure
+    occasionally returns for a moment even when the API itself is fine."""
     url = "https://lrclib.net/api/search?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(url, headers={"User-Agent": "MusicPlayerApp/1.0"})
-    try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            raw = resp.read().decode("utf-8", errors="ignore")
-    except urllib.error.URLError as ssl_err:
-        # Android/Pydroid builds often ship without a usable CA bundle, which
-        # makes HTTPS requests fail with a certificate verify error even when
-        # the network connection itself is fine. Retry once with an
-        # unverified SSL context so it isn't misreported as "no internet".
-        if "CERTIFICATE_VERIFY_FAILED" in str(ssl_err) or "certificate" in str(ssl_err).lower():
-            import ssl
-            unverified_ctx = ssl._create_unverified_context()
-            with urllib.request.urlopen(req, timeout=8, context=unverified_ctx) as resp:
-                raw = resp.read().decode("utf-8", errors="ignore")
-        else:
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "MusicPlayerApp/1.0 (+https://github.com)",
+        "Accept": "application/json",
+    })
+
+    attempts = 3
+    last_exc = None
+    for attempt in range(attempts):
+        try:
+            try:
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    raw = resp.read().decode("utf-8", errors="ignore")
+            except urllib.error.URLError as ssl_err:
+                # Android/Pydroid builds often ship without a usable CA bundle, which
+                # makes HTTPS requests fail with a certificate verify error even when
+                # the network connection itself is fine. Retry once with an
+                # unverified SSL context so it isn't misreported as "no internet".
+                if "CERTIFICATE_VERIFY_FAILED" in str(ssl_err) or "certificate" in str(ssl_err).lower():
+                    import ssl
+                    unverified_ctx = ssl._create_unverified_context()
+                    with urllib.request.urlopen(req, timeout=8, context=unverified_ctx) as resp:
+                        raw = resp.read().decode("utf-8", errors="ignore")
+                else:
+                    raise
+            return json.loads(raw)
+        except urllib.error.HTTPError as http_err:
+            last_exc = http_err
+            if http_err.code in (502, 503, 504) and attempt < attempts - 1:
+                time.sleep(0.6 * (attempt + 1))
+                continue
             raise
-    return json.loads(raw)
+        except urllib.error.URLError as url_err:
+            last_exc = url_err
+            if attempt < attempts - 1:
+                time.sleep(0.6 * (attempt + 1))
+                continue
+            raise
+    if last_exc:
+        raise last_exc
 
 def fetch_synced_lyrics_candidates(title, artist):
     """Runs on a background thread: queries the lrclib.net synced lyrics
@@ -1445,7 +1456,8 @@ def start_art_search(title, artist):
 
 def apply_itunes_art(artwork_url):
     """Download an iTunes artwork URL (swap 100x100 thumbnail for 600x600),
-    save to a temp file, load into pygame and apply to the current track."""
+    save it into the app's own covers folder (so it's easy to find and
+    survives OS temp-file cleanup), and return the saved path."""
     global art_search_error
     try:
         hq_url = artwork_url.replace("100x100bb", "600x600bb")
@@ -1453,10 +1465,11 @@ def apply_itunes_art(artwork_url):
         with urllib.request.urlopen(req, timeout=15) as resp:
             img_bytes = resp.read()
         suffix = ".jpg" if "jpeg" in hq_url or "jpg" in hq_url else ".png"
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-        tmp.write(img_bytes)
-        tmp.close()
-        return tmp.name
+        file_name = f"cover_{uuid.uuid4().hex}{suffix}"
+        dest_path = os.path.join(COVERS_DIR, file_name)
+        with open(dest_path, "wb") as f:
+            f.write(img_bytes)
+        return dest_path
     except Exception as e:
         art_search_error = f"Failed - {type(e).__name__}: {e}"
         return None
