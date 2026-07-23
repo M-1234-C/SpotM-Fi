@@ -6,9 +6,10 @@ This is an offline music player that recreates the popular online msuic service 
 - **Custom Playlists**: Create your own collections with custom titles, descriptions, and cover art.
 - **Liked Songs**: Heart your favorite tracks to save them in a special list.
 - **Album Art**: Cover art embedded in your music files (MP3, FLAC, M4A, OGG) is detected and displayed automatically. You can also manually assign a custom image to any individual track, playlist, or your Liked Songs list.
-- **Lyrics Editor**: A built-in tool to write, paste, or import lyrics for any song and have them synced to playback.
+- **Lyrics Editor**: A built-in tool to write, paste, or import lyrics for any song and have them synced to playback with a build in search button to find lyrics for you.
 - **Hybrid Engine**: Runs on Windows/Mac (Desktop) and Android phones, with a layout that adapts to each.
-- **Auto-Save**: Your playlists, liked songs, covers, and lyrics are all saved automatically to a local `.json` file.
+- **Auto-Save**: Your playlists, liked songs, covers, and lyrics are all saved automatically to a local `.json` file now also collecting data on each song such as how many times its been played fully or skipped for future version to have custom playlists created from it.
+- **Grid customization**: Your grid were songs sit can be customized to display more or less songs in a row on desktop/tablet mode from 5 to 7 phone mode 2 to 4
 
 # Navigation
 - **Sidebar**: Switch between **Search**, **Your Library**, and **Settings**.
@@ -33,11 +34,12 @@ Lyrics & Syncing: Open the editor while a song is playing by tapping the small p
 - Type directly into it,
 - Paste lyrics you've copied from the web (`Ctrl+V` on Desktop, the built-in clipboard on Android), or
 - Import lyrics from a `.txt` file using the Import button, which opens the storage browser (Use SpotM-Fi-Lyrics-Finder in my repositories its made it for this use case).
+- Let the app find the lyrics fior you with its built in serach button (This works the same way SpotM-Fi-Lyrics-Finder works but built in with a proper easy to use ui)
 
-By itself, plain text won't sync to anything — to sync the lyrics, put a timestamp in `[]` before each line, formatted as `[minutes:seconds]`. For example:
+By itself, plain text won't sync to anything — to sync the lyrics, put a timestamp in `[]` before each line, formatted as `[minutes:seconds:milleseconds]`. For example:
 ```
-[1:23] Oh I love music
-[0:06] Let it snow, let it snow, let it snow
+[1:23:02] Oh I love music
+[0:06:00] Let it snow, let it snow, let it snow
 ```
 Once you've timed each line, hit **Save**. From then on, while the song plays, the matching line will highlight in the media bar in sync with playback (assuming the timestamps are accurate). All lyrics are written into the same `.json` save file as everything else, so they'll still be there even if the app is closed or force-closed by accident.
 
