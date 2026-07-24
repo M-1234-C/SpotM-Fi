@@ -242,9 +242,9 @@ Install all optional libraries listed in the Installation section for the widest
 - Better metadata editing
 - Improved search filters
 - Additional Android improvements
-- Official Windows installer, Android APK, Linux and macOS packages
+- Official Windows installer, Android APK packages
 - More themes and personalization options
-- Additional music discovery features
+- file coversion support like m4a to mp3 or wav to mp3
 
 ---
 
