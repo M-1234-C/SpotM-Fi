@@ -517,6 +517,387 @@ SOTD_ENTRIES = [
             "unfiltered urgency."
         ),
     },
+    {
+        "title": "Hurt", "artist": "Johnny Cash",
+        "search": "Hurt Johnny Cash",
+        "description": (
+            "Originally a Nine Inch Nails song about addiction, \"Hurt\" was "
+            "reimagined by Johnny Cash in 2002, near the end of his life, as a "
+            "stripped-back piano-and-voice meditation on age, regret and mortality.\n\n"
+            "The accompanying video, cutting between Cash's frail present and archival "
+            "footage of his younger self, is widely considered one of the most "
+            "devastating music videos ever made. Nine Inch Nails' Trent Reznor said "
+            "watching it made him feel the song no longer belonged to him."
+        ),
+    },
+    {
+        "title": "Superstition", "artist": "Stevie Wonder",
+        "search": "Superstition Stevie Wonder",
+        "description": (
+            "Built around a razor-sharp clavinet riff Stevie Wonder played himself, "
+            "\"Superstition\" was originally written as a gift for Jeff Beck before "
+            "Wonder's own version was rushed out first and became a bigger hit.\n\n"
+            "It marked Wonder's arrival as a full studio auteur, playing nearly every "
+            "instrument himself, and remains one of the most sampled funk grooves in "
+            "hip-hop and pop production history."
+        ),
+    },
+    {
+        "title": "Good Vibrations", "artist": "The Beach Boys",
+        "search": "Good Vibrations Beach Boys",
+        "description": (
+            "Brian Wilson spent months and a then-unheard-of studio budget "
+            "assembling \"Good Vibrations\" from dozens of separately recorded "
+            "sections, splicing them together like a pop symphony rather than a "
+            "conventional single.\n\n"
+            "Its use of the theremin-like electro-theremin gave it a genuinely "
+            "otherworldly texture, and it's still routinely cited as one of the "
+            "most ambitious studio productions of the 1960s."
+        ),
+    },
+    {
+        "title": "Ain't No Sunshine", "artist": "Bill Withers",
+        "search": "Ain't No Sunshine Bill Withers",
+        "description": (
+            "Bill Withers was still working a factory job assembling airplane "
+            "toilets when he recorded \"Ain't No Sunshine\" in 1971, and kept the "
+            "job even after it became a hit, unsure the music career would last.\n\n"
+            "Its famous repeated \"I know\" section was originally a placeholder "
+            "Withers meant to replace with real lyrics later \u2014 producer Booker "
+            "T. Jones convinced him to leave it exactly as it was."
+        ),
+    },
+    {
+        "title": "Where Is My Mind?", "artist": "Pixies",
+        "search": "Where Is My Mind Pixies",
+        "description": (
+            "Frontman Black Francis has said the song was inspired by a scuba diving "
+            "trip where a small fish kept swimming circles around him, giving him "
+            "the disorienting feeling that summed up the song's title.\n\n"
+            "Largely overlooked on its 1988 release, it found a huge second life "
+            "after soundtracking the final scene of \u2018Fight Club\u2019 in 1999, "
+            "introducing Pixies to an entirely new generation of listeners."
+        ),
+    },
+    {
+        "title": "River", "artist": "Joni Mitchell",
+        "search": "River Joni Mitchell",
+        "description": (
+            "Written for 1971's \u2018Blue\u2019, \"River\" quotes the opening notes "
+            "of \u2018Jingle Bells\u2019 in a minor key, turning a Christmas song "
+            "into a melancholy backdrop for a story about heartbreak and wanting "
+            "to disappear.\n\n"
+            "Despite its wintry imagery it was never released as a single, yet it "
+            "has since become one of the most widely covered songs in Mitchell's "
+            "entire catalogue, especially around the holidays."
+        ),
+    },
+    {
+        "title": "Strange Fruit", "artist": "Billie Holiday",
+        "search": "Strange Fruit Billie Holiday",
+        "description": (
+            "Adapted from a poem by schoolteacher Abel Meeropol about the lynching "
+            "of Black Americans in the South, \"Strange Fruit\" was too politically "
+            "charged for Holiday's usual label, forcing her to record it elsewhere "
+            "in 1939.\n\n"
+            "She reportedly closed every live performance of it with the lights "
+            "dimmed and no encore, refusing to let any other song follow it. It's "
+            "widely considered one of the first true protest songs in American "
+            "popular music."
+        ),
+    },
+    {
+        "title": "Voodoo Child (Slight Return)", "artist": "Jimi Hendrix",
+        "search": "Voodoo Child Slight Return Jimi Hendrix",
+        "description": (
+            "Recorded almost as an afterthought after a documentary film crew asked "
+            "the Jimi Hendrix Experience to keep playing for the cameras, \"Voodoo "
+            "Child (Slight Return)\" became one of the most virtuosic guitar "
+            "recordings of the era almost by accident.\n\n"
+            "It gave Hendrix his only UK number one single, released after his "
+            "death in 1970, and remains a foundational text for rock guitarists "
+            "studying his use of wah-wah and feedback."
+        ),
+    },
+    {
+        "title": "At Last", "artist": "Etta James",
+        "search": "At Last Etta James",
+        "description": (
+            "Though written years earlier for a 1941 film, \"At Last\" became "
+            "definitively Etta James's song after her lush 1960 recording, complete "
+            "with a full orchestral arrangement rare for an R&B single of the time.\n\n"
+            "It has since become one of the most requested wedding songs in "
+            "American music, despite James herself later saying she grew tired of "
+            "being reduced to just that one recording."
+        ),
+    },
+    {
+        "title": "Blue Moon of Kentucky", "artist": "Bill Monroe",
+        "search": "Blue Moon of Kentucky Bill Monroe",
+        "description": (
+            "Written as a slow waltz, \"Blue Moon of Kentucky\" is considered a "
+            "founding document of bluegrass music, a genre Bill Monroe is widely "
+            "credited with inventing single-handedly.\n\n"
+            "A young Elvis Presley reworked it into an up-tempo rockabilly single "
+            "in 1954, and the two very different versions \u2014 waltz and rocker "
+            "\u2014 are still performed side by side as a lesson in how genres "
+            "split from a single source."
+        ),
+    },
+    {
+        "title": "Tutti Frutti", "artist": "Little Richard",
+        "search": "Tutti Frutti Little Richard",
+        "description": (
+            "Little Richard's original lyrics were far too explicit for 1955 radio, "
+            "so they were hastily rewritten just before recording, though his wild "
+            "vocal delivery and piano playing stayed just as untamed.\n\n"
+            "Its opening \u201cA-wop-bop-a-loo-bop\u201d is one of the most "
+            "recognisable vocal hooks in rock history, and the song is widely "
+            "credited as one of the true starting points of rock and roll itself."
+        ),
+    },
+    {
+        "title": "Johnny B. Goode", "artist": "Chuck Berry",
+        "search": "Johnny B. Goode Chuck Berry",
+        "description": (
+            "Chuck Berry's autobiographical guitar riff and lyrics about a "
+            "country boy who could \"play a guitar just like ringing a bell\" "
+            "became the defining blueprint for rock and roll guitar playing.\n\n"
+            "It was famously included on the Voyager Golden Record, launched into "
+            "space in 1977 as a representation of humanity's music \u2014 making "
+            "it, quite literally, one of the furthest-travelled songs ever "
+            "recorded."
+        ),
+    },
+    {
+        "title": "My Girl", "artist": "The Temptations",
+        "search": "My Girl The Temptations",
+        "description": (
+            "Written by Smokey Robinson, \"My Girl\" gave the Temptations their "
+            "first number one single and became one of Motown's most enduring "
+            "songwriting achievements, with its instantly hummable opening bassline.\n\n"
+            "David Ruffin's lead vocal, recorded in a single unrehearsed take "
+            "according to studio legend, helped define the smooth, romantic sound "
+            "Motown would become famous for throughout the decade."
+        ),
+    },
+    {
+        "title": "I Want You Back", "artist": "The Jackson 5",
+        "search": "I Want You Back Jackson 5",
+        "description": (
+            "Michael Jackson was just eleven years old when he recorded the lead "
+            "vocal on \"I Want You Back\", his precocious delivery convincing "
+            "Motown to build an entire family act around him and his brothers.\n\n"
+            "It became the label's fastest-selling single up to that point, and "
+            "remains one of the most joyfully constructed pop-soul records of the "
+            "era, packed with hooks in nearly every bar."
+        ),
+    },
+    {
+        "title": "Gimme Shelter", "artist": "The Rolling Stones",
+        "search": "Gimme Shelter The Rolling Stones",
+        "description": (
+            "Written amid the Vietnam War and a string of political assassinations, "
+            "\"Gimme Shelter\" opens with one of the most ominous guitar intros in "
+            "rock before Merry Clayton's blistering, nearly unrehearsed vocal takes "
+            "over.\n\n"
+            "Clayton, pulled out of bed at midnight to record it, reportedly cracked "
+            "her voice mid-take from the sheer intensity \u2014 the take used on "
+            "the record is the one with the crack left in."
+        ),
+    },
+    {
+        "title": "Heroes", "artist": "David Bowie",
+        "search": "Heroes David Bowie",
+        "description": (
+            "Recorded in Berlin within sight of the Wall dividing the city, "
+            "\"Heroes\" was inspired by producer Tony Visconti and a backing "
+            "singer embracing near the studio window, close enough to the "
+            "border to feel the divide.\n\n"
+            "Guitarist Robert Fripp built the song's soaring, feedback-heavy "
+            "guitar line from layered passes at different distances from his amp, "
+            "creating a texture no one had quite recorded before."
+        ),
+    },
+    {
+        "title": "Once in a Lifetime", "artist": "Talking Heads",
+        "search": "Once in a Lifetime Talking Heads",
+        "description": (
+            "Built from a looped groove the band jammed for hours before David "
+            "Byrne wrote lyrics over the top, \"Once in a Lifetime\" borrows its "
+            "spoken-word cadence partly from radio preachers Byrne had been "
+            "listening to.\n\n"
+            "Its jerky, hypnotic music video, choreographed with movements inspired "
+            "by Japanese Noh theatre and religious possession, became just as "
+            "influential as the song itself on early MTV."
+        ),
+    },
+    {
+        "title": "Rocket Man", "artist": "Elton John",
+        "search": "Rocket Man Elton John",
+        "description": (
+            "Written by lyricist Bernie Taupin after reading Ray Bradbury short "
+            "stories, \"Rocket Man\" reframes space travel as a mundane, lonely "
+            "job rather than a heroic adventure, a deliberately unglamorous take "
+            "on a very glamorous subject.\n\n"
+            "Elton John's aching vocal delivery and the song's sweeping "
+            "production helped make it one of the defining singles of his "
+            "imperial mid-1970s run."
+        ),
+    },
+    {
+        "title": "Blackbird", "artist": "The Beatles",
+        "search": "Blackbird The Beatles",
+        "description": (
+            "Paul McCartney has said \"Blackbird\", recorded solo on acoustic "
+            "guitar, was written in response to the civil rights struggles "
+            "unfolding in America in 1968, using the bird as a quiet metaphor "
+            "for a Black woman finding the strength to rise.\n\n"
+            "The finger-picked guitar part, inspired by Bach, has since become "
+            "one of the most commonly taught pieces for beginner acoustic "
+            "guitarists worldwide."
+        ),
+    },
+    {
+        "title": "Suzanne", "artist": "Leonard Cohen",
+        "search": "Suzanne Leonard Cohen",
+        "description": (
+            "Originally published as a poem before Judy Collins convinced Leonard "
+            "Cohen to set it to music, \"Suzanne\" describes a real friendship with "
+            "a Montreal dancer, blending the spiritual and the romantic without "
+            "ever quite resolving which one it is.\n\n"
+            "Cohen was reportedly nervous about his own singing voice and almost "
+            "didn't record it himself, letting other artists' covers reach the "
+            "charts first before his own version became the definitive one."
+        ),
+    },
+    {
+        "title": "The Sound of Silence", "artist": "Simon & Garfunkel",
+        "search": "The Sound of Silence Simon and Garfunkel",
+        "description": (
+            "Recorded first as a quiet acoustic folk song that went nowhere "
+            "commercially, \"The Sound of Silence\" was secretly overdubbed with "
+            "electric instruments by a producer without the duo's knowledge after "
+            "they had already split up.\n\n"
+            "The reworked version became a surprise number one, reuniting Simon "
+            "and Garfunkel almost by accident and launching their career as one "
+            "of the era's defining folk-rock acts."
+        ),
+    },
+    {
+        "title": "What's Going On", "artist": "Marvin Gaye",
+        "search": "What's Going On Marvin Gaye",
+        "description": (
+            "Inspired partly by his brother's accounts of serving in Vietnam and "
+            "partly by police brutality he witnessed firsthand, Marvin Gaye had "
+            "to fight Motown's Berry Gordy to release \"What's Going On\" at all, "
+            "since Gordy considered it too political for a pop single.\n\n"
+            "Its overlapping, conversational vocal layers and jazz-inflected "
+            "arrangement were unlike anything else on Motown at the time, and it "
+            "became one of the label's most critically celebrated records."
+        ),
+    },
+    {
+        "title": "Waterloo Sunset", "artist": "The Kinks",
+        "search": "Waterloo Sunset The Kinks",
+        "description": (
+            "Ray Davies has described \"Waterloo Sunset\" as his most personal "
+            "song, a quiet tribute to London itself rather than any specific "
+            "romance, built around watching the city from a train window.\n\n"
+            "Its gentle, unhurried melody stood in deliberate contrast to the "
+            "harder rock sound The Kinks were known for, and it's now widely "
+            "regarded as one of the finest pieces of British songwriting from "
+            "the era."
+        ),
+    },
+    {
+        "title": "Hey Ya!", "artist": "OutKast",
+        "search": "Hey Ya OutKast",
+        "description": (
+            "Andre 3000 has said \"Hey Ya!\" is actually a fairly bleak song about "
+            "relationships falling apart, deliberately disguised behind one of the "
+            "most infectiously upbeat melodies of the 2000s.\n\n"
+            "Its clapping breakdown and genre-blending production, part funk, part "
+            "rock, part pop, made it one of the rare singles to top both hip-hop "
+            "and mainstream pop charts at once."
+        ),
+    },
+    {
+        "title": "So What", "artist": "Miles Davis",
+        "search": "So What Miles Davis",
+        "description": (
+            "Opening 1959's \u2018Kind of Blue\u2019, \"So What\" was built around "
+            "modal scales rather than the dense chord changes typical of bebop, "
+            "giving the musicians far more room to improvise melodically.\n\n"
+            "The album remains the best-selling jazz record of all time, and "
+            "\"So What\"'s laid-back call-and-response bass and horn line is now "
+            "one of the most widely recognised phrases in jazz history."
+        ),
+    },
+    {
+        "title": "Immigrant Song", "artist": "Led Zeppelin",
+        "search": "Immigrant Song Led Zeppelin",
+        "description": (
+            "Written after a trip to Iceland, \"Immigrant Song\" imagines Robert "
+            "Plant as a Viking warrior, complete with a war-cry vocal that became "
+            "one of the most instantly recognisable openings in hard rock.\n\n"
+            "At under two and a half minutes, it's remarkably short for Led "
+            "Zeppelin, hitting hard and fast rather than sprawling the way many "
+            "of their other tracks did."
+        ),
+    },
+    {
+        "title": "I Will Survive", "artist": "Gloria Gaynor",
+        "search": "I Will Survive Gloria Gaynor",
+        "description": (
+            "Originally recorded as a B-side, \"I Will Survive\" only became a hit "
+            "after DJs started flipping the single over, eventually pushing "
+            "Gloria Gaynor to the top of the charts and turning it into one of "
+            "disco's defining anthems.\n\n"
+            "Its message of recovering from heartbreak turned it into an "
+            "unofficial anthem for the LGBTQ+ community, a status it has held "
+            "for decades since."
+        ),
+    },
+    {
+        "title": "Ex-Factor", "artist": "Lauryn Hill",
+        "search": "Ex-Factor Lauryn Hill",
+        "description": (
+            "Taken from 1998's \u2018The Miseducation of Lauryn Hill\u2019, "
+            "\"Ex-Factor\" blends soul, hip-hop and gospel-inflected vocal runs "
+            "into a raw account of a relationship neither party can quite let go "
+            "of.\n\n"
+            "The album went on to win five Grammy Awards, and \"Ex-Factor\" "
+            "itself has been sampled and interpolated by artists across hip-hop "
+            "for decades since, most famously by Drake."
+        ),
+    },
+    {
+        "title": "Zombie", "artist": "The Cranberries",
+        "search": "Zombie The Cranberries",
+        "description": (
+            "Written by Dolores O'Riordan in response to an IRA bombing in "
+            "Warrington, England that killed two children, \"Zombie\" was a "
+            "marked departure from The Cranberries' earlier, gentler alternative "
+            "rock sound.\n\n"
+            "Its grunge-inflected guitars and O'Riordan's furious vocal delivery "
+            "made it one of the most direct protest songs of the 1990s, and it "
+            "remains the band's most streamed and recognised track worldwide."
+        ),
+    },
+    {
+        "title": "Killing Me Softly with His Song", "artist": "Roberta Flack",
+        "search": "Killing Me Softly With His Song Roberta Flack",
+        "description": (
+            "Inspired by a singer-songwriter named Lori Lieberman who was moved "
+            "to tears watching Don McLean perform live, \"Killing Me Softly\" "
+            "became a hit for Roberta Flack after she heard an early version on "
+            "an in-flight airline recording.\n\n"
+            "Her hushed, deliberate vocal delivery won Grammys for both Record "
+            "and Song of the Year, and the song was later reintroduced to a "
+            "new generation via the Fugees' 1996 cover."
+        ),
+    },
 ]
 
 AOTD_ENTRIES = [
@@ -795,6 +1176,384 @@ AOTD_ENTRIES = [
             "few artists have matched.\n\n"
             "A wave of tribute concerts and reissues in the 2000s helped restore him "
             "to something like the recognition his influence always deserved."
+        ),
+    },
+    {
+        "name": "Nick Drake", "genre": "Folk Singer-Songwriter",
+        "search": "Nick Drake",
+        "description": (
+            "Nick Drake released three quietly devastating folk albums between "
+            "1969 and 1972 that sold so poorly he reportedly believed his music "
+            "career had already ended by the time he died in 1974.\n\n"
+            "A 1999 Volkswagen advert using \u2018Pink Moon\u2019 introduced him to "
+            "a huge new audience decades after his death, turning a commercial "
+            "failure in his lifetime into one of folk music's most enduring "
+            "cult catalogues."
+        ),
+    },
+    {
+        "name": "Vashti Bunyan", "genre": "Folk Singer",
+        "search": "Vashti Bunyan",
+        "description": (
+            "After her one and only 1970 album sold so poorly it was quickly "
+            "deleted, Vashti Bunyan gave up music entirely and moved to a "
+            "remote farm, assuming her recording career was simply over.\n\n"
+            "Decades later, collectors and a new generation of freak-folk "
+            "musicians rediscovered the record, prompting her genuinely "
+            "unexpected return to music in her sixties."
+        ),
+    },
+    {
+        "name": "Judee Sill", "genre": "Singer-Songwriter",
+        "search": "Judee Sill",
+        "description": (
+            "Judee Sill wrote intricate, hymn-like songs blending folk, baroque "
+            "pop and gospel, becoming the very first artist signed to David "
+            "Geffen's Asylum Records label in the early 1970s.\n\n"
+            "Struggles with addiction derailed her career after just two albums, "
+            "and she died in 1979 largely forgotten, though her records have "
+            "since been reissued to considerable critical acclaim."
+        ),
+    },
+    {
+        "name": "Captain Beefheart", "genre": "Avant-Garde Rock Musician",
+        "search": "Captain Beefheart Trout Mask Replica",
+        "description": (
+            "Born Don Van Vliet, Captain Beefheart made his backing band, the "
+            "Magic Band, rehearse his sprawling 1969 double album \u2018Trout "
+            "Mask Replica\u2019 for months in near-isolation, reportedly under "
+            "gruelling conditions.\n\n"
+            "The resulting record, jagged and largely without conventional "
+            "melody, is now considered one of the most influential and "
+            "uncompromising albums in rock history."
+        ),
+    },
+    {
+        "name": "Robert Wyatt", "genre": "Drummer, Singer & Composer",
+        "search": "Robert Wyatt",
+        "description": (
+            "A founding member of Soft Machine, Robert Wyatt fell from a "
+            "fourth-floor window at a party in 1973, leaving him paralysed from "
+            "the waist down and unable to continue drumming.\n\n"
+            "He rebuilt an entirely new solo career afterward as a singer and "
+            "composer, blending jazz, political songwriting and his own "
+            "distinctively fragile voice into one of British music's most "
+            "quietly influential catalogues."
+        ),
+    },
+    {
+        "name": "Linda Perhacs", "genre": "Folk Singer",
+        "search": "Linda Perhacs",
+        "description": (
+            "A practising dental hygienist by trade, Linda Perhacs released a "
+            "single, largely overlooked psychedelic folk album in 1970 after a "
+            "patient who worked in film music encouraged her to record it.\n\n"
+            "She returned to dentistry afterward for decades, unaware the record "
+            "had quietly built a cult following until fans eventually tracked "
+            "her down in the 2000s."
+        ),
+    },
+    {
+        "name": "Bill Fay", "genre": "Singer-Songwriter",
+        "search": "Bill Fay",
+        "description": (
+            "Bill Fay released two commercially unsuccessful albums in the early "
+            "1970s blending folk, gospel and orchestral arrangements before his "
+            "label dropped him and he spent years working manual labour jobs.\n\n"
+            "Wilco's Jeff Tweedy became a vocal champion of his work decades "
+            "later, helping spark a genuine late-career revival that saw Fay "
+            "recording new albums again in his seventies."
+        ),
+    },
+    {
+        "name": "Emitt Rhodes", "genre": "Multi-Instrumentalist Songwriter",
+        "search": "Emitt Rhodes",
+        "description": (
+            "Often compared to a one-man Beatles, Emitt Rhodes recorded lush "
+            "power-pop albums entirely by himself in a home studio in the early "
+            "1970s, playing every instrument on the record.\n\n"
+            "A punishing contract requiring an album every six months, combined "
+            "with poor sales, effectively ended his recording career by his "
+            "mid-twenties, though his sound quietly influenced decades of "
+            "bedroom-pop that followed."
+        ),
+    },
+    {
+        "name": "Connie Converse", "genre": "Singer-Songwriter",
+        "search": "Connie Converse",
+        "description": (
+            "Recording plainspoken, confessional folk songs in the early 1950s, "
+            "years before that style became fashionable, Connie Converse never "
+            "found an audience and eventually gave up entirely.\n\n"
+            "In 1974 she packed her belongings into her car and drove away, "
+            "never to be heard from again. Her home recordings were only "
+            "rediscovered and released decades later, in 2009."
+        ),
+    },
+    {
+        "name": "Jackie Shane", "genre": "Soul Singer",
+        "search": "Jackie Shane Any Other Way",
+        "description": (
+            "A Black transgender soul singer performing openly in Toronto clubs "
+            "throughout the 1960s, Jackie Shane built a devoted live following "
+            "with hits like \u2018Any Other Way\u2019, despite the era's open "
+            "hostility toward her identity.\n\n"
+            "She disappeared from the public eye in the mid-1970s and lived in "
+            "seclusion for decades before a Grammy-nominated archival reissue in "
+            "2017 finally brought her story to a much wider audience."
+        ),
+    },
+    {
+        "name": "Charley Patton", "genre": "Delta Blues Pioneer",
+        "search": "Charley Patton",
+        "description": (
+            "Often called the father of the Delta blues, Charley Patton's "
+            "raspy, percussive guitar style and showmanship in the 1920s and "
+            "30s directly shaped everyone from Son House to Muddy Waters.\n\n"
+            "He recorded only a modest catalogue before his death in 1934, but "
+            "his influence on the entire lineage of American blues guitar is "
+            "difficult to overstate."
+        ),
+    },
+    {
+        "name": "Skip James", "genre": "Delta Blues Musician",
+        "search": "Skip James",
+        "description": (
+            "Skip James recorded a small set of haunting, minor-key blues songs "
+            "in 1931 using an unusual open tuning, then largely vanished from "
+            "music, working as a preacher and sharecropper for decades.\n\n"
+            "Blues revivalists tracked him down in a hospital in 1964, and his "
+            "unexpected return to performing at folk festivals introduced his "
+            "eerie style to a whole new generation of listeners."
+        ),
+    },
+    {
+        "name": "Blind Willie Johnson", "genre": "Gospel Blues Guitarist",
+        "search": "Blind Willie Johnson",
+        "description": (
+            "Blinded as a child, Blind Willie Johnson recorded a small but "
+            "towering catalogue of gospel blues in the late 1920s, his "
+            "rasping vocals and slide guitar work later cited as a direct "
+            "influence on rock guitarists like Eric Clapton and Ry Cooder.\n\n"
+            "His wordless instrumental \u2018Dark Was the Night, Cold Was the "
+            "Ground\u2019 was included on the Voyager Golden Record sent into "
+            "space in 1977."
+        ),
+    },
+    {
+        "name": "Elizabeth Cotten", "genre": "Folk & Blues Guitarist",
+        "search": "Elizabeth Cotten Freight Train",
+        "description": (
+            "Elizabeth Cotten wrote \u2018Freight Train\u2019 as a child but "
+            "didn't record it until her sixties, after being discovered while "
+            "working as a housekeeper for the folk-singing Seeger family.\n\n"
+            "A left-handed guitarist who played a right-handed guitar upside "
+            "down, she developed a completely self-taught fingerpicking style "
+            "now studied by guitarists worldwide as \"Cotten picking\"."
+        ),
+    },
+    {
+        "name": "Jimmy Scott", "genre": "Jazz Vocalist",
+        "search": "Jimmy Scott jazz singer",
+        "description": (
+            "A rare genetic condition kept Jimmy Scott's voice permanently "
+            "high and unchanged from childhood, giving him one of the most "
+            "instantly recognisable, aching vocal tones in jazz.\n\n"
+            "Record label disputes kept him largely out of the studio for over "
+            "two decades in his prime, and it took until his seventies for a "
+            "wave of new recordings to finally bring him the wider recognition "
+            "his voice had always deserved."
+        ),
+    },
+    {
+        "name": "Moondog", "genre": "Composer & Street Musician",
+        "search": "Moondog composer",
+        "description": (
+            "Blind since a teenage accident, Louis Hardin, better known as "
+            "Moondog, spent decades busking on New York street corners dressed "
+            "as a Viking while composing intricate, self-taught classical "
+            "pieces on the side.\n\n"
+            "Despite performing on the street, he recorded albums for major "
+            "labels and was quietly studied and admired by classical composers "
+            "like Philip Glass, who briefly lived with him as a young man."
+        ),
+    },
+    {
+        "name": "Tim Buckley", "genre": "Singer-Songwriter",
+        "search": "Tim Buckley",
+        "description": (
+            "Tim Buckley moved restlessly between folk, jazz and experimental "
+            "avant-garde vocal music across nine albums in less than a decade, "
+            "refusing to settle into any single commercially safe style.\n\n"
+            "He died of an accidental overdose in 1975 at just 28, but his son "
+            "Jeff Buckley would go on to have his own major impact on music two "
+            "decades later, tying two very different careers together."
+        ),
+    },
+    {
+        "name": "Judy Henske", "genre": "Folk Singer",
+        "search": "Judy Henske",
+        "description": (
+            "Known for a booming, theatrical voice unusual among the hushed "
+            "folk singers of the early 1960s, Judy Henske built a strong live "
+            "reputation on the Greenwich Village and West Coast folk circuits.\n\n"
+            "Her boundary-pushing 1969 album \u2018Farewell Aldebaran\u2019, made "
+            "with future Doors producer Jac Holzman's backing, remains a "
+            "strange, ambitious cult favourite decades later."
+        ),
+    },
+    {
+        "name": "The Slits", "genre": "Punk Band",
+        "search": "The Slits Cut album",
+        "description": (
+            "One of the first all-female punk bands, The Slits mixed reggae "
+            "rhythms into their raw, confrontational sound on 1979's "
+            "\u2018Cut\u2019, whose cover \u2014 the band covered in mud, "
+            "topless \u2014 caused as much stir as the music itself.\n\n"
+            "Their refusal to conform to expectations of how women in punk "
+            "should look or sound made them hugely influential on riot grrrl "
+            "and post-punk acts that followed."
+        ),
+    },
+    {
+        "name": "Poly Styrene", "genre": "Punk Singer (X-Ray Spex)",
+        "search": "X-Ray Spex Poly Styrene",
+        "description": (
+            "As frontwoman of X-Ray Spex, Poly Styrene wrote sharp, satirical "
+            "punk songs about consumerism and identity while wearing braces and "
+            "thrift-store clothes, deliberately rejecting typical rock star "
+            "styling.\n\n"
+            "One of the first women of colour to front a major UK punk band, "
+            "she stepped away from music for years afterward, later citing the "
+            "intense pressures of early fame on her mental health."
+        ),
+    },
+    {
+        "name": "ESG", "genre": "Post-Punk & Funk Band",
+        "search": "ESG band UFO",
+        "description": (
+            "Formed by four sisters from the South Bronx, ESG built a stripped-"
+            "down, bass-and-drums-heavy sound in the late 1970s that would go on "
+            "to become one of the most sampled catalogues in hip-hop and dance "
+            "music.\n\n"
+            "Their track \u2018UFO\u2019 alone has been sampled by dozens of "
+            "artists across decades, despite the band themselves seeing very "
+            "little commercial success at the time."
+        ),
+    },
+    {
+        "name": "Grace Jones", "genre": "Singer & Performance Artist",
+        "search": "Grace Jones",
+        "description": (
+            "Grace Jones fused disco, reggae, new wave and stark visual art "
+            "into a persona so striking it arguably overshadowed the fact she "
+            "was also a genuinely groundbreaking vocalist and songwriter.\n\n"
+            "Albums like 1981's \u2018Nightclubbing\u2019 blended Jamaican "
+            "rhythm section players with icy European art-pop production, a "
+            "combination almost nobody else was attempting at the time."
+        ),
+    },
+    {
+        "name": "Klaus Nomi", "genre": "Operatic New Wave Singer",
+        "search": "Klaus Nomi",
+        "description": (
+            "Klaus Nomi combined an operatic countertenor voice with stark, "
+            "geometric costumes and new wave production, creating a stage "
+            "persona unlike anything else on the early-1980s New York club "
+            "scene.\n\n"
+            "He was among the first public figures in the arts to die from "
+            "AIDS-related illness, in 1983, cutting short a career that had "
+            "only just begun reaching a wider audience."
+        ),
+    },
+    {
+        "name": "Scott Walker", "genre": "Singer & Avant-Garde Composer",
+        "search": "Scott Walker musician",
+        "description": (
+            "After finding teen-idol fame with The Walker Brothers, Scott "
+            "Walker spent the following decades moving further and further "
+            "from pop, eventually making some of the most genuinely "
+            "unsettling avant-garde records ever released by a major label.\n\n"
+            "Albums like 2006's \u2018The Drift\u2019 feature production choices "
+            "such as punching a side of meat for percussion, a world away from "
+            "his 1960s chart-topping beginnings."
+        ),
+    },
+    {
+        "name": "Terry Callier", "genre": "Folk & Soul Singer-Songwriter",
+        "search": "Terry Callier",
+        "description": (
+            "Terry Callier blended folk guitar with jazz chords and soul "
+            "phrasing across a run of albums in the 1970s that sold poorly "
+            "enough to push him out of music entirely and into a computer "
+            "programming job at the University of Chicago.\n\n"
+            "British DJs and acid jazz artists rediscovered his records in the "
+            "1990s, prompting a genuinely improbable late-career return to "
+            "touring and recording."
+        ),
+    },
+    {
+        "name": "Vic Chesnutt", "genre": "Singer-Songwriter",
+        "search": "Vic Chesnutt",
+        "description": (
+            "Paralysed from the chest down after a car accident at eighteen, "
+            "Vic Chesnutt taught himself an unconventional guitar technique "
+            "using his limited hand movement, developing a raw, plainspoken "
+            "songwriting style out of necessity.\n\n"
+            "R.E.M.'s Michael Stipe produced his early albums and championed "
+            "his work for years, helping bring his darkly funny, unflinching "
+            "songs to a wider audience than they might otherwise have reached."
+        ),
+    },
+    {
+        "name": "Ivor Cutler", "genre": "Poet & Musician",
+        "search": "Ivor Cutler",
+        "description": (
+            "Ivor Cutler wrote absurdist, deadpan songs and monologues on a "
+            "wheezing harmonium, occupying a strange space between music and "
+            "comedy that few artists before or since have attempted.\n\n"
+            "The Beatles cast him in \u2018Magical Mystery Tour\u2019, and Robert "
+            "Wyatt and Billy Connolly were both vocal admirers, though his own "
+            "work remained resolutely, happily uncommercial his entire career."
+        ),
+    },
+    {
+        "name": "Jandek", "genre": "Outsider Musician",
+        "search": "Jandek musician",
+        "description": (
+            "Operating under near-total anonymity since the late 1970s, Jandek "
+            "has released dozens of albums of deliberately dissonant, "
+            "unconventionally tuned guitar music without ever granting an "
+            "interview or confirming basic biographical facts.\n\n"
+            "He gave his first-ever live performance, unannounced, in 2004 after "
+            "over two decades of pure studio anonymity, stunning fans who had "
+            "assumed he might never perform publicly at all."
+        ),
+    },
+    {
+        "name": "Larry Norman", "genre": "Christian Rock Pioneer",
+        "search": "Larry Norman musician",
+        "description": (
+            "Widely credited as the father of Christian rock, Larry Norman "
+            "fused gospel themes with genuine rock and roll instrumentation "
+            "at a time in the late 1960s when most churches considered rock "
+            "music itself sinful.\n\n"
+            "His confrontational, mainstream-adjacent sound made him a "
+            "controversial figure within the Christian music industry he "
+            "effectively helped invent."
+        ),
+    },
+    {
+        "name": "Sandy Denny", "genre": "Folk Singer (Fairport Convention)",
+        "search": "Sandy Denny Fairport Convention",
+        "description": (
+            "As lead singer of Fairport Convention, Sandy Denny helped pioneer "
+            "British folk-rock, blending traditional English folk songs with "
+            "electric instrumentation in a way almost no one else was doing at "
+            "the time.\n\n"
+            "She was the only guest vocalist ever featured on a Led Zeppelin "
+            "studio track, duetting with Robert Plant on \u2018The Battle of "
+            "Evermore\u2019, before her death in 1978 at just 31."
         ),
     },
 ]
@@ -1090,6 +1849,420 @@ HM_ENTRIES = [
             "The controversy did more to launch British punk into the national "
             "conversation than any amount of conventional promotion could have "
             "managed."
+        ),
+    },
+    {
+        "title": "Les Paul Invents Multitrack Recording",
+        "date": "Les Paul builds the first practical multitrack recorder \u2014 1948",
+        "search": "Les Paul Mary Ford How High the Moon",
+        "description": (
+            "Guitarist and inventor Les Paul modified tape recorders to layer "
+            "multiple performances on top of each other, allowing a single "
+            "musician to record entire harmony parts and solos with themselves.\n\n"
+            "His technique, used on hits like \u2018How High the Moon\u2019 with "
+            "wife Mary Ford, laid the technical groundwork for nearly every "
+            "multi-layered studio recording made since, from Motown to modern "
+            "pop production."
+        ),
+    },
+    {
+        "title": "The Grand Ole Opry Is Founded",
+        "date": "The Grand Ole Opry radio program begins broadcasting \u2014 November 28, 1925",
+        "search": "Grand Ole Opry Nashville",
+        "description": (
+            "What began as a small barn-dance radio program out of Nashville "
+            "grew, over subsequent decades, into country music's most "
+            "important institution, launching and cementing the careers of "
+            "nearly every major star in the genre.\n\n"
+            "Still broadcasting weekly nearly a century later, it remains the "
+            "longest-running radio program in United States history."
+        ),
+    },
+    {
+        "title": "Sun Studio Records Elvis's First Single",
+        "date": "Elvis Presley records 'That's All Right' at Sun Studio \u2014 July 5, 1954",
+        "search": "That's All Right Elvis Presley Sun Studio",
+        "description": (
+            "During a break between takes at a small Memphis studio, Elvis "
+            "Presley began fooling around with an up-tempo blues cover, and "
+            "producer Sam Phillips, hearing something entirely new through the "
+            "control room glass, told him to do it again from the top.\n\n"
+            "That recording, blending Black rhythm and blues with white "
+            "country music, is widely cited as one of the very first true "
+            "rock and roll records ever made."
+        ),
+    },
+    {
+        "title": "Dylan Goes Electric at Newport",
+        "date": "Bob Dylan plugs in at the Newport Folk Festival \u2014 July 25, 1965",
+        "search": "Bob Dylan Maggie's Farm Newport 1965",
+        "description": (
+            "Taking the stage with a full electric band rather than his usual "
+            "solo acoustic set, Bob Dylan was met with a chorus of boos from "
+            "folk purists who saw amplified rock as a betrayal of the folk "
+            "movement's values.\n\n"
+            "Whatever the crowd's reaction that night, the performance is now "
+            "seen as the moment folk and rock definitively merged, opening the "
+            "door for the singer-songwriter rock era that followed."
+        ),
+    },
+    {
+        "title": "Motown Tours Britain",
+        "date": "The Motortown Revue tours the UK \u2014 March 1965",
+        "search": "Motortown Revue UK tour 1965",
+        "description": (
+            "A package tour of Motown's biggest stars, including The "
+            "Supremes, Stevie Wonder and Martha and the Vandellas, introduced "
+            "British audiences directly to the Detroit sound many UK bands "
+            "had already been covering.\n\n"
+            "It helped cement Motown's international reach just as British "
+            "groups influenced by American soul were themselves crossing back "
+            "over to the US, in a genuine two-way musical exchange."
+        ),
+    },
+    {
+        "title": "American Bandstand Goes National",
+        "date": "American Bandstand's first national broadcast \u2014 August 5, 1957",
+        "search": "American Bandstand 1957",
+        "description": (
+            "Already a local Philadelphia show, American Bandstand's move to "
+            "national television gave teenagers across the country a shared, "
+            "weekday window into new music and dance trends for the first "
+            "time.\n\n"
+            "Host Dick Clark's clean-cut presentation helped make rock and "
+            "roll palatable to a wary adult audience, smoothing its path into "
+            "the American mainstream."
+        ),
+    },
+    {
+        "title": "The Altamont Free Concert Turns Violent",
+        "date": "Altamont Speedway Free Festival \u2014 December 6, 1969",
+        "search": "Rolling Stones Altamont 1969",
+        "description": (
+            "Billed as a West Coast answer to Woodstock, the free Rolling "
+            "Stones concert at Altamont Speedway used Hells Angels as informal "
+            "security, a decision that ended in violence, including the death "
+            "of an audience member during the Stones' set.\n\n"
+            "Coming just months after Woodstock's peace-and-love high, "
+            "Altamont is often cited by historians as the symbolic end of the "
+            "1960s counterculture era."
+        ),
+    },
+    {
+        "title": "CBGB Opens Its Doors",
+        "date": "CBGB opens in New York City \u2014 December 1973",
+        "search": "CBGB New York punk club",
+        "description": (
+            "Founded as a country, bluegrass and blues bar, CBGB instead became "
+            "the birthplace of American punk and new wave almost by accident, "
+            "hosting early residencies by Television, Patti Smith, Blondie and "
+            "the Ramones.\n\n"
+            "Its small, unglamorous stage and famously filthy bathroom became "
+            "part of punk's founding mythology, a far cry from the polished "
+            "arena rock it was reacting against."
+        ),
+    },
+    {
+        "title": "DJ Kool Herc's Back-to-School Jam",
+        "date": "Widely cited birth of hip-hop, the Bronx \u2014 August 11, 1973",
+        "search": "DJ Kool Herc hip hop birth",
+        "description": (
+            "At a back-to-school party in a Bronx apartment building rec room, "
+            "DJ Kool Herc extended the instrumental breakdown section of "
+            "funk records using two copies of the same record, giving "
+            "dancers a longer break to perform to.\n\n"
+            "That simple technique, isolating and looping the \"break\", is now "
+            "widely credited as the founding technical moment of hip-hop as a "
+            "genre and culture."
+        ),
+    },
+    {
+        "title": "The Fillmore East Opens",
+        "date": "The Fillmore East opens in New York City \u2014 March 8, 1968",
+        "search": "Fillmore East New York venue",
+        "description": (
+            "Promoter Bill Graham's East Coast venue became one of rock's most "
+            "important stages, hosting landmark live performances and "
+            "recordings by acts including The Allman Brothers Band, The Who "
+            "and Jimi Hendrix.\n\n"
+            "Its relatively short life, closing in 1971, only added to its "
+            "legendary status among musicians and fans who saw shows there "
+            "during its brief but hugely influential run."
+        ),
+    },
+    {
+        "title": "Switched-On Bach Popularises the Synthesizer",
+        "date": "Wendy Carlos releases 'Switched-On Bach' \u2014 October 1968",
+        "search": "Switched-On Bach Wendy Carlos",
+        "description": (
+            "Wendy Carlos painstakingly recorded Bach compositions entirely "
+            "on a Moog synthesizer, an instrument still considered a "
+            "laboratory curiosity at the time, note by note using primitive "
+            "monophonic technology.\n\n"
+            "The album became an unexpected commercial and critical hit, "
+            "convincing a generation of musicians that electronic synthesizers "
+            "belonged in serious, mainstream music rather than novelty records."
+        ),
+    },
+    {
+        "title": "The First Glastonbury Festival",
+        "date": "The first Glastonbury Festival is held \u2014 September 19, 1970",
+        "search": "Glastonbury Festival 1970",
+        "description": (
+            "Held the day after Jimi Hendrix's death and inspired partly by "
+            "the free festival movement, the first Glastonbury drew around "
+            "1,500 people who were given free milk from the farm's own cows "
+            "as part of the ticket price.\n\n"
+            "It has since grown into one of the largest and most famous music "
+            "festivals in the world, still held on the very same Somerset "
+            "farmland over half a century later."
+        ),
+    },
+    {
+        "title": "Elvis Presley Dies",
+        "date": "Elvis Presley dies at Graceland \u2014 August 16, 1977",
+        "search": "Elvis Presley Graceland",
+        "description": (
+            "News of Elvis Presley's death at his Graceland home spread fast "
+            "enough to draw an estimated 80,000 mourners to the mansion within "
+            "days, an outpouring of grief on a scale rarely seen for a "
+            "musician before.\n\n"
+            "His death is often cited as a turning point that pushed his "
+            "catalogue and legend into an entirely new, even larger cultural "
+            "orbit than he occupied during his own lifetime."
+        ),
+    },
+    {
+        "title": "John Lennon Is Killed",
+        "date": "John Lennon is shot outside the Dakota building, New York \u2014 December 8, 1980",
+        "search": "John Lennon Imagine",
+        "description": (
+            "John Lennon was shot by a man he had signed an autograph for just "
+            "hours earlier, outside the New York apartment building where he "
+            "lived, in one of music's most shocking and senseless losses.\n\n"
+            "Radio stations around the world interrupted programming to break "
+            "the news, and vigils were held from Central Park to Liverpool, "
+            "underscoring just how far his cultural reach extended."
+        ),
+    },
+    {
+        "title": "MTV's First VMAs and Madonna's Breakthrough",
+        "date": "The first MTV Video Music Awards \u2014 September 14, 1984",
+        "search": "Madonna Like a Virgin VMA 1984",
+        "description": (
+            "Madonna's rolling-on-the-floor performance of \u2018Like a "
+            "Virgin\u2019 at the very first VMAs, complete with a wedding dress "
+            "and a wardrobe mishap she recovered from mid-song, instantly "
+            "became one of the ceremony's most talked-about moments.\n\n"
+            "The award show itself quickly became an annual showcase for "
+            "career-defining, deliberately provocative live performances that "
+            "MTV built much of its identity around."
+        ),
+    },
+    {
+        "title": "Farm Aid's First Concert",
+        "date": "The first Farm Aid concert, Champaign, Illinois \u2014 September 22, 1985",
+        "search": "Farm Aid 1985 Willie Nelson",
+        "description": (
+            "Organised by Willie Nelson after a comment from Bob Dylan at that "
+            "year's Live Aid about struggling American farmers, Farm Aid "
+            "brought together country, rock and pop artists for a single "
+            "cause few benefit concerts had addressed before.\n\n"
+            "It has continued annually for decades since, becoming one of the "
+            "longest-running benefit concert series in music history."
+        ),
+    },
+    {
+        "title": "Licensed to Ill Tops the Charts",
+        "date": "The Beastie Boys' 'Licensed to Ill' hits number one \u2014 1987",
+        "search": "Licensed to Ill Beastie Boys",
+        "description": (
+            "The Beastie Boys' debut became the first rap album ever to reach "
+            "number one on the Billboard 200, a genuine milestone for a genre "
+            "still widely dismissed by much of the mainstream music industry.\n\n"
+            "Its enormous commercial success, helped along by MTV rotation, "
+            "proved hip-hop could sell albums at the same scale as rock and "
+            "pop, reshaping how labels invested in the genre afterward."
+        ),
+    },
+    {
+        "title": "Straight Outta Compton Redefines Rap",
+        "date": "N.W.A release 'Straight Outta Compton' \u2014 August 8, 1988",
+        "search": "Straight Outta Compton NWA",
+        "description": (
+            "N.W.A's blunt, confrontational accounts of life under police "
+            "harassment in South Central Los Angeles brought gangsta rap into "
+            "the mainstream, drawing both massive sales and an FBI warning "
+            "letter over the track \u2018F*** tha Police\u2019.\n\n"
+            "It reshaped the entire commercial landscape of hip-hop, proving "
+            "unapologetically political and regional street narratives could "
+            "sell on a national scale."
+        ),
+    },
+    {
+        "title": "The First Lollapalooza Tour",
+        "date": "The first Lollapalooza tour begins \u2014 July 18, 1991",
+        "search": "Lollapalooza 1991 Jane's Addiction",
+        "description": (
+            "Conceived by Jane's Addiction's Perry Farrell as a farewell tour "
+            "for his own band, Lollapalooza instead became a genre-blending "
+            "touring festival mixing alternative rock, hip-hop and industrial "
+            "acts on one bill, unusual for the era.\n\n"
+            "It helped bring alternative and underground music into the "
+            "mainstream just as grunge was about to break wide open the "
+            "following year."
+        ),
+    },
+    {
+        "title": "Kurt Cobain Dies",
+        "date": "Kurt Cobain's death is discovered \u2014 April 8, 1994",
+        "search": "Nirvana Smells Like Teen Spirit",
+        "description": (
+            "Kurt Cobain's death sent shockwaves through a grunge scene that "
+            "had, only a couple of years earlier, unexpectedly dethroned "
+            "mainstream pop and hair metal at the top of the charts with "
+            "Nirvana's \u2018Nevermind\u2019.\n\n"
+            "Vigils were held across the world, and his death is often "
+            "described as marking the symbolic end of grunge's commercial "
+            "dominance, even as the genre's influence continued for years."
+        ),
+    },
+    {
+        "title": "Selena's Death Shakes Latin Music",
+        "date": "Selena Quintanilla is killed \u2014 March 31, 1995",
+        "search": "Selena Quintanilla Dreaming of You",
+        "description": (
+            "Already a major star in Tejano and Latin music, Selena was shot "
+            "and killed by the president of her own fan club just as she was "
+            "preparing to cross over into the English-language mainstream.\n\n"
+            "Her posthumously released English album debuted at number one, "
+            "and her death remains one of the most significant losses in the "
+            "history of Latin American music."
+        ),
+    },
+    {
+        "title": "Tupac Shakur Is Killed",
+        "date": "Tupac Shakur dies after a Las Vegas shooting \u2014 September 13, 1996",
+        "search": "Tupac Shakur All Eyez on Me",
+        "description": (
+            "Shot days earlier following a Mike Tyson fight in Las Vegas, "
+            "Tupac Shakur's death came at the peak of a bitter East Coast-West "
+            "Coast rap rivalry, intensifying tensions across the industry.\n\n"
+            "His posthumous releases went on to sell tens of millions of "
+            "copies, and he remains one of the most influential and "
+            "extensively studied figures in hip-hop history."
+        ),
+    },
+    {
+        "title": "Believe Popularises Auto-Tune",
+        "date": "Cher releases 'Believe' \u2014 October 1998",
+        "search": "Believe Cher Auto-Tune",
+        "description": (
+            "Producers on Cher's \u2018Believe\u2019 used pitch-correction "
+            "software in a deliberately extreme, obvious way rather than "
+            "hiding it, creating the robotic vocal warble that became known "
+            "as the \"Cher effect\".\n\n"
+            "What started as a distinctive one-off production trick became, "
+            "within a decade, one of the most widely used vocal tools in "
+            "mainstream pop and hip-hop production."
+        ),
+    },
+    {
+        "title": "The First Coachella Festival",
+        "date": "The first Coachella Valley Music and Arts Festival \u2014 October 9\u201310, 1999",
+        "search": "Coachella 1999 first festival",
+        "description": (
+            "Held on a polo field in the California desert with headliners "
+            "including Beck and Rage Against the Machine, the first Coachella "
+            "actually lost money and nearly ended the festival before it had "
+            "properly begun.\n\n"
+            "Organisers persisted, and it eventually grew into one of the "
+            "most influential and widely imitated festival brands in the "
+            "world."
+        ),
+    },
+    {
+        "title": "Woodstock '99 Turns Chaotic",
+        "date": "Woodstock '99, Rome, New York \u2014 July 1999",
+        "search": "Woodstock 99",
+        "description": (
+            "Staged on a disused air base with inadequate water, sanitation "
+            "and security, the 1999 revival of Woodstock's name ended in "
+            "fires, vandalism and violence during Red Hot Chili Peppers' "
+            "closing set.\n\n"
+            "It became a widely cited cautionary case study in festival "
+            "planning, and a stark contrast to the peace-and-love reputation "
+            "the original Woodstock name still carried."
+        ),
+    },
+    {
+        "title": "The First Commercial CD Single",
+        "date": "Billy Joel's '52nd Street' becomes the first commercially released CD \u2014 1982",
+        "search": "Billy Joel 52nd Street CD",
+        "description": (
+            "Released alongside the first Sony CD players in Japan, Billy "
+            "Joel's \u2018 52nd Street\u2019 became the very first album "
+            "commercially available on compact disc, a format initially seen "
+            "as a luxury niche product.\n\n"
+            "Within little more than a decade, the CD had overtaken vinyl and "
+            "cassette entirely to become the industry's dominant physical "
+            "format for the following twenty years."
+        ),
+    },
+    {
+        "title": "The iTunes Store Launches",
+        "date": "Apple launches the iTunes Music Store \u2014 April 28, 2003",
+        "search": "iTunes Music Store 2003",
+        "description": (
+            "Offering songs for 99 cents each with major label backing, the "
+            "iTunes Store gave the industry its first legitimate, "
+            "widely-adopted answer to the piracy that services like Napster "
+            "had unleashed a few years earlier.\n\n"
+            "It sold its first million songs within under a week, and helped "
+            "cement the single, rather than the album, as the primary unit of "
+            "digital music purchasing for the decade that followed."
+        ),
+    },
+    {
+        "title": "Billboard Launches Its First R&B Chart",
+        "date": "Billboard's first Race Records/R&B chart \u2014 1949",
+        "search": "Billboard R&B chart history",
+        "description": (
+            "Renamed from the openly offensive \"Race Records\" chart it had "
+            "run since the 1940s, Billboard's Rhythm & Blues chart gave Black "
+            "artists a dedicated, tracked measure of commercial success "
+            "separate from the pop charts of the era.\n\n"
+            "The renaming itself reflected a broader, slow shift in how the "
+            "recording industry publicly categorised and marketed Black "
+            "musicians' work."
+        ),
+    },
+    {
+        "title": "The Monkees Are Assembled for Television",
+        "date": "The Monkees debut on NBC \u2014 September 12, 1966",
+        "search": "The Monkees I'm a Believer",
+        "description": (
+            "Created specifically for a television show rather than forming "
+            "organically, The Monkees were cast through open auditions as an "
+            "American answer to Beatlemania, initially playing music written "
+            "and performed largely by session musicians.\n\n"
+            "The band later fought for and won creative control over their own "
+            "recordings, becoming a genuinely significant early example of a "
+            "manufactured act pushing back against its own machine."
+        ),
+    },
+    {
+        "title": "The First Billboard 200 Albums Chart",
+        "date": "Billboard's first weekly albums chart is published \u2014 March 24, 1956",
+        "search": "Billboard 200 first albums chart",
+        "description": (
+            "Before 1956, Billboard tracked singles far more closely than "
+            "full albums, but the introduction of a dedicated weekly albums "
+            "chart reflected records increasingly being sold, and judged, as "
+            "complete artistic works.\n\n"
+            "Still published weekly today as the Billboard 200, it remains "
+            "the industry's primary measure of an album's commercial "
+            "performance in America."
         ),
     },
 ]
