@@ -2399,6 +2399,576 @@ progress_bar_rect = pygame.Rect(0, 0, 0, 0)
 media_bar_rect = pygame.Rect(0, 0, 0, 0)
 desktop_btn_rect = pygame.Rect(0, 0, 0, 0)
 phone_btn_rect = pygame.Rect(0, 0, 0, 0)
+theme_btn_rect = pygame.Rect(0, 0, 0, 0)
+language_btn_rect = pygame.Rect(0, 0, 0, 0)
+
+# --- PERSONALIZE / THEME SYSTEM ---
+current_theme = "classic"
+show_theme_page = False
+theme_option_rects = []   # [(pygame.Rect, theme_key), ...]
+theme_page_scroll_offset = 0.0
+target_theme_page_scroll = 0.0
+max_theme_page_scroll = 0
+
+# --- FONT SYSTEM (Personalize page also lets you pick the app-wide font) ---
+current_font_family = "classic"
+font_option_rects = []   # [(pygame.Rect, font_key), ...]
+FONTS = {
+    "classic":   {"label": "Classic",   "family": "Arial"},
+}
+
+# Cache for the small preview-only font objects used on the Personalize page,
+# so scrolling doesn't rebuild ~16 SysFont objects every single frame.
+_font_preview_cache = {}
+def get_preview_font(family, size, bold=False):
+    key = (family, size, bold)
+    cached = _font_preview_cache.get(key)
+    if cached is None:
+        cached = pygame.font.SysFont(family, size, bold=bold)
+        _font_preview_cache[key] = cached
+    return cached
+
+def apply_font(font_key):
+    """Rebuild every global font object with a new family, restyling all text
+    drawn throughout the app since every draw function reads these globals."""
+    global current_font_family, font_title, font_body, font_small, font_huge
+    font = FONTS.get(font_key, FONTS["classic"])
+    family = font["family"]
+    current_font_family = font_key
+    font_title = pygame.font.SysFont(family, 22, bold=True)
+    font_body  = pygame.font.SysFont(family, 16, bold=True)
+    font_small = pygame.font.SysFont(family, 14)
+    font_huge  = pygame.font.SysFont(family, 50, bold=True)
+
+# --- LANGUAGE SYSTEM (Settings tab) ---
+current_language = "English"
+show_language_page = False
+language_option_rects = []   # [(pygame.Rect, language_name), ...]
+LANGUAGES = ["English", "Spanish", "French", "German", "Italian", "Portuguese", "Polish"]
+
+# Translations for the app's core UI chrome — nav, settings, and the
+# Personalize/Language pages themselves. Keyed by the original English
+# string; t() falls back to that English string for anything not listed,
+# so the app never shows a blank label for an untranslated string.
+TRANSLATIONS = {
+    "Spanish": {
+        "Search": "Buscar", "Your Library": "Tu Biblioteca", "Settings": "Configuración",
+        "ALBUM": "ÁLBUM", "Cancel": "Cancelar", "Delete [x]": "Eliminar [x]", "Delete and Clear Music  [x] ": "Eliminar y Borrar Música  [x] ", "Refresh": "Actualizar", "+ Add Folder": "+ Añadir Carpeta", "Close": "Cerrar", "Manual": "Manual", "Artist": "Artista", "Save": "Guardar", "Clear": "Borrar", "Import": "Importar", "Name": "Nombre", "Description": "Descripción", "Go to 'Your Library' and tap '+' to create one.": "Ve a 'Tu Biblioteca' y toca '+' para crear una.", "Tap '+ Add Folder' to open the built-in storage browser.": "Toca '+ Añadir Carpeta' para abrir el explorador de almacenamiento.", "No local music loaded. Tap '+ Add Folder' above to explore your storage!": "No hay música local cargada. ¡Toca '+ Añadir Carpeta' arriba para explorar tu almacenamiento!", "Access Denied: Restricted system folder or permission missing.": "Acceso Denegado: Carpeta de sistema restringida o falta de permiso.",
+        "Desktop/Tablet": "Escritorio/Tableta", "Phone": "Teléfono", "Personalize": "Personalizar",
+        "Language": "Idioma", "Back": "Atrás", "Active": "Activo", "Tap to apply": "Toca para aplicar",
+        "Color Themes": "Temas de Color", "App Font": "Fuente de la App", "Grid": "Cuadrícula",
+        "Liked Songs": "Canciones Favoritas",
+        "Pick a color theme, then a font, for the whole app": "Elige un tema de color y luego una fuente para toda la app",
+        "Changes the font used everywhere in the app": "Cambia la fuente usada en toda la app",
+        "Choose your preferred language": "Elige tu idioma preferido",
+        "Add an optional description": "Añade una descripción opcional",
+        "Add to Playlist": "Añadir a Lista",
+        "Artist of the Day": "Artista del Día",
+        "CUSTOM PLAYLIST": "LISTA PERSONALIZADA",
+        "PUBLIC PLAYLIST": "LISTA PÚBLICA",
+        "Choose Cover Image": "Elegir Imagen de Portada",
+        "Create playlist": "Crear lista",
+        "Edit Song Lyrics": "Editar Letra de la Canción",
+        "History Maker": "Hito Histórico",
+        "Imported Music Directories": "Carpetas de Música Importadas",
+        "Loading art...": "Cargando portada...",
+        "Loading chart data...": "Cargando datos del ranking...",
+        "My Playlist #1": "Mi Lista #1",
+        "No custom playlists built yet.": "Aún no has creado ninguna lista personalizada.",
+        "Search Album Art  •  iTunes": "Buscar Portada  •  iTunes",
+        "Search Results": "Resultados de Búsqueda",
+        "Search Synced Lyrics": "Buscar Letra Sincronizada",
+        "Searching iTunes...": "Buscando en iTunes...",
+        "Searching...": "Buscando...",
+        "Song name": "Nombre de la canción",
+        "Song of the Day": "Canción del Día",
+        "Top 100": "Top 100",
+        "e.g. Blinding Lights": "ej. Blinding Lights",
+        "e.g. The Weeknd": "ej. The Weeknd",
+    },
+    "French": {
+        "Search": "Rechercher", "Your Library": "Ta Bibliothèque", "Settings": "Paramètres",
+        "ALBUM": "ALBUM", "Cancel": "Annuler", "Delete [x]": "Supprimer [x]", "Delete and Clear Music  [x] ": "Supprimer et Vider la Musique  [x] ", "Refresh": "Actualiser", "+ Add Folder": "+ Ajouter un Dossier", "Close": "Fermer", "Manual": "Manuel", "Artist": "Artiste", "Save": "Enregistrer", "Clear": "Effacer", "Import": "Importer", "Name": "Nom", "Description": "Description", "Go to 'Your Library' and tap '+' to create one.": "Va dans 'Ta Bibliothèque' et touche '+' pour en créer une.", "Tap '+ Add Folder' to open the built-in storage browser.": "Touche '+ Ajouter un Dossier' pour ouvrir l'explorateur de stockage.", "No local music loaded. Tap '+ Add Folder' above to explore your storage!": "Aucune musique locale chargée. Touche '+ Ajouter un Dossier' ci-dessus pour explorer ton stockage !", "Access Denied: Restricted system folder or permission missing.": "Accès Refusé : dossier système restreint ou permission manquante.",
+        "Desktop/Tablet": "Bureau/Tablette", "Phone": "Téléphone", "Personalize": "Personnaliser",
+        "Language": "Langue", "Back": "Retour", "Active": "Actif", "Tap to apply": "Toucher pour appliquer",
+        "Color Themes": "Thèmes de Couleur", "App Font": "Police de l'App", "Grid": "Grille",
+        "Liked Songs": "Titres Aimés",
+        "Pick a color theme, then a font, for the whole app": "Choisis un thème de couleur, puis une police, pour toute l'app",
+        "Changes the font used everywhere in the app": "Change la police utilisée partout dans l'app",
+        "Choose your preferred language": "Choisis ta langue préférée",
+        "Add an optional description": "Ajoute une description facultative",
+        "Add to Playlist": "Ajouter à la Playlist",
+        "Artist of the Day": "Artiste du Jour",
+        "CUSTOM PLAYLIST": "PLAYLIST PERSONNALISÉE",
+        "PUBLIC PLAYLIST": "PLAYLIST PUBLIQUE",
+        "Choose Cover Image": "Choisir une Image de Couverture",
+        "Create playlist": "Créer une playlist",
+        "Edit Song Lyrics": "Modifier les Paroles",
+        "History Maker": "Fait Marquant",
+        "Imported Music Directories": "Dossiers de Musique Importés",
+        "Loading art...": "Chargement de la pochette...",
+        "Loading chart data...": "Chargement du classement...",
+        "My Playlist #1": "Ma Playlist #1",
+        "No custom playlists built yet.": "Aucune playlist personnalisée pour l'instant.",
+        "Search Album Art  •  iTunes": "Rechercher une Pochette  •  iTunes",
+        "Search Results": "Résultats de Recherche",
+        "Search Synced Lyrics": "Rechercher des Paroles Synchronisées",
+        "Searching iTunes...": "Recherche sur iTunes...",
+        "Searching...": "Recherche...",
+        "Song name": "Titre de la chanson",
+        "Song of the Day": "Chanson du Jour",
+        "Top 100": "Top 100",
+        "e.g. Blinding Lights": "p. ex. Blinding Lights",
+        "e.g. The Weeknd": "p. ex. The Weeknd",
+    },
+    "German": {
+        "Search": "Suchen", "Your Library": "Deine Bibliothek", "Settings": "Einstellungen",
+        "ALBUM": "ALBUM", "Cancel": "Abbrechen", "Delete [x]": "Löschen [x]", "Delete and Clear Music  [x] ": "Löschen und Musik Leeren  [x] ", "Refresh": "Aktualisieren", "+ Add Folder": "+ Ordner hinzufügen", "Close": "Schließen", "Manual": "Manuell", "Artist": "Künstler", "Save": "Speichern", "Clear": "Leeren", "Import": "Importieren", "Name": "Name", "Description": "Beschreibung", "Go to 'Your Library' and tap '+' to create one.": "Gehe zu 'Deine Bibliothek' und tippe auf '+', um eine zu erstellen.", "Tap '+ Add Folder' to open the built-in storage browser.": "Tippe auf '+ Ordner hinzufügen', um den Speicher-Browser zu öffnen.", "No local music loaded. Tap '+ Add Folder' above to explore your storage!": "Keine lokale Musik geladen. Tippe oben auf '+ Ordner hinzufügen', um deinen Speicher zu durchsuchen!", "Access Denied: Restricted system folder or permission missing.": "Zugriff Verweigert: Eingeschränkter Systemordner oder fehlende Berechtigung.",
+        "Desktop/Tablet": "Desktop/Tablet", "Phone": "Telefon", "Personalize": "Anpassen",
+        "Language": "Sprache", "Back": "Zurück", "Active": "Aktiv", "Tap to apply": "Tippen zum Anwenden",
+        "Color Themes": "Farbthemen", "App Font": "App-Schriftart", "Grid": "Raster",
+        "Liked Songs": "Lieblingssongs",
+        "Pick a color theme, then a font, for the whole app": "Wähle ein Farbthema und dann eine Schriftart für die ganze App",
+        "Changes the font used everywhere in the app": "Ändert die überall in der App verwendete Schriftart",
+        "Choose your preferred language": "Wähle deine bevorzugte Sprache",
+        "Add an optional description": "Optionale Beschreibung hinzufügen",
+        "Add to Playlist": "Zur Playlist hinzufügen",
+        "Artist of the Day": "Künstler des Tages",
+        "CUSTOM PLAYLIST": "EIGENE PLAYLIST",
+        "PUBLIC PLAYLIST": "ÖFFENTLICHE PLAYLIST",
+        "Choose Cover Image": "Cover-Bild wählen",
+        "Create playlist": "Playlist erstellen",
+        "Edit Song Lyrics": "Songtext bearbeiten",
+        "History Maker": "Geschichtsmoment",
+        "Imported Music Directories": "Importierte Musikordner",
+        "Loading art...": "Cover wird geladen...",
+        "Loading chart data...": "Chart-Daten werden geladen...",
+        "My Playlist #1": "Meine Playlist #1",
+        "No custom playlists built yet.": "Noch keine eigenen Playlists erstellt.",
+        "Search Album Art  •  iTunes": "Cover suchen  •  iTunes",
+        "Search Results": "Suchergebnisse",
+        "Search Synced Lyrics": "Synchronisierte Lyrics suchen",
+        "Searching iTunes...": "Suche bei iTunes...",
+        "Searching...": "Suche...",
+        "Song name": "Songname",
+        "Song of the Day": "Song des Tages",
+        "Top 100": "Top 100",
+        "e.g. Blinding Lights": "z. B. Blinding Lights",
+        "e.g. The Weeknd": "z. B. The Weeknd",
+    },
+    "Italian": {
+        "Search": "Cerca", "Your Library": "La Tua Libreria", "Settings": "Impostazioni",
+        "ALBUM": "ALBUM", "Cancel": "Annulla", "Delete [x]": "Elimina [x]", "Delete and Clear Music  [x] ": "Elimina e Svuota Musica  [x] ", "Refresh": "Aggiorna", "+ Add Folder": "+ Aggiungi Cartella", "Close": "Chiudi", "Manual": "Manuale", "Artist": "Artista", "Save": "Salva", "Clear": "Cancella", "Import": "Importa", "Name": "Nome", "Description": "Descrizione", "Go to 'Your Library' and tap '+' to create one.": "Vai su 'La Tua Libreria' e tocca '+' per crearne una.", "Tap '+ Add Folder' to open the built-in storage browser.": "Tocca '+ Aggiungi Cartella' per aprire l'esploratore di archiviazione.", "No local music loaded. Tap '+ Add Folder' above to explore your storage!": "Nessuna musica locale caricata. Tocca '+ Aggiungi Cartella' sopra per esplorare la tua memoria!", "Access Denied: Restricted system folder or permission missing.": "Accesso Negato: cartella di sistema riservata o permesso mancante.",
+        "Desktop/Tablet": "Desktop/Tablet", "Phone": "Telefono", "Personalize": "Personalizza",
+        "Language": "Lingua", "Back": "Indietro", "Active": "Attivo", "Tap to apply": "Tocca per applicare",
+        "Color Themes": "Temi Colore", "App Font": "Font dell'App", "Grid": "Griglia",
+        "Liked Songs": "Brani Preferiti",
+        "Pick a color theme, then a font, for the whole app": "Scegli un tema colore, poi un font, per tutta l'app",
+        "Changes the font used everywhere in the app": "Cambia il font usato in tutta l'app",
+        "Choose your preferred language": "Scegli la tua lingua preferita",
+        "Add an optional description": "Aggiungi una descrizione facoltativa",
+        "Add to Playlist": "Aggiungi alla Playlist",
+        "Artist of the Day": "Artista del Giorno",
+        "CUSTOM PLAYLIST": "PLAYLIST PERSONALIZZATA",
+        "PUBLIC PLAYLIST": "PLAYLIST PUBBLICA",
+        "Choose Cover Image": "Scegli Immagine di Copertina",
+        "Create playlist": "Crea playlist",
+        "Edit Song Lyrics": "Modifica Testo della Canzone",
+        "History Maker": "Momento Storico",
+        "Imported Music Directories": "Cartelle Musicali Importate",
+        "Loading art...": "Caricamento copertina...",
+        "Loading chart data...": "Caricamento classifica...",
+        "My Playlist #1": "La Mia Playlist #1",
+        "No custom playlists built yet.": "Nessuna playlist personalizzata creata finora.",
+        "Search Album Art  •  iTunes": "Cerca Copertina  •  iTunes",
+        "Search Results": "Risultati di Ricerca",
+        "Search Synced Lyrics": "Cerca Testo Sincronizzato",
+        "Searching iTunes...": "Ricerca su iTunes...",
+        "Searching...": "Ricerca...",
+        "Song name": "Nome della canzone",
+        "Song of the Day": "Canzone del Giorno",
+        "Top 100": "Top 100",
+        "e.g. Blinding Lights": "es. Blinding Lights",
+        "e.g. The Weeknd": "es. The Weeknd",
+    },
+    "Portuguese": {
+        "Search": "Pesquisar", "Your Library": "Sua Biblioteca", "Settings": "Configurações",
+        "ALBUM": "ÁLBUM", "Cancel": "Cancelar", "Delete [x]": "Excluir [x]", "Delete and Clear Music  [x] ": "Excluir e Limpar Música  [x] ", "Refresh": "Atualizar", "+ Add Folder": "+ Adicionar Pasta", "Close": "Fechar", "Manual": "Manual", "Artist": "Artista", "Save": "Salvar", "Clear": "Limpar", "Import": "Importar", "Name": "Nome", "Description": "Descrição", "Go to 'Your Library' and tap '+' to create one.": "Vá em 'Sua Biblioteca' e toque em '+' para criar uma.", "Tap '+ Add Folder' to open the built-in storage browser.": "Toque em '+ Adicionar Pasta' para abrir o explorador de armazenamento.", "No local music loaded. Tap '+ Add Folder' above to explore your storage!": "Nenhuma música local carregada. Toque em '+ Adicionar Pasta' acima para explorar seu armazenamento!", "Access Denied: Restricted system folder or permission missing.": "Acesso Negado: pasta do sistema restrita ou permissão ausente.",
+        "Desktop/Tablet": "Desktop/Tablet", "Phone": "Telefone", "Personalize": "Personalizar",
+        "Language": "Idioma", "Back": "Voltar", "Active": "Ativo", "Tap to apply": "Toque para aplicar",
+        "Color Themes": "Temas de Cor", "App Font": "Fonte do App", "Grid": "Grade",
+        "Liked Songs": "Músicas Curtidas",
+        "Pick a color theme, then a font, for the whole app": "Escolha um tema de cor, depois uma fonte, para o app inteiro",
+        "Changes the font used everywhere in the app": "Muda a fonte usada em todo o app",
+        "Choose your preferred language": "Escolha seu idioma preferido",
+        "Add an optional description": "Adicione uma descrição opcional",
+        "Add to Playlist": "Adicionar à Playlist",
+        "Artist of the Day": "Artista do Dia",
+        "CUSTOM PLAYLIST": "PLAYLIST PERSONALIZADA",
+        "PUBLIC PLAYLIST": "PLAYLIST PÚBLICA",
+        "Choose Cover Image": "Escolher Imagem de Capa",
+        "Create playlist": "Criar playlist",
+        "Edit Song Lyrics": "Editar Letra da Música",
+        "History Maker": "Marco Histórico",
+        "Imported Music Directories": "Pastas de Música Importadas",
+        "Loading art...": "Carregando capa...",
+        "Loading chart data...": "Carregando dados do ranking...",
+        "My Playlist #1": "Minha Playlist #1",
+        "No custom playlists built yet.": "Nenhuma playlist personalizada criada ainda.",
+        "Search Album Art  •  iTunes": "Buscar Capa  •  iTunes",
+        "Search Results": "Resultados da Busca",
+        "Search Synced Lyrics": "Buscar Letra Sincronizada",
+        "Searching iTunes...": "Buscando no iTunes...",
+        "Searching...": "Buscando...",
+        "Song name": "Nome da música",
+        "Song of the Day": "Música do Dia",
+        "Top 100": "Top 100",
+        "e.g. Blinding Lights": "ex. Blinding Lights",
+        "e.g. The Weeknd": "ex. The Weeknd",
+    },
+    "Polish": {
+        "Search": "Szukaj", "Your Library": "Twoja Biblioteka", "Settings": "Ustawienia",
+        "ALBUM": "ALBUM", "Cancel": "Anuluj", "Delete [x]": "Usuń [x]", "Delete and Clear Music  [x] ": "Usuń i Wyczyść Muzykę  [x] ", "Refresh": "Odśwież", "+ Add Folder": "+ Dodaj Folder", "Close": "Zamknij", "Manual": "Ręcznie", "Artist": "Artysta", "Save": "Zapisz", "Clear": "Wyczyść", "Import": "Importuj", "Name": "Nazwa", "Description": "Opis", "Go to 'Your Library' and tap '+' to create one.": "Przejdź do 'Twojej Biblioteki' i dotknij '+', aby ją utworzyć.", "Tap '+ Add Folder' to open the built-in storage browser.": "Dotknij '+ Dodaj Folder', aby otworzyć przeglądarkę pamięci.", "No local music loaded. Tap '+ Add Folder' above to explore your storage!": "Nie wczytano lokalnej muzyki. Dotknij '+ Dodaj Folder' powyżej, aby przeszukać pamięć!", "Access Denied: Restricted system folder or permission missing.": "Odmowa Dostępu: folder systemowy jest zastrzeżony lub brak uprawnień.",
+        "Desktop/Tablet": "Komputer/Tablet", "Phone": "Telefon", "Personalize": "Personalizuj",
+        "Language": "Język", "Back": "Wstecz", "Active": "Aktywny", "Tap to apply": "Dotknij, aby zastosować",
+        "Color Themes": "Motywy Kolorystyczne", "App Font": "Czcionka Aplikacji", "Grid": "Siatka",
+        "Liked Songs": "Ulubione Utwory",
+        "Pick a color theme, then a font, for the whole app": "Wybierz motyw kolorystyczny, a potem czcionkę dla całej aplikacji",
+        "Changes the font used everywhere in the app": "Zmienia czcionkę używaną w całej aplikacji",
+        "Choose your preferred language": "Wybierz preferowany język",
+        "Add an optional description": "Dodaj opcjonalny opis",
+        "Add to Playlist": "Dodaj do Playlisty",
+        "Artist of the Day": "Artysta Dnia",
+        "CUSTOM PLAYLIST": "WŁASNA PLAYLISTA",
+        "PUBLIC PLAYLIST": "PUBLICZNA PLAYLISTA",
+        "Choose Cover Image": "Wybierz Okładkę",
+        "Create playlist": "Utwórz playlistę",
+        "Edit Song Lyrics": "Edytuj Tekst Piosenki",
+        "History Maker": "Moment Historyczny",
+        "Imported Music Directories": "Zaimportowane Foldery Muzyczne",
+        "Loading art...": "Wczytywanie okładki...",
+        "Loading chart data...": "Wczytywanie listy przebojów...",
+        "My Playlist #1": "Moja Playlista #1",
+        "No custom playlists built yet.": "Nie utworzono jeszcze żadnej własnej playlisty.",
+        "Search Album Art  •  iTunes": "Szukaj Okładki  •  iTunes",
+        "Search Results": "Wyniki Wyszukiwania",
+        "Search Synced Lyrics": "Szukaj Zsynchronizowanego Tekstu",
+        "Searching iTunes...": "Wyszukiwanie w iTunes...",
+        "Searching...": "Wyszukiwanie...",
+        "Song name": "Nazwa utworu",
+        "Song of the Day": "Piosenka Dnia",
+        "Top 100": "Top 100",
+        "e.g. Blinding Lights": "np. Blinding Lights",
+        "e.g. The Weeknd": "np. The Weeknd",
+    },
+}
+
+def t(text):
+    """Translate a UI string into the currently-selected language, falling
+    back to the original English text if no translation is defined."""
+    return TRANSLATIONS.get(current_language, {}).get(text, text)
+
+def apply_language(language_name):
+    global current_language
+    if language_name in LANGUAGES:
+        current_language = language_name
+
+# Each theme defines a full color set for the whole app. "classic" is the
+# original SpotM-Fi black/green look. The others recolor everything — some
+# flat, some ("gradient") sweep through multiple hues for the app background.
+THEMES = {
+    "classic": {
+        "label": "Classic SpotM-Fi",
+        "COLOR_BLACK":          (24, 24, 24),
+        "COLOR_DARK_GREY":      (18, 18, 18),
+        "COLOR_LIGHT_GREY":     (40, 40, 40),
+        "COLOR_SPOTIFY_GREEN":  (30, 215, 96),
+        "COLOR_WHITE":          (255, 255, 255),
+        "COLOR_TEXT_MUTED":     (179, 179, 179),
+        "COLOR_HOVER":          (50, 50, 50),
+        "COLOR_CARD_BG":        (30, 30, 30),
+        "COLOR_RED":            (230, 50, 50),
+        "gradient":             None,
+    },
+    "midnight": {
+        "label": "Midnight Blue",
+        "COLOR_BLACK":          (14, 18, 28),
+        "COLOR_DARK_GREY":      (10, 14, 22),
+        "COLOR_LIGHT_GREY":     (30, 38, 54),
+        "COLOR_SPOTIFY_GREEN":  (64, 156, 255),
+        "COLOR_WHITE":          (235, 240, 250),
+        "COLOR_TEXT_MUTED":     (150, 165, 190),
+        "COLOR_HOVER":          (40, 50, 70),
+        "COLOR_CARD_BG":        (22, 28, 42),
+        "COLOR_RED":            (230, 70, 90),
+        "gradient":             None,
+    },
+    "sunset": {
+        "label": "Sunset Orange",
+        "COLOR_BLACK":          (28, 18, 16),
+        "COLOR_DARK_GREY":      (22, 14, 12),
+        "COLOR_LIGHT_GREY":     (54, 34, 26),
+        "COLOR_SPOTIFY_GREEN":  (255, 140, 66),
+        "COLOR_WHITE":          (255, 245, 235),
+        "COLOR_TEXT_MUTED":     (200, 165, 145),
+        "COLOR_HOVER":          (70, 44, 32),
+        "COLOR_CARD_BG":        (40, 26, 20),
+        "COLOR_RED":            (235, 70, 60),
+        "gradient":             None,
+    },
+    "rainbow": {
+        "label": "Rainbow Pop",
+        "COLOR_BLACK":          (26, 20, 30),
+        "COLOR_DARK_GREY":      (20, 15, 24),
+        "COLOR_LIGHT_GREY":     (48, 36, 52),
+        "COLOR_SPOTIFY_GREEN":  (255, 209, 0),
+        "COLOR_WHITE":          (255, 255, 255),
+        "COLOR_TEXT_MUTED":     (210, 195, 215),
+        "COLOR_HOVER":          (66, 46, 70),
+        "COLOR_CARD_BG":        (36, 26, 40),
+        "COLOR_RED":            (255, 60, 90),
+        "gradient": [
+            (60, 15, 20), (90, 40, 15), (85, 75, 15),
+            (25, 70, 40), (15, 45, 80), (45, 20, 75), (60, 15, 20),
+        ],
+    },
+    "neon": {
+        "label": "Neon Cyberpunk",
+        "COLOR_BLACK":          (10, 8, 18),
+        "COLOR_DARK_GREY":      (8, 6, 14),
+        "COLOR_LIGHT_GREY":     (28, 16, 42),
+        "COLOR_SPOTIFY_GREEN":  (0, 255, 225),
+        "COLOR_WHITE":          (240, 240, 255),
+        "COLOR_TEXT_MUTED":     (170, 150, 210),
+        "COLOR_HOVER":          (45, 15, 60),
+        "COLOR_CARD_BG":        (18, 10, 30),
+        "COLOR_RED":            (255, 45, 120),
+        "gradient": [
+            (10, 6, 24), (45, 8, 60), (60, 8, 40), (10, 30, 55), (10, 6, 24),
+        ],
+    },
+    "pastel": {
+        "label": "Pastel Dream",
+        "COLOR_BLACK":          (32, 26, 34),
+        "COLOR_DARK_GREY":      (26, 21, 28),
+        "COLOR_LIGHT_GREY":     (54, 44, 56),
+        "COLOR_SPOTIFY_GREEN":  (170, 230, 200),
+        "COLOR_WHITE":          (255, 250, 250),
+        "COLOR_TEXT_MUTED":     (215, 195, 210),
+        "COLOR_HOVER":          (66, 52, 64),
+        "COLOR_CARD_BG":        (42, 34, 44),
+        "COLOR_RED":            (255, 150, 165),
+        "gradient": [
+            (60, 40, 50), (58, 46, 62), (44, 52, 60), (48, 58, 48), (60, 40, 50),
+        ],
+    },
+    "galaxy": {
+        "label": "Galaxy",
+        "COLOR_BLACK":          (10, 8, 20),
+        "COLOR_DARK_GREY":      (7, 6, 15),
+        "COLOR_LIGHT_GREY":     (28, 20, 48),
+        "COLOR_SPOTIFY_GREEN":  (200, 120, 255),
+        "COLOR_WHITE":          (235, 232, 250),
+        "COLOR_TEXT_MUTED":     (160, 150, 200),
+        "COLOR_HOVER":          (42, 24, 66),
+        "COLOR_CARD_BG":        (16, 12, 28),
+        "COLOR_RED":            (255, 90, 150),
+        "gradient": [
+            (6, 5, 16), (18, 10, 38), (45, 15, 55), (20, 15, 50), (6, 5, 16),
+        ],
+    },
+    "vaporwave": {
+        "label": "Vaporwave",
+        "COLOR_BLACK":          (24, 12, 30),
+        "COLOR_DARK_GREY":      (18, 9, 24),
+        "COLOR_LIGHT_GREY":     (46, 22, 54),
+        "COLOR_SPOTIFY_GREEN":  (255, 113, 206),
+        "COLOR_WHITE":          (245, 240, 255),
+        "COLOR_TEXT_MUTED":     (200, 170, 210),
+        "COLOR_HOVER":          (58, 26, 66),
+        "COLOR_CARD_BG":        (32, 15, 40),
+        "COLOR_RED":            (255, 80, 130),
+        "gradient": [
+            (45, 10, 45), (60, 15, 60), (20, 40, 60), (10, 55, 60), (45, 10, 45),
+        ],
+    },
+    "tropical": {
+        "label": "Tropical Punch",
+        "COLOR_BLACK":          (8, 24, 22),
+        "COLOR_DARK_GREY":      (6, 18, 17),
+        "COLOR_LIGHT_GREY":     (16, 46, 40),
+        "COLOR_SPOTIFY_GREEN":  (255, 209, 70),
+        "COLOR_WHITE":          (250, 255, 245),
+        "COLOR_TEXT_MUTED":     (170, 210, 190),
+        "COLOR_HOVER":          (20, 60, 52),
+        "COLOR_CARD_BG":        (12, 36, 32),
+        "COLOR_RED":            (255, 90, 95),
+        "gradient": [
+            (5, 45, 55), (10, 90, 90), (30, 130, 90), (255, 160, 60), (255, 90, 95),
+        ],
+    },
+    "candy": {
+        "label": "Candy Shop",
+        "COLOR_BLACK":          (26, 14, 24),
+        "COLOR_DARK_GREY":      (20, 10, 18),
+        "COLOR_LIGHT_GREY":     (52, 26, 46),
+        "COLOR_SPOTIFY_GREEN":  (0, 220, 200),
+        "COLOR_WHITE":          (255, 245, 250),
+        "COLOR_TEXT_MUTED":     (215, 175, 205),
+        "COLOR_HOVER":          (68, 30, 58),
+        "COLOR_CARD_BG":        (38, 18, 34),
+        "COLOR_RED":            (255, 70, 140),
+        "gradient": [
+            (255, 105, 180), (255, 170, 60), (255, 235, 90), (100, 220, 190), (140, 110, 255), (255, 105, 180),
+        ],
+    },
+    "firestorm": {
+        "label": "Firestorm",
+        "COLOR_BLACK":          (20, 8, 8),
+        "COLOR_DARK_GREY":      (16, 6, 6),
+        "COLOR_LIGHT_GREY":     (48, 20, 16),
+        "COLOR_SPOTIFY_GREEN":  (255, 200, 40),
+        "COLOR_WHITE":          (255, 245, 235),
+        "COLOR_TEXT_MUTED":     (215, 165, 140),
+        "COLOR_HOVER":          (62, 24, 16),
+        "COLOR_CARD_BG":        (34, 14, 12),
+        "COLOR_RED":            (255, 60, 40),
+        "gradient": [
+            (20, 6, 6), (90, 15, 10), (200, 60, 10), (255, 140, 20), (255, 210, 50),
+        ],
+    },
+    "arctic": {
+        "label": "Arctic Aurora",
+        "COLOR_BLACK":          (8, 14, 20),
+        "COLOR_DARK_GREY":      (6, 11, 16),
+        "COLOR_LIGHT_GREY":     (20, 36, 44),
+        "COLOR_SPOTIFY_GREEN":  (110, 255, 200),
+        "COLOR_WHITE":          (235, 250, 255),
+        "COLOR_TEXT_MUTED":     (150, 190, 200),
+        "COLOR_HOVER":          (24, 48, 56),
+        "COLOR_CARD_BG":        (14, 26, 32),
+        "COLOR_RED":            (255, 100, 150),
+        "gradient": [
+            (6, 10, 25), (10, 40, 55), (30, 110, 110), (110, 220, 190), (150, 110, 220), (6, 10, 25),
+        ],
+    },
+    "carnival": {
+        "label": "Carnival",
+        "COLOR_BLACK":          (30, 10, 26),
+        "COLOR_DARK_GREY":      (24, 8, 20),
+        "COLOR_LIGHT_GREY":     (58, 20, 46),
+        "COLOR_SPOTIFY_GREEN":  (255, 225, 0),
+        "COLOR_WHITE":          (255, 250, 240),
+        "COLOR_TEXT_MUTED":     (225, 185, 150),
+        "COLOR_HOVER":          (72, 26, 54),
+        "COLOR_CARD_BG":        (40, 14, 32),
+        "COLOR_RED":            (255, 45, 85),
+        "gradient": [
+            (255, 45, 85), (255, 150, 0), (255, 225, 0), (0, 200, 140), (0, 140, 255), (170, 50, 220), (255, 45, 85),
+        ],
+    },
+    "bubblegum": {
+        "label": "Bubblegum",
+        "COLOR_BLACK":          (28, 12, 30),
+        "COLOR_DARK_GREY":      (22, 9, 24),
+        "COLOR_LIGHT_GREY":     (56, 24, 58),
+        "COLOR_SPOTIFY_GREEN":  (120, 235, 255),
+        "COLOR_WHITE":          (255, 245, 252),
+        "COLOR_TEXT_MUTED":     (220, 180, 220),
+        "COLOR_HOVER":          (72, 30, 72),
+        "COLOR_CARD_BG":        (40, 16, 42),
+        "COLOR_RED":            (255, 90, 170),
+        "gradient": [
+            (255, 150, 210), (255, 200, 230), (200, 170, 255), (150, 220, 255), (255, 150, 210),
+        ],
+    },
+    "citrus": {
+        "label": "Citrus Splash",
+        "COLOR_BLACK":          (24, 20, 6),
+        "COLOR_DARK_GREY":      (18, 15, 5),
+        "COLOR_LIGHT_GREY":     (52, 42, 12),
+        "COLOR_SPOTIFY_GREEN":  (170, 230, 30),
+        "COLOR_WHITE":          (255, 252, 235),
+        "COLOR_TEXT_MUTED":     (215, 195, 130),
+        "COLOR_HOVER":          (66, 52, 14),
+        "COLOR_CARD_BG":        (36, 28, 8),
+        "COLOR_RED":            (255, 70, 40),
+        "gradient": [
+            (255, 235, 40), (255, 170, 20), (255, 90, 20), (170, 230, 30), (255, 235, 40),
+        ],
+    },
+    "cosmic_candy": {
+        "label": "Cosmic Candy",
+        "COLOR_BLACK":          (10, 6, 22),
+        "COLOR_DARK_GREY":      (8, 5, 17),
+        "COLOR_LIGHT_GREY":     (32, 18, 52),
+        "COLOR_SPOTIFY_GREEN":  (0, 255, 190),
+        "COLOR_WHITE":          (245, 240, 255),
+        "COLOR_TEXT_MUTED":     (190, 170, 220),
+        "COLOR_HOVER":          (46, 22, 66),
+        "COLOR_CARD_BG":        (22, 12, 38),
+        "COLOR_RED":            (255, 60, 130),
+        "gradient": [
+            (10, 6, 22), (90, 20, 130), (220, 40, 160), (255, 130, 60), (0, 220, 190), (10, 6, 22),
+        ],
+    },
+    "disco": {
+        "label": "Disco Fever",
+        "COLOR_BLACK":          (16, 12, 8),
+        "COLOR_DARK_GREY":      (12, 9, 6),
+        "COLOR_LIGHT_GREY":     (48, 34, 14),
+        "COLOR_SPOTIFY_GREEN":  (255, 190, 0),
+        "COLOR_WHITE":          (255, 250, 235),
+        "COLOR_TEXT_MUTED":     (215, 190, 140),
+        "COLOR_HOVER":          (60, 40, 12),
+        "COLOR_CARD_BG":        (32, 22, 10),
+        "COLOR_RED":            (255, 50, 50),
+        "gradient": [
+            (255, 50, 50), (255, 150, 0), (255, 220, 0), (60, 220, 90), (0, 180, 255), (170, 60, 255), (255, 50, 50),
+        ],
+    },
+}
+
+def draw_multicolor_gradient(surface, rect, colors):
+    """Paint a smooth multi-stop vertical gradient into rect (a pygame.Rect-like
+    tuple) using the given list of colors as sequential stops."""
+    x, y, w, h = rect
+    if not colors:
+        return
+    if len(colors) == 1:
+        pygame.draw.rect(surface, colors[0], (x, y, w, h))
+        return
+    segments = len(colors) - 1
+    seg_h = h / segments
+    for i in range(segments):
+        c1, c2 = colors[i], colors[i + 1]
+        seg_top = int(y + i * seg_h)
+        seg_bottom = int(y + (i + 1) * seg_h)
+        seg_height = max(1, seg_bottom - seg_top)
+        for row in range(seg_height):
+            t = row / seg_height
+            r = int(c1[0] + (c2[0] - c1[0]) * t)
+            g = int(c1[1] + (c2[1] - c1[1]) * t)
+            b = int(c1[2] + (c2[2] - c1[2]) * t)
+            pygame.draw.line(surface, (r, g, b), (x, seg_top + row), (x + w, seg_top + row))
+
+def apply_theme(theme_key):
+    """Recolor the entire app by reassigning the global color constants used
+    throughout every draw function."""
+    global current_theme
+    global COLOR_BLACK, COLOR_DARK_GREY, COLOR_LIGHT_GREY, COLOR_SPOTIFY_GREEN
+    global COLOR_WHITE, COLOR_TEXT_MUTED, COLOR_HOVER, COLOR_CARD_BG, COLOR_RED
+    theme = THEMES.get(theme_key, THEMES["classic"])
+    current_theme = theme_key
+    COLOR_BLACK          = theme["COLOR_BLACK"]
+    COLOR_DARK_GREY      = theme["COLOR_DARK_GREY"]
+    COLOR_LIGHT_GREY     = theme["COLOR_LIGHT_GREY"]
+    COLOR_SPOTIFY_GREEN  = theme["COLOR_SPOTIFY_GREEN"]
+    COLOR_WHITE          = theme["COLOR_WHITE"]
+    COLOR_TEXT_MUTED     = theme["COLOR_TEXT_MUTED"]
+    COLOR_HOVER          = theme["COLOR_HOVER"]
+    COLOR_CARD_BG        = theme["COLOR_CARD_BG"]
+    COLOR_RED            = theme["COLOR_RED"]
 
 modal_close_rect = pygame.Rect(0, 0, 0, 0)
 modal_save_rect = pygame.Rect(0, 0, 0, 0)
@@ -2932,6 +3502,9 @@ def save_app_data():
         "green_toggled_tracks": list(green_toggled_tracks),
         "layout_mode": layout_mode,
         "grid_cols_override": grid_cols_override,
+        "current_theme": current_theme,
+        "current_font_family": current_font_family,
+        "current_language": current_language,
         "track_covers": {p: {"image_path": v.get("image_path")} for p, v in track_covers.items()},
         "listen_stats": listen_stats,
     }
@@ -2966,6 +3539,9 @@ def load_app_data():
         liked_tracks = data.get("liked_tracks", [])
         layout_mode = data.get("layout_mode", detect_device_layout_mode())
         grid_cols_override = data.get("grid_cols_override", None)
+        apply_theme(data.get("current_theme", "classic"))
+        apply_font(data.get("current_font_family", "classic"))
+        apply_language(data.get("current_language", "English"))
         
         lsc = data.get("liked_songs_custom_cover", {})
         liked_songs_custom_cover["image_path"] = lsc.get("image_path")
@@ -3181,7 +3757,7 @@ def update_browser_contents():
                     continue
             browser_items.append({"name": item, "is_dir": is_dir, "path": full_path})
     except Exception:
-        search_message = "Access Denied: Restricted system folder or permission missing."
+        search_message = t("Access Denied: Restricted system folder or permission missing.")
 
 def extract_embedded_cover(track_path):
     """Attempts to read embedded album art from a music file's metadata (ID3 APIC for MP3,
@@ -3282,7 +3858,7 @@ def rebuild_imported_tracks():
     if saved_directories:
         search_message = f"Scanned folders! Found {new_songs_found} media files in layout index."
     else:
-        search_message = "Tap '+ Add Folder' to open the built-in storage browser."
+        search_message = t("Tap '+ Add Folder' to open the built-in storage browser.")
 
 def scan_confirmed_directory(target_dir):
     global saved_directories, music_grid_scroll_offset, target_music_scroll, is_browsing_storage, is_browsing_for_cover, selected_custom_playlist_name
@@ -3436,7 +4012,7 @@ def draw_unified_cover_overlay(surface, rect, mouse_pos):
         overlay_surf = pygame.Surface((rect.width, overlay_height), pygame.SRCALPHA)
         overlay_surf.fill((0, 0, 0, 180))
         
-        hint_surf = font_small.render("Choose Cover Image", True, COLOR_WHITE)
+        hint_surf = font_small.render(t("Choose Cover Image"), True, COLOR_WHITE)
         tx = (rect.width - hint_surf.get_width()) // 2
         ty = (overlay_height - hint_surf.get_height()) // 2
         overlay_surf.blit(hint_surf, (tx, ty))
@@ -3469,13 +4045,13 @@ def draw_sidebar():
             if is_clicked:
                 pygame.draw.rect(virtual_surface, (60, 60, 60), item_rect, border_radius=5)
                 text_color = COLOR_SPOTIFY_GREEN
-            elif is_hovered or (current_page == item and not is_browsing_storage and not viewing_liked_playlist and not viewing_settings_page and not selected_custom_playlist_name and not show_create_playlist_modal and not show_add_to_playlist_modal and not show_lyrics_editor_view):
+            elif is_hovered or (current_page == item and not is_browsing_storage and not viewing_liked_playlist and not viewing_settings_page and not selected_custom_playlist_name and not show_create_playlist_modal and not show_add_to_playlist_modal):
                 pygame.draw.rect(virtual_surface, COLOR_HOVER, item_rect, border_radius=5)
                 text_color = COLOR_WHITE
             else:
                 text_color = COLOR_TEXT_MUTED
                 
-            text_surf = font_body.render(item, True, text_color)
+            text_surf = font_body.render(t(item), True, text_color)
             virtual_surface.blit(text_surf, (25, y_offset))
             y_offset += 40
     else:
@@ -3496,7 +4072,7 @@ def draw_sidebar():
             
             if is_clicked:
                 text_color = COLOR_SPOTIFY_GREEN
-            elif is_hovered or (current_page == item and not is_browsing_storage and not viewing_liked_playlist and not viewing_settings_page and not selected_custom_playlist_name and not show_create_playlist_modal and not show_add_to_playlist_modal and not show_lyrics_editor_view):
+            elif is_hovered or (current_page == item and not is_browsing_storage and not viewing_liked_playlist and not viewing_settings_page and not selected_custom_playlist_name and not show_create_playlist_modal and not show_add_to_playlist_modal):
                 text_color = COLOR_WHITE
             else:
                 text_color = COLOR_TEXT_MUTED
@@ -3512,13 +4088,13 @@ def draw_sidebar():
             elif item == "Settings":
                 draw_solid_cog_wheel(virtual_surface, cx-(15 if _is_phone_tabs else 12), cy-(15 if _is_phone_tabs else 12), icon_size, icon_size, text_color)
                 
-            text_surf = font_small.render(item, True, text_color)
+            text_surf = font_small.render(t(item), True, text_color)
             tx = item_rect.x + (item_rect.width - text_surf.get_width()) // 2
             ty = item_rect.y + (48 if _is_phone_tabs else 40)
             virtual_surface.blit(text_surf, (tx, ty))
 
 def draw_main_content():
-    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, browser_extra_search_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction, desktop_btn_rect, phone_btn_rect, search_box_rect, top100_btn_rect, song_of_day_btn_rect, artist_of_day_btn_rect, history_maker_btn_rect, subpage_back_rect, max_btn_row_scroll, btn_row_rect, user_scrolled_btn_row, btn_row_scroll_offset, target_btn_row_scroll, grid_toggle_btn_rect, grid_cols_override
+    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, browser_extra_search_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction, desktop_btn_rect, phone_btn_rect, search_box_rect, top100_btn_rect, song_of_day_btn_rect, artist_of_day_btn_rect, history_maker_btn_rect, subpage_back_rect, max_btn_row_scroll, btn_row_rect, user_scrolled_btn_row, btn_row_scroll_offset, target_btn_row_scroll, grid_toggle_btn_rect, grid_cols_override, theme_btn_rect, language_btn_rect
     track_rects = []
     browser_rects = []
     settings_dir_rects = []
@@ -3567,7 +4143,7 @@ def draw_main_content():
                 
         draw_unified_cover_overlay(virtual_surface, playlist_cover_rect, mouse_pos)
         
-        type_lbl = font_small.render("CUSTOM PLAYLIST" if is_custom else "PUBLIC PLAYLIST", True, COLOR_WHITE)
+        type_lbl = font_small.render(t("CUSTOM PLAYLIST") if is_custom else t("PUBLIC PLAYLIST"), True, COLOR_WHITE)
         playlist_title = font_huge.render(p_title_text, True, COLOR_WHITE)
         
         virtual_surface.blit(type_lbl, (content_pad_x + 160, 45))
@@ -3645,7 +4221,7 @@ def draw_main_content():
         virtual_surface.blit(hash_lbl, (content_pad_x + 10, 285))
         
         if not is_portrait:
-            album_lbl = font_small.render("ALBUM", True, COLOR_TEXT_MUTED)
+            album_lbl = font_small.render(t("ALBUM"), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(album_lbl, (content_pad_x + 390, 285))
             
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 305), (main_x + main_w - 40, 305), 1)
@@ -3719,7 +4295,7 @@ def draw_main_content():
         bes_color = (20, 150, 65) if bes_clicked else (COLOR_HOVER if bes_hovered else COLOR_LIGHT_GREY)
         if is_browsing_for_cover and browsing_cover_target not in ("lyrics_import",):
             pygame.draw.rect(virtual_surface, bes_color, browser_extra_search_btn_rect, border_radius=15)
-            bes_lbl = font_small.render("Search", True, COLOR_WHITE)
+            bes_lbl = font_small.render(t("Search"), True, COLOR_WHITE)
             bes_lbl_x = browser_extra_search_btn_rect.x + (browser_extra_search_btn_rect.width - bes_lbl.get_width()) // 2
             virtual_surface.blit(bes_lbl, (bes_lbl_x, 44))
         
@@ -3743,7 +4319,7 @@ def draw_main_content():
         else:
             cc_color = COLOR_HOVER if cc_hovered else COLOR_LIGHT_GREY
         pygame.draw.rect(virtual_surface, cc_color, cancel_browser_btn_rect, border_radius=15)
-        cc_lbl = font_small.render("Cancel", True, COLOR_WHITE)
+        cc_lbl = font_small.render(t("Cancel"), True, COLOR_WHITE)
         virtual_surface.blit(cc_lbl, (cancel_browser_btn_rect.x + 20, 44))
         
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
@@ -3783,7 +4359,7 @@ def draw_main_content():
 
     # --- DEDICATED SETTINGS PAGE VIEW ---
     elif viewing_settings_page and current_page == "Search":
-        settings_title = font_title.render("Imported Music Directories", True, COLOR_WHITE)
+        settings_title = font_title.render(t("Imported Music Directories"), True, COLOR_WHITE)
         virtual_surface.blit(settings_title, (content_pad_x, 40))
         
         if not is_portrait:
@@ -3798,7 +4374,7 @@ def draw_main_content():
         else:
             cs_color = COLOR_HOVER if cs_hovered else COLOR_LIGHT_GREY
         pygame.draw.rect(virtual_surface, cs_color, close_settings_btn_rect, border_radius=15)
-        cs_lbl = font_small.render("Back", True, COLOR_WHITE)
+        cs_lbl = font_small.render(t("Back"), True, COLOR_WHITE)
         virtual_surface.blit(cs_lbl, (close_settings_btn_rect.x + 26, 44))
         
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
@@ -3820,7 +4396,7 @@ def draw_main_content():
                 pygame.draw.rect(virtual_surface, row_bg, row_item_rect, border_radius=6)
                 
                 lbl_path = font_body.render(f"  [FOLDER]  {d_path}", True, COLOR_WHITE)
-                lbl_del = font_body.render("Delete [x]" if is_portrait else "Delete and Clear Music  [x] ", True, COLOR_WHITE if is_row_h else COLOR_TEXT_MUTED)
+                lbl_del = font_body.render(t("Delete [x]") if is_portrait else t("Delete and Clear Music  [x] "), True, COLOR_WHITE if is_row_h else COLOR_TEXT_MUTED)
                 
                 virtual_surface.blit(lbl_path, (main_x + 35, y_offset + 6))
                 virtual_surface.blit(lbl_del, (main_x + main_w - (120 if is_portrait else 250), y_offset + 6))
@@ -3832,14 +4408,14 @@ def draw_main_content():
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
 
         # --- Header ---
-        page_title = font_title.render("Top 100", True, COLOR_WHITE)
+        page_title = font_title.render(t("Top 100"), True, COLOR_WHITE)
         virtual_surface.blit(page_title, (content_pad_x, 40))
         subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
         sb_hov = subpage_back_rect.collidepoint(mouse_pos)
         sb_clk = sb_hov and mouse_held
         sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
-        sb_lbl = font_small.render("Back", True, COLOR_WHITE)
+        sb_lbl = font_small.render(t("Back"), True, COLOR_WHITE)
         virtual_surface.blit(sb_lbl, (subpage_back_rect.x + 26, 44))
 
         # Refresh button
@@ -3848,7 +4424,7 @@ def draw_main_content():
         rf_clk = rf_hov and mouse_held
         rf_color = COLOR_SPOTIFY_GREEN if rf_clk else (COLOR_HOVER if rf_hov else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, rf_color, refresh_rect, border_radius=15)
-        rf_lbl = font_small.render("Refresh", True, COLOR_WHITE)
+        rf_lbl = font_small.render(t("Refresh"), True, COLOR_WHITE)
         virtual_surface.blit(rf_lbl, (refresh_rect.x + (refresh_rect.width - rf_lbl.get_width()) // 2, 44))
 
         # Freshness label
@@ -3866,7 +4442,7 @@ def draw_main_content():
         body_rect = pygame.Rect(main_x, body_top, main_w, body_h)
 
         if top100_loading:
-            wait = font_body.render("Loading chart data...", True, COLOR_TEXT_MUTED)
+            wait = font_body.render(t("Loading chart data..."), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(wait, (content_pad_x, body_top + 30))
         elif top100_error and not top100_tracks:
             for ei, el in enumerate(top100_error.split("\n")):
@@ -3997,14 +4573,14 @@ def draw_main_content():
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
 
         # Header
-        page_title = font_title.render("Song of the Day", True, COLOR_WHITE)
+        page_title = font_title.render(t("Song of the Day"), True, COLOR_WHITE)
         virtual_surface.blit(page_title, (content_pad_x, 40))
         subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
         sb_hov = subpage_back_rect.collidepoint(mouse_pos)
         sb_clk = sb_hov and mouse_held
         sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
-        virtual_surface.blit(font_small.render("Back", True, COLOR_WHITE), (subpage_back_rect.x + 26, 44))
+        virtual_surface.blit(font_small.render(t("Back"), True, COLOR_WHITE), (subpage_back_rect.x + 26, 44))
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
 
         # --- Scrollable body ---
@@ -4033,7 +4609,7 @@ def draw_main_content():
             virtual_surface.blit(note, (cover_rect.x + (cover_size - note.get_width())  // 2,
                                         cover_rect.y + (cover_size - note.get_height()) // 2))
             if sotd_cover_loading:
-                lbl = font_small.render("Loading art...", True, COLOR_TEXT_MUTED)
+                lbl = font_small.render(t("Loading art..."), True, COLOR_TEXT_MUTED)
                 virtual_surface.blit(lbl, (cover_rect.x + (cover_size - lbl.get_width()) // 2,
                                            cover_rect.bottom + 8))
         cy += cover_size + 22
@@ -4100,14 +4676,14 @@ def draw_main_content():
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
 
         # Header
-        page_title = font_title.render("Artist of the Day", True, COLOR_WHITE)
+        page_title = font_title.render(t("Artist of the Day"), True, COLOR_WHITE)
         virtual_surface.blit(page_title, (content_pad_x, 40))
         subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
         sb_hov = subpage_back_rect.collidepoint(mouse_pos)
         sb_clk = sb_hov and mouse_held
         sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
-        virtual_surface.blit(font_small.render("Back", True, COLOR_WHITE), (subpage_back_rect.x + 26, 44))
+        virtual_surface.blit(font_small.render(t("Back"), True, COLOR_WHITE), (subpage_back_rect.x + 26, 44))
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
 
         # --- Scrollable body ---
@@ -4136,7 +4712,7 @@ def draw_main_content():
             virtual_surface.blit(note, (cover_rect.x + (cover_size - note.get_width())  // 2,
                                         cover_rect.y + (cover_size - note.get_height()) // 2))
             if aotd_cover_loading:
-                lbl = font_small.render("Loading art...", True, COLOR_TEXT_MUTED)
+                lbl = font_small.render(t("Loading art..."), True, COLOR_TEXT_MUTED)
                 virtual_surface.blit(lbl, (cover_rect.x + (cover_size - lbl.get_width()) // 2,
                                            cover_rect.bottom + 8))
         cy += cover_size + 22
@@ -4203,14 +4779,14 @@ def draw_main_content():
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
 
         # Header
-        page_title = font_title.render("History Maker", True, COLOR_WHITE)
+        page_title = font_title.render(t("History Maker"), True, COLOR_WHITE)
         virtual_surface.blit(page_title, (content_pad_x, 40))
         subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
         sb_hov = subpage_back_rect.collidepoint(mouse_pos)
         sb_clk = sb_hov and mouse_held
         sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
-        virtual_surface.blit(font_small.render("Back", True, COLOR_WHITE), (subpage_back_rect.x + 26, 44))
+        virtual_surface.blit(font_small.render(t("Back"), True, COLOR_WHITE), (subpage_back_rect.x + 26, 44))
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
 
         # --- Scrollable body ---
@@ -4239,7 +4815,7 @@ def draw_main_content():
             virtual_surface.blit(note, (cover_rect.x + (cover_size - note.get_width())  // 2,
                                         cover_rect.y + (cover_size - note.get_height()) // 2))
             if hm_cover_loading:
-                lbl = font_small.render("Loading art...", True, COLOR_TEXT_MUTED)
+                lbl = font_small.render(t("Loading art..."), True, COLOR_TEXT_MUTED)
                 virtual_surface.blit(lbl, (cover_rect.x + (cover_size - lbl.get_width()) // 2,
                                            cover_rect.bottom + 8))
         cy += cover_size + 22
@@ -4306,7 +4882,7 @@ def draw_main_content():
 
     # --- SEARCH PAGE ---
     elif current_page == "Search":
-        search_title = font_title.render("Search Results", True, COLOR_WHITE)
+        search_title = font_title.render(t("Search Results"), True, COLOR_WHITE)
         virtual_surface.blit(search_title, (content_pad_x, 40))
 
         # --- PHONE PORTRAIT LAYOUT: search bar full-width on row 1, buttons on row 2 ---
@@ -4442,7 +5018,7 @@ def draw_main_content():
             else:
                 pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, add_folder_btn_rect, border_radius=20)
                 btn_color = COLOR_WHITE
-            btn_txt = font_small.render("+ Add Folder", True, btn_color)
+            btn_txt = font_small.render(t("+ Add Folder"), True, btn_color)
             virtual_surface.blit(btn_txt, (add_folder_btn_rect.x + 38, 92))
 
             if saved_directories:
@@ -4482,7 +5058,7 @@ def draw_main_content():
                 filtered_tracks.append(track)
 
         if not imported_tracks:
-            empty_surf = font_body.render("No local music loaded. Tap '+ Add Folder' above to explore your storage!", True, COLOR_TEXT_MUTED)
+            empty_surf = font_body.render(t("No local music loaded. Tap '+ Add Folder' above to explore your storage!"), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(empty_surf, (content_pad_x, grid_start_y + 10))
         elif not filtered_tracks:
             no_match_surf = font_body.render(f"No results match your search query for '{search_query}'.", True, COLOR_TEXT_MUTED)
@@ -4612,9 +5188,234 @@ def draw_main_content():
                     virtual_surface.blit(sub_surf, (box_x + 12, box_y + card_height + 14))
             virtual_surface.set_clip(None)
 
+    # --- DEDICATED PERSONALIZE / THEME PAGE (opened from Settings) ---
+    elif show_theme_page:
+        global theme_option_rects, font_option_rects, max_theme_page_scroll
+        theme_option_rects = []
+        font_option_rects = []
+
+        theme_order = ["classic", "midnight", "sunset", "rainbow", "neon", "pastel",
+                        "galaxy", "vaporwave", "tropical", "candy", "firestorm", "arctic",
+                        "carnival", "bubblegum", "citrus", "cosmic_candy", "disco"]
+
+        page_bg_theme = THEMES[current_theme]
+        page_body_rect = pygame.Rect(main_x, 0, main_w, HEIGHT - portrait_sidebar_h)
+        if page_bg_theme.get("gradient"):
+            draw_multicolor_gradient(virtual_surface, page_body_rect, page_bg_theme["gradient"])
+        else:
+            pygame.draw.rect(virtual_surface, COLOR_BLACK, page_body_rect)
+
+        page_title = font_title.render(t("Personalize"), True, COLOR_WHITE)
+        virtual_surface.blit(page_title, (content_pad_x, 40))
+        sub_surf = font_small.render(t("Pick a color theme, then a font, for the whole app"), True, COLOR_TEXT_MUTED)
+        virtual_surface.blit(sub_surf, (content_pad_x, 68))
+
+        subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
+        sb_hov = subpage_back_rect.collidepoint(mouse_pos)
+        sb_clk = sb_hov and mouse_held
+        sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
+        pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
+        sb_lbl = font_small.render(t("Back"), True, COLOR_WHITE)
+        virtual_surface.blit(sb_lbl, (subpage_back_rect.x + 26, 44))
+
+        body_top = 100
+        body_h = HEIGHT - portrait_sidebar_h - body_top
+        body_rect = pygame.Rect(main_x, body_top, main_w, body_h)
+        virtual_surface.set_clip(body_rect)
+
+        scroll = round(theme_page_scroll_offset)
+
+        # --- THEMES SECTION ---
+        section_lbl = font_body.render(t("Color Themes"), True, COLOR_WHITE)
+        virtual_surface.blit(section_lbl, (content_pad_x, body_top + 10 - scroll))
+
+        grid_top = body_top + 45 - scroll
+        card_gap = 16
+        cols = 1 if main_w < 480 else 2
+        card_w = (main_w - 60 - (card_gap * (cols - 1))) // cols
+        card_h = 118
+
+        for idx, theme_key in enumerate(theme_order):
+            theme = THEMES[theme_key]
+            col = idx % cols
+            row = idx // cols
+            card_x = content_pad_x + col * (card_w + card_gap)
+            card_y = grid_top + row * (card_h + card_gap)
+            card_rect = pygame.Rect(card_x, card_y, card_w, card_h)
+
+            if card_rect.bottom < body_top or card_rect.top > body_top + body_h:
+                continue
+            theme_option_rects.append((card_rect, theme_key))
+
+            is_active = (theme_key == current_theme)
+            is_hovered = card_rect.collidepoint(mouse_pos)
+
+            pygame.draw.rect(virtual_surface, theme["COLOR_CARD_BG"], card_rect, border_radius=12)
+
+            # Fun multi-color top strip — either a real gradient sweep, or
+            # (for the flat themes) a row of that theme's own varied colors
+            if theme.get("gradient"):
+                strip_colors = theme["gradient"]
+            else:
+                strip_colors = [theme["COLOR_SPOTIFY_GREEN"], theme["COLOR_RED"], theme["COLOR_HOVER"], theme["COLOR_LIGHT_GREY"]]
+            seg_w = max(1, card_w // len(strip_colors))
+            for si, sc in enumerate(strip_colors):
+                pygame.draw.rect(virtual_surface, sc, (card_x + si * seg_w, card_y, seg_w + 1, 14))
+
+            border_color = theme["COLOR_SPOTIFY_GREEN"] if is_active else (COLOR_WHITE if is_hovered else theme["COLOR_LIGHT_GREY"])
+            pygame.draw.rect(virtual_surface, border_color, card_rect, width=3, border_radius=12)
+
+            # Swatches showing this theme's key colors
+            swatch_colors = [theme["COLOR_BLACK"], theme["COLOR_SPOTIFY_GREEN"], theme["COLOR_RED"], theme["COLOR_CARD_BG"]]
+            sw_x = card_x + 18
+            sw_y = card_y + 32
+            for sw_color in swatch_colors:
+                pygame.draw.rect(virtual_surface, sw_color, (sw_x, sw_y, 34, 34), border_radius=6)
+                pygame.draw.rect(virtual_surface, theme["COLOR_WHITE"], (sw_x, sw_y, 34, 34), width=1, border_radius=6)
+                sw_x += 42
+
+            name_surf = font_body.render(theme["label"], True, theme["COLOR_WHITE"])
+            virtual_surface.blit(name_surf, (card_x + 18, card_y + 76))
+            if is_active:
+                active_surf = font_small.render(t("Active"), True, theme["COLOR_SPOTIFY_GREEN"])
+                virtual_surface.blit(active_surf, (card_x + 18, card_y + 98))
+            elif is_hovered:
+                tap_surf = font_small.render(t("Tap to apply"), True, theme["COLOR_TEXT_MUTED"])
+                virtual_surface.blit(tap_surf, (card_x + 18, card_y + 98))
+
+        theme_rows = (len(theme_order) + cols - 1) // cols
+        themes_bottom = grid_top + theme_rows * (card_h + card_gap)
+
+        # --- DIVIDER LINE (everything below changes the app-wide font) ---
+        divider_y = themes_bottom + 10
+        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY,
+                          (content_pad_x, divider_y), (main_x + main_w - 30, divider_y), 2)
+
+        # --- FONTS SECTION ---
+        font_section_top = divider_y + 25
+        section_lbl2 = font_body.render(t("App Font"), True, COLOR_WHITE)
+        virtual_surface.blit(section_lbl2, (content_pad_x, font_section_top))
+        sub2 = font_small.render(t("Changes the font used everywhere in the app"), True, COLOR_TEXT_MUTED)
+        virtual_surface.blit(sub2, (content_pad_x, font_section_top + 24))
+
+        font_row_top = font_section_top + 55
+        font_gap = 14
+        font_cols = 1 if main_w < 420 else (2 if main_w < 700 else 5)
+        font_box_w = (main_w - 60 - (font_gap * (font_cols - 1))) // font_cols
+        font_box_h = 90
+        font_order = ["classic"]
+
+        for fidx, font_key in enumerate(font_order):
+            fdef = FONTS[font_key]
+            fcol = fidx % font_cols
+            frow = fidx // font_cols
+            fbox_x = content_pad_x + fcol * (font_box_w + font_gap)
+            fbox_y = font_row_top + frow * (font_box_h + font_gap)
+            fbox_rect = pygame.Rect(fbox_x, fbox_y, font_box_w, font_box_h)
+
+            if fbox_rect.bottom < body_top or fbox_rect.top > body_top + body_h:
+                continue
+            font_option_rects.append((fbox_rect, font_key))
+
+            is_font_active = (font_key == current_font_family)
+            is_font_hovered = fbox_rect.collidepoint(mouse_pos)
+
+            box_bg = COLOR_HOVER if (is_font_hovered and not is_font_active) else COLOR_CARD_BG
+            pygame.draw.rect(virtual_surface, box_bg, fbox_rect, border_radius=10)
+            fborder = COLOR_SPOTIFY_GREEN if is_font_active else (COLOR_WHITE if is_font_hovered else COLOR_LIGHT_GREY)
+            pygame.draw.rect(virtual_surface, fborder, fbox_rect, width=3, border_radius=10)
+
+            # Preview this font's own family, not the currently-applied one
+            preview_font = get_preview_font(fdef["family"], 20, bold=True)
+            preview_surf = preview_font.render("Aa", True, COLOR_WHITE)
+            virtual_surface.blit(preview_surf, (fbox_x + (font_box_w - preview_surf.get_width()) // 2, fbox_y + 14))
+
+            label_font = get_preview_font(fdef["family"], 14)
+            label_surf = label_font.render(fdef["label"], True, COLOR_TEXT_MUTED)
+            virtual_surface.blit(label_surf, (fbox_x + (font_box_w - label_surf.get_width()) // 2, fbox_y + 44))
+            if is_font_active:
+                act_surf = font_small.render(t("Active"), True, COLOR_SPOTIFY_GREEN)
+                virtual_surface.blit(act_surf, (fbox_x + (font_box_w - act_surf.get_width()) // 2, fbox_y + 66))
+
+        font_rows = (len(font_order) + font_cols - 1) // font_cols
+        content_bottom = font_row_top + font_rows * (font_box_h + font_gap)
+
+        virtual_surface.set_clip(None)
+        doc_content_bottom = content_bottom + scroll
+        max_theme_page_scroll = max(0, doc_content_bottom - (body_top + body_h) + 30)
+
+    # --- DEDICATED LANGUAGE PAGE (opened from Settings) ---
+    elif show_language_page:
+        global language_option_rects
+        language_option_rects = []
+
+        pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
+
+        page_title = font_title.render(t("Language"), True, COLOR_WHITE)
+        virtual_surface.blit(page_title, (content_pad_x, 40))
+        sub_surf = font_small.render(t("Choose your preferred language"), True, COLOR_TEXT_MUTED)
+        virtual_surface.blit(sub_surf, (content_pad_x, 68))
+
+        subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
+        sb_hov = subpage_back_rect.collidepoint(mouse_pos)
+        sb_clk = sb_hov and mouse_held
+        sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
+        pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
+        sb_lbl = font_small.render(t("Back"), True, COLOR_WHITE)
+        virtual_surface.blit(sb_lbl, (subpage_back_rect.x + 26, 44))
+
+        # Each language's own native name + a short code chip, for polish
+        LANGUAGE_NATIVE = {
+            "English": ("English", "EN"), "Spanish": ("Español", "ES"), "French": ("Français", "FR"),
+            "German": ("Deutsch", "DE"), "Italian": ("Italiano", "IT"), "Portuguese": ("Português", "PT"),
+            "Polish": ("Polski", "PL"),
+        }
+
+        grid_top = 105
+        gap = 14
+        cols = 1 if main_w < 420 else (2 if main_w < 700 else 3)
+        box_w = (main_w - 60 - (gap * (cols - 1))) // cols
+        box_h = 68
+
+        for idx, lang in enumerate(LANGUAGES):
+            col = idx % cols
+            row = idx // cols
+            box_x = content_pad_x + col * (box_w + gap)
+            box_y = grid_top + row * (box_h + gap)
+            box_rect = pygame.Rect(box_x, box_y, box_w, box_h)
+            language_option_rects.append((box_rect, lang))
+
+            is_active = (lang == current_language)
+            is_hovered = box_rect.collidepoint(mouse_pos)
+            native_name, code = LANGUAGE_NATIVE.get(lang, (lang, lang[:2].upper()))
+
+            box_bg = COLOR_HOVER if (is_hovered and not is_active) else COLOR_CARD_BG
+            pygame.draw.rect(virtual_surface, box_bg, box_rect, border_radius=12)
+            border_color = COLOR_SPOTIFY_GREEN if is_active else (COLOR_WHITE if is_hovered else COLOR_LIGHT_GREY)
+            pygame.draw.rect(virtual_surface, border_color, box_rect, width=3, border_radius=12)
+
+            # Small rounded code chip on the left, like a mini flag badge
+            chip_rect = pygame.Rect(box_x + 14, box_y + (box_h - 36) // 2, 44, 36)
+            chip_bg = COLOR_SPOTIFY_GREEN if is_active else COLOR_LIGHT_GREY
+            chip_text_color = COLOR_BLACK if is_active else COLOR_WHITE
+            pygame.draw.rect(virtual_surface, chip_bg, chip_rect, border_radius=8)
+            code_surf = font_small.render(code, True, chip_text_color)
+            virtual_surface.blit(code_surf, (chip_rect.x + (chip_rect.width - code_surf.get_width()) // 2,
+                                              chip_rect.y + (chip_rect.height - code_surf.get_height()) // 2))
+
+            text_x = chip_rect.right + 14
+            lang_surf = font_body.render(lang, True, COLOR_WHITE)
+            virtual_surface.blit(lang_surf, (text_x, box_y + 12))
+            native_surf = font_small.render(native_name, True, COLOR_TEXT_MUTED)
+            virtual_surface.blit(native_surf, (text_x, box_y + 36))
+
+            if is_active:
+                check_surf = font_small.render(t("Active"), True, COLOR_SPOTIFY_GREEN)
+                virtual_surface.blit(check_surf, (box_x + box_w - check_surf.get_width() - 14, box_y + (box_h - check_surf.get_height()) // 2))
+
     # --- SETTINGS PAGE (sidebar tab) ---
     elif current_page == "Settings":
-        settings_page_title = font_title.render("Settings", True, COLOR_WHITE)
+        settings_page_title = font_title.render(t("Settings"), True, COLOR_WHITE)
         virtual_surface.blit(settings_page_title, (content_pad_x, 40))
 
         btn_w, btn_h = 160, 40
@@ -4640,7 +5441,7 @@ def draw_main_content():
             dt_color = COLOR_LIGHT_GREY
             dt_text_color = COLOR_WHITE
         pygame.draw.rect(virtual_surface, dt_color, desktop_btn_rect, border_radius=20)
-        dt_lbl = font_small.render("Desktop/Tablet", True, dt_text_color)
+        dt_lbl = font_small.render(t("Desktop/Tablet"), True, dt_text_color)
         dt_lbl_x = desktop_btn_rect.x + (btn_w - dt_lbl.get_width()) // 2
         dt_lbl_y = desktop_btn_rect.y + (btn_h - dt_lbl.get_height()) // 2
         virtual_surface.blit(dt_lbl, (dt_lbl_x, dt_lbl_y))
@@ -4661,7 +5462,7 @@ def draw_main_content():
             ph_color = COLOR_LIGHT_GREY
             ph_text_color = COLOR_WHITE
         pygame.draw.rect(virtual_surface, ph_color, phone_btn_rect, border_radius=20)
-        ph_lbl = font_small.render("Phone", True, ph_text_color)
+        ph_lbl = font_small.render(t("Phone"), True, ph_text_color)
         ph_lbl_x = phone_btn_rect.x + (btn_w - ph_lbl.get_width()) // 2
         ph_lbl_y = phone_btn_rect.y + (btn_h - ph_lbl.get_height()) // 2
         virtual_surface.blit(ph_lbl, (ph_lbl_x, ph_lbl_y))
@@ -4676,17 +5477,41 @@ def draw_main_content():
             _grid_lbl_n = grid_cols_override if grid_cols_override else 2
         else:
             _grid_lbl_n = grid_cols_override if grid_cols_override else 5
-        gt_lbl = font_small.render(f"Grid: {_grid_lbl_n}", True, COLOR_WHITE)
+        gt_lbl = font_small.render(f"{t('Grid')}: {_grid_lbl_n}", True, COLOR_WHITE)
         gt_lbl_x = grid_toggle_btn_rect.x + (btn_w - gt_lbl.get_width()) // 2
         gt_lbl_y = grid_toggle_btn_rect.y + (btn_h - gt_lbl.get_height()) // 2
         virtual_surface.blit(gt_lbl, (gt_lbl_x, gt_lbl_y))
 
+        # Personalize button — opens the theme/color picker page
+        theme_btn_rect = pygame.Rect(content_pad_x, btn_y + btn_h + btn_gap, btn_w, btn_h)
+        th_hovered = theme_btn_rect.collidepoint(mouse_pos)
+        th_clicked = th_hovered and mouse_held
+        th_color = (20, 150, 65) if th_clicked else (COLOR_SPOTIFY_GREEN if th_hovered else COLOR_LIGHT_GREY)
+        th_text_color = COLOR_BLACK if (th_hovered or th_clicked) else COLOR_WHITE
+        pygame.draw.rect(virtual_surface, th_color, theme_btn_rect, border_radius=20)
+        th_lbl = font_small.render(t("Personalize"), True, th_text_color)
+        th_lbl_x = theme_btn_rect.x + (btn_w - th_lbl.get_width()) // 2
+        th_lbl_y = theme_btn_rect.y + (btn_h - th_lbl.get_height()) // 2
+        virtual_surface.blit(th_lbl, (th_lbl_x, th_lbl_y))
+
+        # Language button — opens the language picker page
+        language_btn_rect = pygame.Rect(theme_btn_rect.x + btn_w + btn_gap, btn_y + btn_h + btn_gap, btn_w, btn_h)
+        lg_hovered = language_btn_rect.collidepoint(mouse_pos)
+        lg_clicked = lg_hovered and mouse_held
+        lg_color = (20, 150, 65) if lg_clicked else (COLOR_SPOTIFY_GREEN if lg_hovered else COLOR_LIGHT_GREY)
+        lg_text_color = COLOR_BLACK if (lg_hovered or lg_clicked) else COLOR_WHITE
+        pygame.draw.rect(virtual_surface, lg_color, language_btn_rect, border_radius=20)
+        lg_lbl = font_small.render(t("Language"), True, lg_text_color)
+        lg_lbl_x = language_btn_rect.x + (btn_w - lg_lbl.get_width()) // 2
+        lg_lbl_y = language_btn_rect.y + (btn_h - lg_lbl.get_height()) // 2
+        virtual_surface.blit(lg_lbl, (lg_lbl_x, lg_lbl_y))
+
     # --- YOUR LIBRARY GRID VIEW ---
     elif current_page == "Your Library":
-        lib_title = font_title.render("Your Library", True, COLOR_WHITE)
+        lib_title = font_title.render(t("Your Library"), True, COLOR_WHITE)
         virtual_surface.blit(lib_title, (content_pad_x, 40))
         
-        create_playlist_btn_rect = pygame.Rect(content_pad_x + 130, 35, 40, 40)
+        create_playlist_btn_rect = pygame.Rect(content_pad_x + lib_title.get_width() + 20, 35, 40, 40)
         is_cp_hovered = create_playlist_btn_rect.collidepoint(mouse_pos)
         is_cp_clicked = is_cp_hovered and mouse_held
         
@@ -4725,7 +5550,7 @@ def draw_main_content():
             pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, (content_pad_x + 15, 110, 130, 110), border_radius=4)
             draw_manual_thumbs_up(virtual_surface, content_pad_x + 55, 140, 50, 50, COLOR_BLACK)
         
-        card_txt1 = font_body.render("Liked Songs", True, COLOR_WHITE)
+        card_txt1 = font_body.render(t("Liked Songs"), True, COLOR_WHITE)
         card_txt2 = font_small.render(f"Playlist • {len(liked_tracks)} songs", True, COLOR_TEXT_MUTED)
         virtual_surface.blit(card_txt1, (content_pad_x + 15, 230))
         virtual_surface.blit(card_txt2, (content_pad_x + 15, 255))
@@ -4797,7 +5622,7 @@ def draw_modals():
         pygame.draw.rect(virtual_surface, (22, 22, 22), card_rect, border_radius=12)
         pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, card_rect, width=1, border_radius=12)
 
-        hdr = font_body.render("Search Album Art  •  iTunes", True, COLOR_SPOTIFY_GREEN)
+        hdr = font_body.render(t("Search Album Art  •  iTunes"), True, COLOR_SPOTIFY_GREEN)
         virtual_surface.blit(hdr, (card_x + 20, card_y + 18))
         sub_title = f"{current_track['title']} — {current_track['artist']}"
         if len(sub_title) > 55: sub_title = sub_title[:53] + "…"
@@ -4808,7 +5633,7 @@ def draw_modals():
         cls_hov = art_search_close_rect.collidepoint(mouse_pos)
         pygame.draw.rect(virtual_surface, COLOR_HOVER if cls_hov else COLOR_LIGHT_GREY,
                          art_search_close_rect, border_radius=17)
-        cls_txt = font_small.render("Close", True, COLOR_WHITE)
+        cls_txt = font_small.render(t("Close"), True, COLOR_WHITE)
         virtual_surface.blit(cls_txt, (
             art_search_close_rect.x + (art_search_close_rect.width - cls_txt.get_width()) // 2,
             art_search_close_rect.y + 9))
@@ -4817,7 +5642,7 @@ def draw_modals():
         amn_hov = art_manual_rect.collidepoint(mouse_pos)
         amn_bg = COLOR_SPOTIFY_GREEN if (amn_hov and mouse_held) else (COLOR_HOVER if amn_hov else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, amn_bg, art_manual_rect, border_radius=17)
-        amn_txt = font_small.render("Manual", True, COLOR_WHITE)
+        amn_txt = font_small.render(t("Manual"), True, COLOR_WHITE)
         virtual_surface.blit(amn_txt, (
             art_manual_rect.x + (art_manual_rect.width - amn_txt.get_width()) // 2,
             art_manual_rect.y + 9))
@@ -4833,7 +5658,7 @@ def draw_modals():
         if show_art_manual_modal:
             pygame.draw.rect(virtual_surface, COLOR_CARD_BG, body_rect, border_radius=8)
 
-            name_lbl = font_small.render("Song name", True, COLOR_TEXT_MUTED)
+            name_lbl = font_small.render(t("Song name"), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(name_lbl, (body_rect.x + 25, body_rect.y + 25))
             art_manual_title_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 47, body_rect.width - 50, 44)
             pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, art_manual_title_rect, border_radius=6)
@@ -4849,10 +5674,10 @@ def draw_modals():
                     pygame.draw.line(virtual_surface, COLOR_WHITE,
                                      (_cx, art_manual_title_rect.y + 8), (_cx, art_manual_title_rect.y + 36), 2)
             else:
-                virtual_surface.blit(font_small.render("e.g. Blinding Lights", True, COLOR_TEXT_MUTED),
+                virtual_surface.blit(font_small.render(t("e.g. Blinding Lights"), True, COLOR_TEXT_MUTED),
                                      (art_manual_title_rect.x + 12, art_manual_title_rect.y + 13))
 
-            artist_lbl = font_small.render("Artist", True, COLOR_TEXT_MUTED)
+            artist_lbl = font_small.render(t("Artist"), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(artist_lbl, (body_rect.x + 25, body_rect.y + 107))
             art_manual_artist_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 129, body_rect.width - 50, 44)
             pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, art_manual_artist_rect, border_radius=6)
@@ -4868,18 +5693,18 @@ def draw_modals():
                     pygame.draw.line(virtual_surface, COLOR_WHITE,
                                      (_cx, art_manual_artist_rect.y + 8), (_cx, art_manual_artist_rect.y + 36), 2)
             else:
-                virtual_surface.blit(font_small.render("e.g. The Weeknd", True, COLOR_TEXT_MUTED),
+                virtual_surface.blit(font_small.render(t("e.g. The Weeknd"), True, COLOR_TEXT_MUTED),
                                      (art_manual_artist_rect.x + 12, art_manual_artist_rect.y + 13))
 
             art_manual_go_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 195, 140, 44)
             amg_hovered = art_manual_go_rect.collidepoint(mouse_pos)
             amg_bg = (40, 230, 110) if amg_hovered else COLOR_SPOTIFY_GREEN
             pygame.draw.rect(virtual_surface, amg_bg, art_manual_go_rect, border_radius=22)
-            amg_txt = font_body.render("Search", True, COLOR_BLACK)
+            amg_txt = font_body.render(t("Search"), True, COLOR_BLACK)
             amg_txt_x = art_manual_go_rect.x + (art_manual_go_rect.width - amg_txt.get_width()) // 2
             virtual_surface.blit(amg_txt, (amg_txt_x, art_manual_go_rect.y + 11))
         elif art_search_loading:
-            wait_lbl = font_body.render("Searching iTunes...", True, COLOR_TEXT_MUTED)
+            wait_lbl = font_body.render(t("Searching iTunes..."), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(wait_lbl, (card_x + 20, body_top + 20))
         elif art_search_error and not art_search_results:
             for ei, eline in enumerate(get_wrapped_lines(art_search_error, font_body, body_rect.width - 30)):
@@ -4925,7 +5750,7 @@ def draw_modals():
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
         current_lyrics_str = song_lyrics_database.get(track_ref, "")
         
-        header_lbl = font_huge.render("Edit Song Lyrics", True, COLOR_SPOTIFY_GREEN)
+        header_lbl = font_huge.render(t("Edit Song Lyrics"), True, COLOR_SPOTIFY_GREEN)
         track_lbl = font_body.render(f"Track: {current_track['title']} • {current_track['artist']}", True, COLOR_WHITE)
         virtual_surface.blit(header_lbl, (main_x + 40, 45))
         virtual_surface.blit(track_lbl, (main_x + 40, 105))
@@ -5062,28 +5887,28 @@ def draw_modals():
         c_clicked = c_hovered and mouse_held
         c_bg = COLOR_SPOTIFY_GREEN if c_clicked else (COLOR_HOVER if c_hovered else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, c_bg, lyrics_close_rect, border_radius=21)
-        c_txt = font_body.render("Close", True, COLOR_WHITE)
+        c_txt = font_body.render(t("Close"), True, COLOR_WHITE)
         virtual_surface.blit(c_txt, (lyrics_close_rect.x + 28, lyrics_close_rect.y + 11))
         
         s_hovered = lyrics_save_rect.collidepoint(mouse_pos)
         s_clicked = s_hovered and mouse_held
         s_bg = COLOR_SPOTIFY_GREEN if s_clicked else (COLOR_HOVER if s_hovered else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, s_bg, lyrics_save_rect, border_radius=21)
-        s_txt = font_body.render("Save", True, COLOR_WHITE)
+        s_txt = font_body.render(t("Save"), True, COLOR_WHITE)
         virtual_surface.blit(s_txt, (lyrics_save_rect.x + 30, lyrics_save_rect.y + 11))
 
         cl_hovered = lyrics_clear_rect.collidepoint(mouse_pos)
         cl_clicked = cl_hovered and mouse_held
         cl_bg = COLOR_SPOTIFY_GREEN if cl_clicked else (COLOR_HOVER if cl_hovered else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, cl_bg, lyrics_clear_rect, border_radius=21)
-        cl_txt = font_body.render("Clear", True, COLOR_WHITE)
+        cl_txt = font_body.render(t("Clear"), True, COLOR_WHITE)
         virtual_surface.blit(cl_txt, (lyrics_clear_rect.x + 28, lyrics_clear_rect.y + 11))
 
         im_hovered = lyrics_import_rect.collidepoint(mouse_pos)
         im_clicked = im_hovered and mouse_held
         im_bg = COLOR_SPOTIFY_GREEN if im_clicked else (COLOR_HOVER if im_hovered else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, im_bg, lyrics_import_rect, border_radius=21)
-        im_txt = font_body.render("Import", True, COLOR_WHITE)
+        im_txt = font_body.render(t("Import"), True, COLOR_WHITE)
         im_txt_x = lyrics_import_rect.x + (lyrics_import_rect.width - im_txt.get_width()) // 2
         virtual_surface.blit(im_txt, (im_txt_x, lyrics_import_rect.y + 11))
 
@@ -5091,7 +5916,7 @@ def draw_modals():
         se_clicked = se_hovered and mouse_held
         se_bg = COLOR_SPOTIFY_GREEN if se_clicked else (COLOR_HOVER if se_hovered else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, se_bg, lyrics_search_rect, border_radius=21)
-        se_txt = font_body.render("Search", True, COLOR_WHITE)
+        se_txt = font_body.render(t("Search"), True, COLOR_WHITE)
         se_txt_x = lyrics_search_rect.x + (lyrics_search_rect.width - se_txt.get_width()) // 2
         virtual_surface.blit(se_txt, (se_txt_x, lyrics_search_rect.y + 11))
 
@@ -5109,7 +5934,7 @@ def draw_modals():
             pygame.draw.rect(virtual_surface, (22, 22, 22), card_rect, border_radius=12)
             pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, card_rect, width=1, border_radius=12)
 
-            hdr = font_body.render("Search Synced Lyrics", True, COLOR_SPOTIFY_GREEN)
+            hdr = font_body.render(t("Search Synced Lyrics"), True, COLOR_SPOTIFY_GREEN)
             virtual_surface.blit(hdr, (card_x + 20, card_y + 18))
             sub_title = f"{current_track['title']} \u2014 {current_track['artist']}"
             if len(sub_title) > 55: sub_title = sub_title[:53] + "\u2026"
@@ -5120,7 +5945,7 @@ def draw_modals():
             cls_hov = lyrics_search_close_rect.collidepoint(mouse_pos)
             pygame.draw.rect(virtual_surface, COLOR_HOVER if cls_hov else COLOR_LIGHT_GREY,
                              lyrics_search_close_rect, border_radius=17)
-            cls_txt = font_small.render("Close", True, COLOR_WHITE)
+            cls_txt = font_small.render(t("Close"), True, COLOR_WHITE)
             virtual_surface.blit(cls_txt, (
                 lyrics_search_close_rect.x + (lyrics_search_close_rect.width - cls_txt.get_width()) // 2,
                 lyrics_search_close_rect.y + 9))
@@ -5129,7 +5954,7 @@ def draw_modals():
             man_hov = lyrics_manual_rect.collidepoint(mouse_pos)
             man_bg = COLOR_SPOTIFY_GREEN if (man_hov and mouse_held) else (COLOR_HOVER if man_hov else COLOR_LIGHT_GREY)
             pygame.draw.rect(virtual_surface, man_bg, lyrics_manual_rect, border_radius=17)
-            man_txt = font_small.render("Manual", True, COLOR_WHITE)
+            man_txt = font_small.render(t("Manual"), True, COLOR_WHITE)
             virtual_surface.blit(man_txt, (
                 lyrics_manual_rect.x + (lyrics_manual_rect.width - man_txt.get_width()) // 2,
                 lyrics_manual_rect.y + 9))
@@ -5144,7 +5969,7 @@ def draw_modals():
             if show_lyrics_manual_modal:
                 pygame.draw.rect(virtual_surface, COLOR_CARD_BG, body_rect, border_radius=8)
 
-                name_lbl = font_small.render("Song name", True, COLOR_TEXT_MUTED)
+                name_lbl = font_small.render(t("Song name"), True, COLOR_TEXT_MUTED)
                 virtual_surface.blit(name_lbl, (body_rect.x + 25, body_rect.y + 25))
                 lyrics_manual_title_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 47, body_rect.width - 50, 44)
                 pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, lyrics_manual_title_rect, border_radius=6)
@@ -5160,10 +5985,10 @@ def draw_modals():
                         pygame.draw.line(virtual_surface, COLOR_WHITE,
                                          (_cx, lyrics_manual_title_rect.y + 8), (_cx, lyrics_manual_title_rect.y + 36), 2)
                 else:
-                    virtual_surface.blit(font_small.render("e.g. Blinding Lights", True, COLOR_TEXT_MUTED),
+                    virtual_surface.blit(font_small.render(t("e.g. Blinding Lights"), True, COLOR_TEXT_MUTED),
                                          (lyrics_manual_title_rect.x + 12, lyrics_manual_title_rect.y + 13))
 
-                artist_lbl = font_small.render("Artist", True, COLOR_TEXT_MUTED)
+                artist_lbl = font_small.render(t("Artist"), True, COLOR_TEXT_MUTED)
                 virtual_surface.blit(artist_lbl, (body_rect.x + 25, body_rect.y + 107))
                 lyrics_manual_artist_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 129, body_rect.width - 50, 44)
                 pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, lyrics_manual_artist_rect, border_radius=6)
@@ -5179,21 +6004,21 @@ def draw_modals():
                         pygame.draw.line(virtual_surface, COLOR_WHITE,
                                          (_cx, lyrics_manual_artist_rect.y + 8), (_cx, lyrics_manual_artist_rect.y + 36), 2)
                 else:
-                    virtual_surface.blit(font_small.render("e.g. The Weeknd", True, COLOR_TEXT_MUTED),
+                    virtual_surface.blit(font_small.render(t("e.g. The Weeknd"), True, COLOR_TEXT_MUTED),
                                          (lyrics_manual_artist_rect.x + 12, lyrics_manual_artist_rect.y + 13))
 
                 lyrics_manual_go_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 195, 140, 44)
                 mg_hovered = lyrics_manual_go_rect.collidepoint(mouse_pos)
                 mg_bg = (40, 230, 110) if mg_hovered else COLOR_SPOTIFY_GREEN
                 pygame.draw.rect(virtual_surface, mg_bg, lyrics_manual_go_rect, border_radius=22)
-                mg_txt = font_body.render("Search", True, COLOR_BLACK)
+                mg_txt = font_body.render(t("Search"), True, COLOR_BLACK)
                 mg_txt_x = lyrics_manual_go_rect.x + (lyrics_manual_go_rect.width - mg_txt.get_width()) // 2
                 virtual_surface.blit(mg_txt, (mg_txt_x, lyrics_manual_go_rect.y + 11))
                 lyrics_manual_close_rect = pygame.Rect(0, 0, 0, 0)
             else:
                 lyrics_search_item_rects = []
                 if lyrics_search_loading:
-                    loading_lbl = font_body.render("Searching...", True, COLOR_TEXT_MUTED)
+                    loading_lbl = font_body.render(t("Searching..."), True, COLOR_TEXT_MUTED)
                     virtual_surface.blit(loading_lbl, (card_x + 20, body_top + 20))
                 elif lyrics_search_error and not lyrics_search_results:
                     for ei, eline in enumerate(get_wrapped_lines(lyrics_search_error, font_body, body_rect.width - 30)):
@@ -5257,7 +6082,7 @@ def draw_modals():
 
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT))
         
-        lbl = font_huge.render("Create playlist", True, COLOR_WHITE)
+        lbl = font_huge.render(t("Create playlist"), True, COLOR_WHITE)
         if is_portrait:
             virtual_surface.blit(lbl, (main_x + (main_w - lbl.get_width()) // 2, 45))
         else:
@@ -5280,7 +6105,7 @@ def draw_modals():
             
         draw_unified_cover_overlay(virtual_surface, modal_image_picker_rect, mouse_pos)
             
-        label_meta = font_small.render("Name", True, COLOR_TEXT_MUTED)
+        label_meta = font_small.render(t("Name"), True, COLOR_TEXT_MUTED)
         
         input_x = main_x + 300 if not is_portrait else main_x + 50
         input_y = 185 if not is_portrait else 405
@@ -5296,10 +6121,10 @@ def draw_modals():
         if playlist_input_text:
             text_surf = font_body.render(playlist_input_text, True, COLOR_WHITE)
         else:
-            text_surf = font_body.render("My Playlist #1", True, COLOR_TEXT_MUTED)
+            text_surf = font_body.render(t("My Playlist #1"), True, COLOR_TEXT_MUTED)
         virtual_surface.blit(text_surf, (modal_input_rect.x + 15, modal_input_rect.y + 11))
         
-        label_desc = font_small.render("Description", True, COLOR_TEXT_MUTED)
+        label_desc = font_small.render(t("Description"), True, COLOR_TEXT_MUTED)
         virtual_surface.blit(label_desc, (input_x, input_y + 60))
         
         modal_desc_rect = pygame.Rect(input_x, input_y + 85, input_w, 110)
@@ -5316,7 +6141,7 @@ def draw_modals():
                     virtual_surface.blit(line_surf, (modal_desc_rect.x + 15, y_text_line))
                     y_text_line += 18
         else:
-            desc_surf = font_small.render("Add an optional description", True, COLOR_TEXT_MUTED)
+            desc_surf = font_small.render(t("Add an optional description"), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(desc_surf, (modal_desc_rect.x + 15, modal_desc_rect.y + 12))
         
         desc_lbl = font_small.render("Personalize your new local playlist with a clean title and custom description.", True, COLOR_WHITE)
@@ -5338,18 +6163,18 @@ def draw_modals():
         
         c_bg = COLOR_HOVER if modal_close_rect.collidepoint(mouse_pos) else COLOR_CARD_BG
         pygame.draw.rect(virtual_surface, c_bg, modal_close_rect, border_radius=21)
-        c_txt = font_body.render("Cancel", True, COLOR_WHITE)
+        c_txt = font_body.render(t("Cancel"), True, COLOR_WHITE)
         virtual_surface.blit(c_txt, (modal_close_rect.x + 24, modal_close_rect.y + 11))
         
         s_bg = (40, 230, 110) if modal_save_rect.collidepoint(mouse_pos) else COLOR_SPOTIFY_GREEN
         pygame.draw.rect(virtual_surface, s_bg, modal_save_rect, border_radius=21)
-        s_txt = font_body.render("Save", True, COLOR_BLACK)
+        s_txt = font_body.render(t("Save"), True, COLOR_BLACK)
         virtual_surface.blit(s_txt, (modal_save_rect.x + 32, modal_save_rect.y + 11))
 
     elif show_add_to_playlist_modal:
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
         
-        lbl = font_title.render("Add to Playlist", True, COLOR_WHITE)
+        lbl = font_title.render(t("Add to Playlist"), True, COLOR_WHITE)
         virtual_surface.blit(lbl, (content_pad_x, 40))
         
         track_lbl_text = f"Song: {track_to_add_to_playlist['title']}" if track_to_add_to_playlist else ""
@@ -5359,7 +6184,7 @@ def draw_modals():
         modal_close_rect = pygame.Rect(main_x + main_w - 110, 35, 90, 35)
         c_bg = COLOR_HOVER if modal_close_rect.collidepoint(mouse_pos) else COLOR_LIGHT_GREY
         pygame.draw.rect(virtual_surface, c_bg, modal_close_rect, border_radius=15)
-        c_txt = font_small.render("Cancel", True, COLOR_WHITE)
+        c_txt = font_small.render(t("Cancel"), True, COLOR_WHITE)
         virtual_surface.blit(c_txt, (modal_close_rect.x + 23, modal_close_rect.y + 8))
         
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
@@ -5368,9 +6193,9 @@ def draw_modals():
         p_names = list(custom_playlists.keys())
         
         if not p_names:
-            empty_lbl = font_body.render("No custom playlists built yet.", True, COLOR_TEXT_MUTED)
+            empty_lbl = font_body.render(t("No custom playlists built yet."), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(empty_lbl, (content_pad_x, 150))
-            hint_lbl = font_small.render("Go to 'Your Library' and tap '+' to create one.", True, COLOR_TEXT_MUTED)
+            hint_lbl = font_small.render(t("Go to 'Your Library' and tap '+' to create one."), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(hint_lbl, (content_pad_x, 180))
             max_music_scroll = 0
         else:
@@ -5879,6 +6704,7 @@ def draw_media_bar():
 
 # --- MAIN LOOP ---
 load_app_data()
+search_message = t("Tap '+ Add Folder' to open the built-in storage browser.")
 set_android_orientation(layout_mode == "phone")
 if layout_mode == "phone":
     is_portrait = True
@@ -5919,6 +6745,7 @@ while running:
     settings_scroll_offset       += (target_settings_scroll       - settings_scroll_offset)       * (12.0 * dt)
     lyrics_scroll_offset         += (target_lyrics_scroll         - lyrics_scroll_offset)         * (12.0 * dt)
     top100_scroll_offset         += (target_top100_scroll         - top100_scroll_offset)         * (12.0 * dt)
+    theme_page_scroll_offset     += (target_theme_page_scroll     - theme_page_scroll_offset)     * (12.0 * dt)
     sotd_scroll_offset           += (target_sotd_scroll           - sotd_scroll_offset)           * (12.0 * dt)
     aotd_scroll_offset           += (target_aotd_scroll           - aotd_scroll_offset)           * (12.0 * dt)
     hm_scroll_offset             += (target_hm_scroll             - hm_scroll_offset)             * (12.0 * dt)
@@ -6310,6 +7137,10 @@ while running:
                     target_top100_scroll += dy * 2.5
                     target_top100_scroll = max(0.0, min(float(max_top100_scroll), target_top100_scroll))
                     last_touch_y = mouse_pos[1]
+                elif show_theme_page:
+                    target_theme_page_scroll += dy * 2.5
+                    target_theme_page_scroll = max(0.0, min(float(max_theme_page_scroll), target_theme_page_scroll))
+                    last_touch_y = mouse_pos[1]
                 elif show_song_of_day_page:
                     target_sotd_scroll += dy * 2.5
                     target_sotd_scroll = max(0.0, min(float(max_sotd_scroll), target_sotd_scroll))
@@ -6366,6 +7197,9 @@ while running:
                     elif show_top100_page:
                         target_top100_scroll = max(0.0, min(float(max_top100_scroll),
                                                              target_top100_scroll + kick))
+                    elif show_theme_page:
+                        target_theme_page_scroll = max(0.0, min(float(max_theme_page_scroll),
+                                                                  target_theme_page_scroll + kick))
                     elif show_song_of_day_page:
                         target_sotd_scroll = max(0.0, min(float(max_sotd_scroll),
                                                            target_sotd_scroll + kick))
@@ -6608,6 +7442,8 @@ while running:
                             viewing_liked_playlist = False
                             selected_custom_playlist_name = None
                             viewing_settings_page = False
+                            show_theme_page = False
+                            show_language_page = False
                             target_music_scroll = 0.0
                             target_browser_scroll = 0.0
                             target_settings_scroll = 0.0
@@ -6617,7 +7453,37 @@ while running:
                     if clicked_panel_item:
                         continue
 
-                    if current_page == "Settings":
+                    if show_theme_page and current_page == "Settings":
+                        if subpage_back_rect.collidepoint(mouse_pos):
+                            show_theme_page = False
+                        else:
+                            _picked = False
+                            for _rect, _theme_key in theme_option_rects:
+                                if _rect.collidepoint(mouse_pos):
+                                    apply_theme(_theme_key)
+                                    save_app_data()
+                                    _picked = True
+                                    break
+                            if not _picked:
+                                for _rect, _font_key in font_option_rects:
+                                    if _rect.collidepoint(mouse_pos):
+                                        apply_font(_font_key)
+                                        save_app_data()
+                                        break
+
+                    elif show_language_page and current_page == "Settings":
+                        if subpage_back_rect.collidepoint(mouse_pos):
+                            show_language_page = False
+                        else:
+                            for _rect, _lang in language_option_rects:
+                                if _rect.collidepoint(mouse_pos):
+                                    apply_language(_lang)
+                                    if not is_browsing_storage and not is_browsing_for_cover:
+                                        search_message = t("Tap '+ Add Folder' to open the built-in storage browser.")
+                                    save_app_data()
+                                    break
+
+                    elif current_page == "Settings":
                         if desktop_btn_rect.collidepoint(mouse_pos):
                             layout_mode = "desktop"
                             grid_cols_override = None
@@ -6647,6 +7513,10 @@ while running:
                                     current_val = 5
                                 grid_cols_override = current_val
                             save_app_data()
+                        elif theme_btn_rect.collidepoint(mouse_pos):
+                            show_theme_page = True
+                        elif language_btn_rect.collidepoint(mouse_pos):
+                            show_language_page = True
 
                     if show_art_search_modal:
                         if show_art_manual_modal:
@@ -7052,6 +7922,11 @@ while running:
                             else:
                                 liked_tracks.append(current_track)
                         save_app_data()
+
+        elif event.type == pygame.MOUSEWHEEL:
+            if show_theme_page:
+                target_theme_page_scroll -= event.y * 60
+                target_theme_page_scroll = max(0.0, min(float(max_theme_page_scroll), target_theme_page_scroll))
             
     if is_playing and track_duration > 0 and music_loaded and not is_dragging_progress:
         if current_backend == "android" and android_media_player:
@@ -7108,6 +7983,7 @@ while running:
         abs(target_settings_scroll       - settings_scroll_offset)      > 0.5 or
         abs(target_lyrics_scroll         - lyrics_scroll_offset)        > 0.5 or
         abs(target_top100_scroll         - top100_scroll_offset)        > 0.5 or
+        abs(target_theme_page_scroll     - theme_page_scroll_offset)    > 0.5 or
         abs(target_sotd_scroll           - sotd_scroll_offset)          > 0.5 or
         abs(target_aotd_scroll           - aotd_scroll_offset)          > 0.5 or
         abs(target_hm_scroll             - hm_scroll_offset)            > 0.5 or
