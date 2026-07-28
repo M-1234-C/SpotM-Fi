@@ -99,9 +99,13 @@ def detect_device_layout_mode():
 
 def compute_virtual_size(real_w, real_h, portrait, _layout_mode="desktop"):
     if portrait and _layout_mode == "phone":
-        # Match phone aspect ratio exactly so there are no black bars
-        vw = 700
-        vh = int(real_h * (700 / real_w)) if real_w > 0 else 1100
+        # Match phone aspect ratio exactly so there are no black bars.
+        # Virtual width is halved (700 -> 350) so every element drawn in
+        # virtual pixels ends up covering 2x the screen space once this
+        # canvas is scaled up to the real display — same layout/style,
+        # just twice the size.
+        vw = 500
+        vh = int(real_h * (vw / real_w)) if real_w > 0 else 785
         return vw, vh
     return (700, 1100) if portrait else (1100, 700)
 
