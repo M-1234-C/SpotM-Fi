@@ -2489,6 +2489,9 @@ TRANSLATIONS = {
         "Top 100": "Top 100",
         "e.g. Blinding Lights": "ej. Blinding Lights",
         "e.g. The Weeknd": "ej. The Weeknd",
+        "Song of Day": "Canción del Día",
+        "Artist of Day": "Artista del Día",
+        "History": "Histórico",
     },
     "French": {
         "Search": "Rechercher", "Your Library": "Ta Bibliothèque", "Settings": "Paramètres",
@@ -2524,6 +2527,9 @@ TRANSLATIONS = {
         "Top 100": "Top 100",
         "e.g. Blinding Lights": "p. ex. Blinding Lights",
         "e.g. The Weeknd": "p. ex. The Weeknd",
+        "Song of Day": "Chanson du Jour",
+        "Artist of Day": "Artiste du Jour",
+        "History": "Historique",
     },
     "German": {
         "Search": "Suchen", "Your Library": "Deine Bibliothek", "Settings": "Einstellungen",
@@ -2559,6 +2565,9 @@ TRANSLATIONS = {
         "Top 100": "Top 100",
         "e.g. Blinding Lights": "z. B. Blinding Lights",
         "e.g. The Weeknd": "z. B. The Weeknd",
+        "Song of Day": "Song des Tages",
+        "Artist of Day": "Künstler des Tages",
+        "History": "Verlauf",
     },
     "Italian": {
         "Search": "Cerca", "Your Library": "La Tua Libreria", "Settings": "Impostazioni",
@@ -2594,6 +2603,9 @@ TRANSLATIONS = {
         "Top 100": "Top 100",
         "e.g. Blinding Lights": "es. Blinding Lights",
         "e.g. The Weeknd": "es. The Weeknd",
+        "Song of Day": "Canzone del Giorno",
+        "Artist of Day": "Artista del Giorno",
+        "History": "Cronologia",
     },
     "Portuguese": {
         "Search": "Pesquisar", "Your Library": "Sua Biblioteca", "Settings": "Configurações",
@@ -2629,6 +2641,9 @@ TRANSLATIONS = {
         "Top 100": "Top 100",
         "e.g. Blinding Lights": "ex. Blinding Lights",
         "e.g. The Weeknd": "ex. The Weeknd",
+        "Song of Day": "Música do Dia",
+        "Artist of Day": "Artista do Dia",
+        "History": "Histórico",
     },
     "Polish": {
         "Search": "Szukaj", "Your Library": "Twoja Biblioteka", "Settings": "Ustawienia",
@@ -2664,6 +2679,9 @@ TRANSLATIONS = {
         "Top 100": "Top 100",
         "e.g. Blinding Lights": "np. Blinding Lights",
         "e.g. The Weeknd": "np. The Weeknd",
+        "Song of Day": "Piosenka Dnia",
+        "Artist of Day": "Artysta Dnia",
+        "History": "Historia",
     },
 }
 
@@ -2676,6 +2694,35 @@ def apply_language(language_name):
     global current_language
     if language_name in LANGUAGES:
         current_language = language_name
+
+# Cache of shrunk fonts so we're not rebuilding SysFont objects every frame.
+_FIT_FONT_CACHE = {}
+
+def _get_fit_font(size, bold):
+    key = (size, bold)
+    f = _FIT_FONT_CACHE.get(key)
+    if f is None:
+        f = pygame.font.SysFont("Arial", size, bold=bold)
+        _FIT_FONT_CACHE[key] = f
+    return f
+
+def render_fit_text(text, color, max_width, base_size=14, bold=False, min_size=9):
+    """Render text that auto-shrinks (down to min_size) so translated button
+    labels never overlap a neighboring button or spill off the screen."""
+    size = base_size
+    surf = _get_fit_font(size, bold).render(text, True, color)
+    while surf.get_width() > max_width and size > min_size:
+        size -= 1
+        surf = _get_fit_font(size, bold).render(text, True, color)
+    # Hard clamp: even at the smallest font size some system fonts (varies by
+    # device/OS) can still render wider than max_width, e.g. longer Polish/
+    # German words. Guarantee the surface never exceeds max_width so labels
+    # can never overlap a neighboring button.
+    if surf.get_width() > max_width and max_width > 0:
+        scale = max_width / surf.get_width()
+        new_h = max(1, int(surf.get_height() * scale))
+        surf = pygame.transform.smoothscale(surf, (max_width, new_h))
+    return surf
 
 # Each theme defines a full color set for the whole app. "classic" is the
 # original SpotM-Fi black/green look. The others recolor everything — some
@@ -3527,8 +3574,8 @@ def save_app_data():
         print(f"File Save Error: {e}")
 
 def load_app_data():
-    global saved_directories, liked_tracks, liked_songs_custom_cover
-    global custom_playlists, song_lyrics_database, green_toggled_tracks, layout_mode, track_covers
+    global saved_directories, liked_tracks
+    global song_lyrics_database, green_toggled_tracks, layout_mode, track_covers
     global grid_cols_override, listen_stats
     
     if not os.path.exists(DATA_FILE):
@@ -3612,7 +3659,7 @@ def load_app_data():
         print(f"File Load Error: {e}")
 
 def advance_track(backward=False):
-    global current_track, is_playing, green_toggled_tracks
+    global current_track, is_playing
     if playlist_is_playing == "Liked Songs":
         playlist = liked_tracks
     elif playlist_is_playing in custom_playlists:
@@ -3865,7 +3912,7 @@ def rebuild_imported_tracks():
         search_message = t("Tap '+ Add Folder' to open the built-in storage browser.")
 
 def scan_confirmed_directory(target_dir):
-    global saved_directories, music_grid_scroll_offset, target_music_scroll, is_browsing_storage, is_browsing_for_cover, selected_custom_playlist_name
+    global music_grid_scroll_offset, target_music_scroll, is_browsing_storage, is_browsing_for_cover
     if is_browsing_for_cover:
         is_browsing_for_cover = False
         return
@@ -4026,9 +4073,6 @@ def draw_sidebar():
     global sidebar_rects
     sidebar_rects = [] 
     
-    _phone = is_portrait and layout_mode == "phone"
-    content_bottom_margin = (100 if _phone else (144 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
-    
     if not is_portrait:
         sidebar_rect = pygame.Rect(0, 0, 230, HEIGHT)
         pygame.draw.rect(virtual_surface, COLOR_DARK_GREY, sidebar_rect)
@@ -4055,7 +4099,7 @@ def draw_sidebar():
             else:
                 text_color = COLOR_TEXT_MUTED
                 
-            text_surf = font_body.render(t(item), True, text_color)
+            text_surf = render_fit_text(t(item), text_color, item_rect.width - 15, base_size=16, bold=True)
             virtual_surface.blit(text_surf, (25, y_offset))
             y_offset += 40
     else:
@@ -4092,13 +4136,13 @@ def draw_sidebar():
             elif item == "Settings":
                 draw_solid_cog_wheel(virtual_surface, cx-(15 if _is_phone_tabs else 12), cy-(15 if _is_phone_tabs else 12), icon_size, icon_size, text_color)
                 
-            text_surf = font_small.render(t(item), True, text_color)
+            text_surf = render_fit_text(t(item), text_color, item_rect.width - 8)
             tx = item_rect.x + (item_rect.width - text_surf.get_width()) // 2
             ty = item_rect.y + (48 if _is_phone_tabs else 40)
             virtual_surface.blit(text_surf, (tx, ty))
 
 def draw_main_content():
-    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, browser_extra_search_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction, desktop_btn_rect, phone_btn_rect, search_box_rect, top100_btn_rect, song_of_day_btn_rect, artist_of_day_btn_rect, history_maker_btn_rect, subpage_back_rect, max_btn_row_scroll, btn_row_rect, user_scrolled_btn_row, btn_row_scroll_offset, target_btn_row_scroll, grid_toggle_btn_rect, grid_cols_override, theme_btn_rect, language_btn_rect
+    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, browser_extra_search_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction, desktop_btn_rect, phone_btn_rect, search_box_rect, top100_btn_rect, song_of_day_btn_rect, artist_of_day_btn_rect, history_maker_btn_rect, subpage_back_rect, max_btn_row_scroll, btn_row_rect, btn_row_scroll_offset, target_btn_row_scroll, grid_toggle_btn_rect, theme_btn_rect, language_btn_rect
     track_rects = []
     browser_rects = []
     settings_dir_rects = []
@@ -4891,7 +4935,6 @@ def draw_main_content():
 
         # --- PHONE PORTRAIT LAYOUT: search bar full-width on row 1, buttons on row 2 ---
         if is_portrait and layout_mode == "phone":
-            ph_pad = 20  # horizontal padding from content_pad_x
             search_row_y = 80   # row 1: full-width search bar
             btn_row_y = 150      # row 2: buttons (+ Add Folder, cog)
 
@@ -4923,13 +4966,13 @@ def draw_main_content():
             btn_row_rect = row_clip_rect
 
             # Build the ordered list of buttons in the strip: (kind, label, width)
-            strip_buttons = [("add_folder", "+ Add Folder", ph_add_w)]
+            strip_buttons = [("add_folder", t("+ Add Folder"), ph_add_w)]
             if saved_directories:
                 strip_buttons.append(("settings", None, ph_cog_w))
-            strip_buttons.append(("top100", "Top 100", 150))
-            strip_buttons.append(("song_of_day", "Song of Day", 170))
-            strip_buttons.append(("artist_of_day", "Artist of Day", 175))
-            strip_buttons.append(("history_maker", "History", 140))
+            strip_buttons.append(("top100", t("Top 100"), 150))
+            strip_buttons.append(("song_of_day", t("Song of Day"), 170))
+            strip_buttons.append(("artist_of_day", t("Artist of Day"), 175))
+            strip_buttons.append(("history_maker", t("History"), 140))
 
             total_strip_w = sum(w for _, _, w in strip_buttons) + ph_gap * len(strip_buttons)
             max_btn_row_scroll = total_strip_w
@@ -4968,7 +5011,7 @@ def draw_main_content():
                             else:
                                 pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, btn_rect, border_radius=20)
                                 btn_color = COLOR_WHITE
-                            btn_txt = font_small.render(label, True, btn_color)
+                            btn_txt = render_fit_text(label, btn_color, w - 16)
                             virtual_surface.blit(btn_txt, (btn_rect.x + (w - btn_txt.get_width()) // 2,
                                                            btn_rect.y + (ph_btn_h - btn_txt.get_height()) // 2))
                         elif kind == "settings":
@@ -4996,7 +5039,7 @@ def draw_main_content():
                             else:
                                 pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, btn_rect, border_radius=20)
                                 btn_color = COLOR_WHITE
-                            btn_txt = font_small.render(label, True, btn_color)
+                            btn_txt = render_fit_text(label, btn_color, w - 16)
                             virtual_surface.blit(btn_txt, (btn_rect.x + (w - btn_txt.get_width()) // 2,
                                                            btn_rect.y + (ph_btn_h - btn_txt.get_height()) // 2))
                     x_cursor += w + ph_gap
@@ -5426,8 +5469,22 @@ def draw_main_content():
         btn_gap = 20
         btn_y = 100
 
-        desktop_btn_rect = pygame.Rect(content_pad_x, btn_y, btn_w, btn_h)
-        phone_btn_rect = pygame.Rect(content_pad_x + btn_w + btn_gap, btn_y, btn_w, btn_h)
+        if is_portrait and layout_mode == "phone":
+            # Phone: only 2 buttons fit per row on the narrow screen, so stack
+            # the 5 settings buttons into a 2-column grid instead of letting
+            # the 3rd button in a row run off the edge of the screen.
+            desktop_btn_rect = pygame.Rect(content_pad_x, btn_y, btn_w, btn_h)
+            phone_btn_rect = pygame.Rect(content_pad_x + btn_w + btn_gap, btn_y, btn_w, btn_h)
+            grid_toggle_btn_rect = pygame.Rect(content_pad_x, btn_y + (btn_h + btn_gap), btn_w, btn_h)
+            theme_btn_rect = pygame.Rect(content_pad_x + btn_w + btn_gap, btn_y + (btn_h + btn_gap), btn_w, btn_h)
+            language_btn_rect = pygame.Rect(content_pad_x, btn_y + 2 * (btn_h + btn_gap), btn_w, btn_h)
+        else:
+            # Desktop/Tablet: original 3-then-2 row layout, unchanged
+            desktop_btn_rect = pygame.Rect(content_pad_x, btn_y, btn_w, btn_h)
+            phone_btn_rect = pygame.Rect(content_pad_x + btn_w + btn_gap, btn_y, btn_w, btn_h)
+            grid_toggle_btn_rect = pygame.Rect(phone_btn_rect.x + btn_w + btn_gap, btn_y, btn_w, btn_h)
+            theme_btn_rect = pygame.Rect(content_pad_x, btn_y + btn_h + btn_gap, btn_w, btn_h)
+            language_btn_rect = pygame.Rect(theme_btn_rect.x + btn_w + btn_gap, btn_y + btn_h + btn_gap, btn_w, btn_h)
 
         # Desktop/Tablet button — green when active
         is_dt_hovered = desktop_btn_rect.collidepoint(mouse_pos)
@@ -5445,7 +5502,7 @@ def draw_main_content():
             dt_color = COLOR_LIGHT_GREY
             dt_text_color = COLOR_WHITE
         pygame.draw.rect(virtual_surface, dt_color, desktop_btn_rect, border_radius=20)
-        dt_lbl = font_small.render(t("Desktop/Tablet"), True, dt_text_color)
+        dt_lbl = render_fit_text(t("Desktop/Tablet"), dt_text_color, btn_w - 16)
         dt_lbl_x = desktop_btn_rect.x + (btn_w - dt_lbl.get_width()) // 2
         dt_lbl_y = desktop_btn_rect.y + (btn_h - dt_lbl.get_height()) // 2
         virtual_surface.blit(dt_lbl, (dt_lbl_x, dt_lbl_y))
@@ -5466,13 +5523,12 @@ def draw_main_content():
             ph_color = COLOR_LIGHT_GREY
             ph_text_color = COLOR_WHITE
         pygame.draw.rect(virtual_surface, ph_color, phone_btn_rect, border_radius=20)
-        ph_lbl = font_small.render(t("Phone"), True, ph_text_color)
+        ph_lbl = render_fit_text(t("Phone"), ph_text_color, btn_w - 16)
         ph_lbl_x = phone_btn_rect.x + (btn_w - ph_lbl.get_width()) // 2
         ph_lbl_y = phone_btn_rect.y + (btn_h - ph_lbl.get_height()) // 2
         virtual_surface.blit(ph_lbl, (ph_lbl_x, ph_lbl_y))
 
         # Grid columns button
-        grid_toggle_btn_rect = pygame.Rect(phone_btn_rect.x + btn_w + btn_gap, btn_y, btn_w, btn_h)
         gt_hovered = grid_toggle_btn_rect.collidepoint(mouse_pos)
         gt_clicked = gt_hovered and mouse_held
         gt_color = (30, 30, 30) if gt_clicked else (COLOR_HOVER if gt_hovered else COLOR_LIGHT_GREY)
@@ -5481,31 +5537,29 @@ def draw_main_content():
             _grid_lbl_n = grid_cols_override if grid_cols_override else 2
         else:
             _grid_lbl_n = grid_cols_override if grid_cols_override else 5
-        gt_lbl = font_small.render(f"{t('Grid')}: {_grid_lbl_n}", True, COLOR_WHITE)
+        gt_lbl = render_fit_text(f"{t('Grid')}: {_grid_lbl_n}", COLOR_WHITE, btn_w - 16)
         gt_lbl_x = grid_toggle_btn_rect.x + (btn_w - gt_lbl.get_width()) // 2
         gt_lbl_y = grid_toggle_btn_rect.y + (btn_h - gt_lbl.get_height()) // 2
         virtual_surface.blit(gt_lbl, (gt_lbl_x, gt_lbl_y))
 
         # Personalize button — opens the theme/color picker page
-        theme_btn_rect = pygame.Rect(content_pad_x, btn_y + btn_h + btn_gap, btn_w, btn_h)
         th_hovered = theme_btn_rect.collidepoint(mouse_pos)
         th_clicked = th_hovered and mouse_held
         th_color = (20, 150, 65) if th_clicked else (COLOR_SPOTIFY_GREEN if th_hovered else COLOR_LIGHT_GREY)
         th_text_color = COLOR_BLACK if (th_hovered or th_clicked) else COLOR_WHITE
         pygame.draw.rect(virtual_surface, th_color, theme_btn_rect, border_radius=20)
-        th_lbl = font_small.render(t("Personalize"), True, th_text_color)
+        th_lbl = render_fit_text(t("Personalize"), th_text_color, btn_w - 16)
         th_lbl_x = theme_btn_rect.x + (btn_w - th_lbl.get_width()) // 2
         th_lbl_y = theme_btn_rect.y + (btn_h - th_lbl.get_height()) // 2
         virtual_surface.blit(th_lbl, (th_lbl_x, th_lbl_y))
 
         # Language button — opens the language picker page
-        language_btn_rect = pygame.Rect(theme_btn_rect.x + btn_w + btn_gap, btn_y + btn_h + btn_gap, btn_w, btn_h)
         lg_hovered = language_btn_rect.collidepoint(mouse_pos)
         lg_clicked = lg_hovered and mouse_held
         lg_color = (20, 150, 65) if lg_clicked else (COLOR_SPOTIFY_GREEN if lg_hovered else COLOR_LIGHT_GREY)
         lg_text_color = COLOR_BLACK if (lg_hovered or lg_clicked) else COLOR_WHITE
         pygame.draw.rect(virtual_surface, lg_color, language_btn_rect, border_radius=20)
-        lg_lbl = font_small.render(t("Language"), True, lg_text_color)
+        lg_lbl = render_fit_text(t("Language"), lg_text_color, btn_w - 16)
         lg_lbl_x = language_btn_rect.x + (btn_w - lg_lbl.get_width()) // 2
         lg_lbl_y = language_btn_rect.y + (btn_h - lg_lbl.get_height()) // 2
         virtual_surface.blit(lg_lbl, (lg_lbl_x, lg_lbl_y))
@@ -5600,15 +5654,12 @@ def draw_main_content():
 
 # --- MODAL RENDERING ENGINE ---
 def draw_modals():
-    global modal_close_rect, modal_save_rect, modal_input_rect, modal_desc_rect, modal_playlist_rects, modal_image_picker_rect, lyrics_close_rect, lyrics_save_rect, lyrics_clear_rect, lyrics_import_rect, lyrics_search_rect, lyrics_textarea_rect, max_music_scroll, lyrics_editor_cursor_timer, max_lyrics_scroll, target_lyrics_scroll, lyrics_text_changed, lyrics_search_close_rect, lyrics_search_item_rects, max_lyrics_search_scroll, lyrics_manual_rect, lyrics_manual_title_rect, lyrics_manual_artist_rect, lyrics_manual_go_rect, lyrics_manual_close_rect, art_search_close_rect, art_search_item_rects, max_art_search_scroll, art_search_scroll_offset, art_manual_rect, art_manual_title_rect, art_manual_artist_rect, art_manual_go_rect
+    global modal_close_rect, modal_save_rect, modal_input_rect, modal_desc_rect, modal_playlist_rects, modal_image_picker_rect, lyrics_close_rect, lyrics_save_rect, lyrics_clear_rect, lyrics_import_rect, lyrics_search_rect, lyrics_textarea_rect, max_music_scroll, max_lyrics_scroll, target_lyrics_scroll, lyrics_text_changed, lyrics_search_close_rect, lyrics_search_item_rects, max_lyrics_search_scroll, lyrics_manual_rect, lyrics_manual_title_rect, lyrics_manual_artist_rect, lyrics_manual_go_rect, lyrics_manual_close_rect, art_search_close_rect, art_search_item_rects, max_art_search_scroll, art_manual_rect, art_manual_title_rect, art_manual_artist_rect, art_manual_go_rect
     mouse_pos = get_virtual_mouse_pos()
     
     portrait_sidebar_h = (80 if (is_portrait and layout_mode == "phone") else (65 if is_portrait else 0))
     main_x = 0 if is_portrait else 230
     main_w = WIDTH - main_x
-    _phone = is_portrait and layout_mode == "phone"
-    content_bottom_margin = (100 if _phone else (144 if is_portrait else 90)) if (current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal) else 0
-    main_h = HEIGHT - content_bottom_margin - portrait_sidebar_h
     content_pad_x = main_x + 30
 
     # --- ART SEARCH MODAL (overlays the cover browser) ---
@@ -7724,8 +7775,10 @@ while running:
                             show_history_maker_page = False
                         elif show_top100_page:
                             # Refresh button
+                            _main_x = 0 if is_portrait else 230
+                            _main_w = WIDTH - _main_x
                             refresh_rect_hit = pygame.Rect(
-                                main_x + main_w - (240 if is_portrait else 360), 35, 90, 35)
+                                _main_x + _main_w - (240 if is_portrait else 360), 35, 90, 35)
                             if refresh_rect_hit.collidepoint(mouse_pos) and not top100_loading:
                                 start_top100_fetch()
                             else:
@@ -7960,16 +8013,9 @@ while running:
     draw_modals()
     
     # Accurate Letterbox/Pillarbox Screen Scaling
-    if is_portrait and layout_mode == "phone":
-        # Phone mode: virtual surface matches phone aspect ratio exactly — scale to fill edge-to-edge
-        scaled_frame = pygame.transform.scale(virtual_surface, (REAL_WIDTH, REAL_HEIGHT))
-        screen.blit(scaled_frame, (0, 0))
-    else:
-        # Desktop/tablet: original stretch-to-fill behaviour unchanged
-        scaled_frame = pygame.transform.scale(virtual_surface, (REAL_WIDTH, REAL_HEIGHT))
-        screen.blit(scaled_frame, (0, 0))
+    scaled_frame = pygame.transform.scale(virtual_surface, (REAL_WIDTH, REAL_HEIGHT))
+    screen.blit(scaled_frame, (0, 0))
 
-    
     pygame.display.flip()
 
     # --- Idle-aware frame pacing ---
