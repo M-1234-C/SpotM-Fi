@@ -14,6 +14,38 @@ import urllib.parse
 import urllib.error
 import webbrowser
 import datetime
+import socket
+
+# --- NETWORK FIX: force IPv4-only DNS resolution ---
+# On some Android devices, Python's socket.getaddrinfo() (used internally by
+# every urllib.request.urlopen call) fails with:
+#   URLError: <urlopen error [Errno 7] No address associated with hostname>
+# even for perfectly valid, reachable domains (e.g. lrclib.net) and with a
+# working internet connection. This happens because the default lookup mode
+# (AF_UNSPEC) asks for both IPv4 and IPv6 addresses, and some devices'
+# network stacks return an empty/invalid result for the IPv6 half, which
+# getaddrinfo treats as a hard failure instead of falling back to IPv4.
+# Forcing AF_INET-only resolution app-wide avoids this entirely.
+_original_getaddrinfo = socket.getaddrinfo
+def _ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    return _original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+socket.getaddrinfo = _ipv4_only_getaddrinfo
+
+# --- NETWORK FIX: SSL certificate verification on Android ---
+# Android has no system CA certificate bundle that Python's ssl module can
+# find on its own, so every single HTTPS request (lyrics search, album art
+# search, Top 100 chart data, etc.) fails with:
+#   URLError: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate
+#   verify failed (_ssl.c:1007)>
+# even though the connection itself works fine. certifi ships its own
+# up-to-date CA bundle as a plain file, so pointing Python's default HTTPS
+# context at that fixes verification for every urlopen() call app-wide.
+try:
+    import ssl
+    import certifi
+    ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
+except Exception:
+    pass
 
 # --- WINDOW & SCALING CONFIGURATION ---
 pygame.mixer.pre_init(44100, -16, 2, 2048)
@@ -23,6 +55,13 @@ pygame.font.init()
 
 info = pygame.display.Info()
 REAL_WIDTH, REAL_HEIGHT = info.current_w, info.current_h
+
+# Set (from a background/Android callback thread) when the user grants
+# storage permission after app start; the main loop checks this each frame
+# and does the actual library rescan on the main thread — see
+# request_android_permissions() / _on_permissions_result() below.
+_permissions_just_granted = False
+
 
 try:
     DEVICE_REFRESH_RATE = info.refresh_rate
@@ -55,6 +94,86 @@ def set_android_orientation(portrait_locked):
         pass
 
 set_android_orientation(False)  # default: sensor/auto-rotate
+
+# --- ANDROID RUNTIME PERMISSIONS ---
+# Listing permissions in buildozer.spec only adds them to the manifest — on
+# Android 6+ (API 23+) the app must also ASK for "dangerous" permissions
+# (storage, notifications) at runtime, or the OS silently denies them even
+# though they're declared. This must run before any file/music-library access.
+def request_android_permissions():
+    try:
+        from android.permissions import Permission, request_permissions
+    except Exception:
+        return  # not on Android / pyjnius+android recipe unavailable (e.g. desktop testing)
+
+    perms = [
+        Permission.READ_EXTERNAL_STORAGE,
+        Permission.WRITE_EXTERNAL_STORAGE,
+    ]
+    # POST_NOTIFICATIONS only exists as a runtime permission on Android 13+ (API 33).
+    # Guard the attribute lookup so this doesn't break on older API levels/builds.
+    post_notifications = getattr(Permission, "POST_NOTIFICATIONS", None)
+    if post_notifications is not None:
+        perms.append(post_notifications)
+
+    def _on_permissions_result(permissions, results):
+        # request_permissions() is fire-and-forget: it shows the OS dialog and
+        # returns immediately, it does NOT wait for the user to tap Allow/Deny.
+        # Without this callback, the very first library scan at startup
+        # (rebuild_imported_tracks(), called from load-data during boot) runs
+        # before permission is actually granted, finds nothing, and the app
+        # then needs a force-close + relaunch for the (by-then-already-granted)
+        # permission to take effect.
+        #
+        # IMPORTANT: this callback fires on Android's own callback thread, NOT
+        # pygame's main thread. Calling rebuild_imported_tracks() (or anything
+        # touching shared app state / pygame) directly from here caused random
+        # crashes right after granting permission. So we just set a flag here;
+        # the main loop checks it once per frame and does the actual rescan
+        # safely on the main thread.
+        global _permissions_just_granted
+        if all(results):
+            _permissions_just_granted = True
+
+    try:
+        request_permissions(perms, _on_permissions_result)
+    except Exception:
+        pass
+
+    _maybe_request_manage_external_storage()
+
+def _maybe_request_manage_external_storage():
+    # MANAGE_EXTERNAL_STORAGE ("All files access") is a SPECIAL permission on
+    # Android 11+ (API 30+) — it can't be granted via the normal runtime dialog
+    # above. It requires sending the user to a dedicated system settings screen.
+    try:
+        from jnius import autoclass
+        VERSION = autoclass('android.os.Build$VERSION')
+        if VERSION.SDK_INT < 30:
+            return  # not applicable below Android 11
+
+        Environment = autoclass('android.os.Environment')
+        if Environment.isExternalStorageManager():
+            return  # already granted
+
+        Intent = autoclass('android.content.Intent')
+        Settings = autoclass('android.provider.Settings')
+        Uri = autoclass('android.net.Uri')
+
+        try:
+            SDLActivity = autoclass('org.libsdl.app.SDLActivity')
+            activity = SDLActivity.mSingleton if hasattr(SDLActivity, 'mSingleton') else SDLActivity.mActivity
+        except Exception:
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            activity = PythonActivity.mActivity
+
+        intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+        intent.setData(Uri.parse("package:" + activity.getPackageName()))
+        activity.startActivity(intent)
+    except Exception:
+        pass
+
+request_android_permissions()
 
 # Opening links (Spotify/YouTube/Apple search URLs). webbrowser.open() is the
 # safe, standard way to do this and works reliably across devices; wrapped in
@@ -114,6 +233,49 @@ WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, "desk
 screen = pygame.display.set_mode((REAL_WIDTH, REAL_HEIGHT), pygame.FULLSCREEN | pygame.RESIZABLE)
 virtual_surface = pygame.Surface((WIDTH, HEIGHT))
 clock = pygame.time.Clock()
+
+# --- ANIMATED STARTUP SPLASH (spinning logo) ---
+# NOTE on the native "Loading..." screen you see before this: that one is
+# shown by Android itself / python-for-android's bootstrap while it unpacks
+# and starts the embedded Python interpreter — it appears before any of our
+# code has run yet, so it can't be replaced with an animation from here (it's
+# a one-time, unavoidable bit of real work, typically a couple seconds). What
+# we CAN control is everything from the moment Python actually starts, which
+# is this screen: a branded, spinning version of the app icon while the rest
+# of startup (fonts, saved data, music library scan) finishes underneath.
+def _play_spinning_logo_splash(duration_seconds=1.4):
+    try:
+        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "icon.png")
+        logo_img = pygame.image.load(logo_path).convert_alpha()
+    except Exception:
+        return  # no icon on disk (e.g. running a bare script copy) — just skip the splash
+
+    logo_size = int(min(REAL_WIDTH, REAL_HEIGHT) * 0.28)
+    logo_img = pygame.transform.smoothscale(logo_img, (logo_size, logo_size))
+    center = (REAL_WIDTH // 2, REAL_HEIGHT // 2)
+
+    splash_clock = pygame.time.Clock()
+    elapsed = 0.0
+    degrees_per_second = 260.0  # one full rotation ~every 1.4s
+
+    while elapsed < duration_seconds:
+        dt = splash_clock.tick(60) / 1000.0
+        elapsed += dt
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+        angle = (elapsed * degrees_per_second) % 360
+        rotated = pygame.transform.rotozoom(logo_img, -angle, 1.0)
+        rotated_rect = rotated.get_rect(center=center)
+
+        screen.fill(COLOR_BLACK if "COLOR_BLACK" in globals() else (24, 24, 24))
+        screen.blit(rotated, rotated_rect)
+        pygame.display.flip()
+
+_play_spinning_logo_splash()
 
 # FIXED: Safe compilation safeguard for platforms missing the pygame.scrap module entirely
 HAS_DESKTOP_SCRAP = False
@@ -6763,9 +6925,31 @@ search_message = t("Tap '+ Add Folder' to open the built-in storage browser.")
 set_android_orientation(layout_mode == "phone")
 if layout_mode == "phone":
     is_portrait = True
-WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, layout_mode)
+
+# On some Android devices, the REAL_WIDTH/REAL_HEIGHT measured earlier via
+# pygame.display.Info() (before fullscreen mode was actually engaged) is
+# wrong/stale — the true screen size only settles once the fullscreen window
+# itself exists. This produced a media bar that was positioned wrong (half
+# off-screen) on first launch, and only fixed itself once a real resize event
+# (e.g. rotating the device) came through and corrected it. Re-measuring here,
+# right after fullscreen mode is up and using the same correction logic as
+# the VIDEORESIZE handler below, avoids needing that manual rotation.
+_measured_w, _measured_h = screen.get_size()
+if (_measured_w, _measured_h) != (REAL_WIDTH, REAL_HEIGHT):
+    REAL_WIDTH, REAL_HEIGHT = _measured_w, _measured_h
+    if layout_mode == "phone":
+        is_portrait = True
+    else:
+        is_portrait = REAL_HEIGHT > REAL_WIDTH
+
+if layout_mode == "phone":
+    _calc_w, _calc_h = (REAL_WIDTH, REAL_HEIGHT) if REAL_HEIGHT >= REAL_WIDTH else (REAL_HEIGHT, REAL_WIDTH)
+    WIDTH, HEIGHT = compute_virtual_size(_calc_w, _calc_h, is_portrait, layout_mode)
+else:
+    WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, layout_mode)
 virtual_surface = pygame.Surface((WIDTH, HEIGHT))
 running = True
+
 
 virtual_keyboard_active = False
 mouse_held = False
@@ -6773,6 +6957,13 @@ mouse_just_released = False
 button_flash_frames = 0
 
 while running:
+    if _permissions_just_granted:
+        _permissions_just_granted = False
+        try:
+            rebuild_imported_tracks()
+        except Exception:
+            pass
+
     # Button highlight: count down flash frames so highlight shows for at least 2
     # rendered frames even when FINGERDOWN+FINGERUP arrive in the same event pump
     if button_flash_frames > 0:
