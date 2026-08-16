@@ -1,6 +1,7 @@
 import pygame
 import sys
 import os
+import io
 import uuid
 import tempfile
 import time
@@ -369,7 +370,15 @@ def get_clipboard_text():
 
 # --- DATA STORAGE ---
 DATA_FILE = "SpotM-Fi.json"
-COVERS_DIR = "SpotMFi_Covers"
+# Absolute path: on Android, pygame.image.load() goes through SDL's file-loading
+# layer, which treats a relative path as an app-asset lookup rather than
+# resolving it against the process's working directory the way Python's own
+# open() does. That mismatch meant a cover could download and save fine, but
+# then fail to load right after with "No file 'SpotMFi_Covers/cover_...'" even
+# though the file was really there. Using an absolute path here makes both the
+# write (open()) and every later load (pygame.image.load()) agree on the same
+# real filesystem location.
+COVERS_DIR = os.path.abspath("SpotMFi_Covers")
 os.makedirs(COVERS_DIR, exist_ok=True)
 sidebar_items = ["Search", "Your Library", "Settings"] 
 track_list = []
@@ -2557,6 +2566,13 @@ art_search_item_rects    = []
 art_search_scroll_offset = 0.0
 target_art_search_scroll = 0.0
 max_art_search_scroll    = 0
+art_apply_thread         = None
+art_apply_pending        = False   # True while the chosen artwork is downloading in the background
+art_apply_result_path    = None    # set by the worker thread when the download finishes ("" on failure)
+art_apply_track_path     = None    # which track the in-flight download belongs to
+art_search_thumb_surfaces = {}     # artworkUrl60 -> small pygame.Surface, filled in as thumbnails download
+art_search_thumb_failed   = set()  # urls that failed to download, so we stop retrying them
+art_search_thumb_gen      = 0      # bumped each new search so stale background downloads don't overwrite a newer search's thumbs
 cancel_browser_btn_rect = pygame.Rect(0, 0, 0, 0)
 close_settings_btn_rect = pygame.Rect(0, 0, 0, 0)
 grid_toggle_btn_rect = pygame.Rect(0, 0, 0, 0)
@@ -3390,6 +3406,7 @@ def fetch_itunes_art_candidates(title, artist):
                 art_search_results = results
                 art_search_error = ""
                 art_search_loading = False
+                _start_art_search_thumbnails(results)
                 return
 
         art_search_results = []
@@ -3399,6 +3416,36 @@ def fetch_itunes_art_candidates(title, artist):
         art_search_error = f"Failed - {type(e).__name__}: {e}"
     finally:
         art_search_loading = False
+
+def _fetch_art_search_thumbnails_worker(results, my_gen):
+    """Background thread: downloads the small (60x60) iTunes thumbnail for each
+    search result so the list can show the actual cover instead of a generic
+    placeholder icon. Runs sequentially (thumbnails are tiny) and stores decoded
+    surfaces in art_search_thumb_surfaces, keyed by artworkUrl60, as they arrive
+    so rows can start showing real art before the whole batch finishes."""
+    global art_search_thumb_gen
+    for result in results:
+        if my_gen != art_search_thumb_gen:
+            return  # a newer search superseded this one; stop wasting requests
+        url = result.get("artworkUrl60") or result.get("artworkUrl100") or result.get("artworkUrl30")
+        if not url or url in art_search_thumb_surfaces or url in art_search_thumb_failed:
+            continue
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "SpotMFi/1.0"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                img_bytes = resp.read()
+            raw_img = pygame.image.load(io.BytesIO(img_bytes))
+            thumb_surf = pygame.transform.smoothscale(raw_img, (52, 52))
+            if my_gen == art_search_thumb_gen:
+                art_search_thumb_surfaces[url] = thumb_surf
+        except Exception:
+            art_search_thumb_failed.add(url)
+
+def _start_art_search_thumbnails(results):
+    global art_search_thumb_gen
+    art_search_thumb_gen += 1
+    threading.Thread(target=_fetch_art_search_thumbnails_worker,
+                      args=(results, art_search_thumb_gen), daemon=True).start()
 
 def start_art_search(title, artist):
     global show_art_search_modal, art_search_loading, art_search_results, art_search_error, art_search_thread, art_search_scroll_offset
@@ -3429,6 +3476,25 @@ def apply_itunes_art(artwork_url):
     except Exception as e:
         art_search_error = f"Failed - {type(e).__name__}: {e}"
         return None
+
+def _apply_itunes_art_worker(artwork_url, track_path):
+    """Background thread: downloads the chosen artwork off the UI thread so the
+    app doesn't freeze while waiting on the network (this was previously done
+    inline in the click handler, which blocked rendering/input on slow/mobile
+    connections)."""
+    global art_apply_result_path, art_apply_pending
+    result = apply_itunes_art(artwork_url)
+    art_apply_result_path = result if result else ""
+    art_apply_pending = False
+
+def start_apply_itunes_art(artwork_url, track_path):
+    global art_apply_thread, art_apply_pending, art_apply_result_path, art_apply_track_path, art_search_error
+    art_apply_pending     = True
+    art_apply_result_path = None
+    art_apply_track_path  = track_path
+    art_search_error      = ""
+    art_apply_thread = threading.Thread(target=_apply_itunes_art_worker, args=(artwork_url, track_path), daemon=True)
+    art_apply_thread.start()
 
 def _fetch_top100_worker():
     """Background thread: fetches chart data then kicks off artwork downloads."""
@@ -4087,8 +4153,14 @@ def scan_confirmed_directory(target_dir):
     is_browsing_storage = False  
     save_app_data() 
     
-def get_virtual_mouse_pos():
-    real_x, real_y = pygame.mouse.get_pos()
+def get_virtual_mouse_pos(real_pos=None):
+    # real_pos lets a caller pass the exact position carried by a specific event
+    # (event.pos) instead of falling back to pygame.mouse.get_pos(). On some
+    # Android/SDL2 builds the internally-tracked cursor position queried via
+    # get_pos() can drift slightly from the position an actual touch event
+    # carried, which showed up as every tap needing to land above the button
+    # it was meant to hit. Passing the event's own pos avoids that mismatch.
+    real_x, real_y = real_pos if real_pos is not None else pygame.mouse.get_pos()
     scale_x = REAL_WIDTH / WIDTH
     scale_y = REAL_HEIGHT / HEIGHT
     virtual_x = int(real_x / scale_x)
@@ -5923,19 +5995,34 @@ def draw_modals():
         elif art_search_loading:
             wait_lbl = font_body.render(t("Searching iTunes..."), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(wait_lbl, (card_x + 20, body_top + 20))
+        elif art_apply_pending:
+            dl_lbl = font_body.render(t("Downloading cover..."), True, COLOR_TEXT_MUTED)
+            virtual_surface.blit(dl_lbl, (card_x + 20, body_top + 20))
         elif art_search_error and not art_search_results:
             for ei, eline in enumerate(get_wrapped_lines(art_search_error, font_body, body_rect.width - 30)):
                 virtual_surface.blit(font_body.render(eline, True, (200, 90, 90)),
                                      (card_x + 20, body_top + 20 + ei * 28))
         else:
-            virtual_surface.set_clip(body_rect)
+            banner_h = 0
+            if art_search_error:
+                banner_h = 34
+                banner_rect = pygame.Rect(card_x + 14, body_top, card_w - 28, banner_h - 6)
+                pygame.draw.rect(virtual_surface, (60, 30, 30), banner_rect, border_radius=6)
+                err_txt = art_search_error
+                if len(err_txt) > 70: err_txt = err_txt[:68] + "\u2026"
+                err_surf = font_small.render(err_txt, True, (235, 140, 140))
+                virtual_surface.blit(err_surf, (banner_rect.x + 10, banner_rect.y + 6))
+
+            list_top = body_top + banner_h
+            list_rect = pygame.Rect(body_rect.x, list_top, body_rect.width, body_rect.height - banner_h)
+            virtual_surface.set_clip(list_rect)
             item_h = 68
-            y_item = body_top - round(art_search_scroll_offset)
-            max_art_search_scroll = max(0, len(art_search_results) * item_h - body_rect.height + 10)
+            y_item = list_top - round(art_search_scroll_offset)
+            max_art_search_scroll = max(0, len(art_search_results) * item_h - list_rect.height + 10)
 
             for idx, result in enumerate(art_search_results):
                 row_rect = pygame.Rect(card_x + 14, y_item, card_w - 28, item_h - 6)
-                if row_rect.colliderect(body_rect):
+                if row_rect.colliderect(list_rect):
                     art_search_item_rects.append((row_rect, idx))
                     row_hov = row_rect.collidepoint(mouse_pos)
                     row_clk = row_hov and mouse_held
@@ -5943,9 +6030,14 @@ def draw_modals():
                     pygame.draw.rect(virtual_surface, row_bg, row_rect, border_radius=6)
 
                     thumb_rect = pygame.Rect(row_rect.x + 8, row_rect.y + 8, 52, 52)
-                    pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, thumb_rect, border_radius=4)
-                    note = font_small.render("\u266a", True, COLOR_TEXT_MUTED)
-                    virtual_surface.blit(note, (thumb_rect.x + 20, thumb_rect.y + 16))
+                    thumb_url = result.get("artworkUrl60") or result.get("artworkUrl100") or result.get("artworkUrl30")
+                    thumb_surf = art_search_thumb_surfaces.get(thumb_url) if thumb_url else None
+                    if thumb_surf is not None:
+                        virtual_surface.blit(thumb_surf, thumb_rect.topleft)
+                    else:
+                        pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, thumb_rect, border_radius=4)
+                        note = font_small.render("\u266a", True, COLOR_TEXT_MUTED)
+                        virtual_surface.blit(note, (thumb_rect.x + 20, thumb_rect.y + 16))
 
                     track_name  = result.get("trackName")  or result.get("collectionName") or "Unknown"
                     artist_name = result.get("artistName") or "Unknown"
@@ -6926,28 +7018,6 @@ set_android_orientation(layout_mode == "phone")
 if layout_mode == "phone":
     is_portrait = True
 
-# On some Android devices, the REAL_WIDTH/REAL_HEIGHT measured earlier via
-# pygame.display.Info() (before fullscreen mode was actually engaged) is
-# wrong/stale — the true screen size only settles once the fullscreen window
-# itself exists. This produced a media bar that was positioned wrong (half
-# off-screen) on first launch, and only fixed itself once a real resize event
-# (e.g. rotating the device) came through and corrected it. Re-measuring here,
-# right after fullscreen mode is up and using the same correction logic as
-# the VIDEORESIZE handler below, avoids needing that manual rotation.
-_measured_w, _measured_h = screen.get_size()
-if (_measured_w, _measured_h) != (REAL_WIDTH, REAL_HEIGHT):
-    REAL_WIDTH, REAL_HEIGHT = _measured_w, _measured_h
-    if layout_mode == "phone":
-        is_portrait = True
-    else:
-        is_portrait = REAL_HEIGHT > REAL_WIDTH
-
-if layout_mode == "phone":
-    _calc_w, _calc_h = (REAL_WIDTH, REAL_HEIGHT) if REAL_HEIGHT >= REAL_WIDTH else (REAL_HEIGHT, REAL_WIDTH)
-    WIDTH, HEIGHT = compute_virtual_size(_calc_w, _calc_h, is_portrait, layout_mode)
-else:
-    WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, layout_mode)
-virtual_surface = pygame.Surface((WIDTH, HEIGHT))
 running = True
 
 
@@ -6957,12 +7027,70 @@ mouse_just_released = False
 button_flash_frames = 0
 
 while running:
+    # Keep REAL_WIDTH/REAL_HEIGHT in sync with the actual window size every frame.
+    # On some Android devices the fullscreen window's true size keeps settling for a
+    # frame or two after it's created, so a single one-time re-measurement (as used
+    # to happen right before this loop) can still catch a stale value. That stale
+    # value silently breaks touch accuracy: rendering still looks fine (it just uses
+    # whatever WIDTH/HEIGHT was derived from it), but get_virtual_mouse_pos() scales
+    # every tap by REAL_HEIGHT/HEIGHT, so a too-small REAL_HEIGHT makes taps register
+    # lower than where you actually touched — you end up having to tap above a button
+    # to hit it. Re-checking every frame means it self-corrects the instant the OS
+    # reports the settled size, with no rotation/resize needed to trigger it.
+    _cur_w, _cur_h = screen.get_size()
+    if (_cur_w, _cur_h) != (REAL_WIDTH, REAL_HEIGHT):
+        REAL_WIDTH, REAL_HEIGHT = _cur_w, _cur_h
+        if layout_mode == "phone":
+            is_portrait = True
+        else:
+            is_portrait = REAL_HEIGHT > REAL_WIDTH
+        if layout_mode == "phone":
+            _calc_w, _calc_h = (REAL_WIDTH, REAL_HEIGHT) if REAL_HEIGHT >= REAL_WIDTH else (REAL_HEIGHT, REAL_WIDTH)
+            WIDTH, HEIGHT = compute_virtual_size(_calc_w, _calc_h, is_portrait, layout_mode)
+        else:
+            WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, layout_mode)
+        virtual_surface = pygame.Surface((WIDTH, HEIGHT))
+
     if _permissions_just_granted:
         _permissions_just_granted = False
         try:
             rebuild_imported_tracks()
         except Exception:
             pass
+
+    # Pick up the result of a background artwork download started from the
+    # "Search Album Art" modal (see start_apply_itunes_art). We poll here
+    # instead of blocking in the click handler so the UI stays responsive
+    # while the download is in flight.
+    if not art_apply_pending and art_apply_result_path is not None:
+        tmp_path = art_apply_result_path
+        t_path = art_apply_track_path
+        art_apply_result_path = None
+        art_apply_track_path = None
+        if tmp_path:
+            try:
+                raw_img = pygame.image.load(tmp_path)
+                grid_cover_surf = pygame.transform.smoothscale(raw_img, (130, 130))
+                track_covers[t_path] = {"image_path": tmp_path, "surface": grid_cover_surf}
+                if current_track.get("path") == t_path:
+                    current_track["cover_surface"] = grid_cover_surf
+                for t in imported_tracks:
+                    if t["path"] == t_path:
+                        t["cover_surface"] = grid_cover_surf
+                for t in liked_tracks:
+                    if t["path"] == t_path:
+                        t["cover_surface"] = grid_cover_surf
+                for p_data in custom_playlists.values():
+                    for t in p_data["tracks"]:
+                        if t["path"] == t_path:
+                            t["cover_surface"] = grid_cover_surf
+                save_app_data()
+                show_art_search_modal = False
+                is_browsing_for_cover = False
+            except Exception as art_err:
+                art_search_error = f"Failed - {art_err}"
+        # if tmp_path is falsy, apply_itunes_art already set art_search_error
+        # with the real failure reason, so the modal just shows that message.
 
     # Button highlight: count down flash frames so highlight shows for at least 2
     # rendered frames even when FINGERDOWN+FINGERUP arrive in the same event pump
@@ -7289,7 +7417,7 @@ while running:
             if event.button == 1:
                 button_flash_frames = 3
                 mouse_held = True
-            mouse_pos = get_virtual_mouse_pos()
+            mouse_pos = get_virtual_mouse_pos(event.pos)
             
             if current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal:
                 if progress_bar_rect.collidepoint(mouse_pos) and track_duration > 0 and music_loaded:
@@ -7349,7 +7477,7 @@ while running:
                     last_touch_x = mouse_pos[0]
                 
         elif event.type == pygame.MOUSEMOTION:
-            mouse_pos = get_virtual_mouse_pos()
+            mouse_pos = get_virtual_mouse_pos(event.pos)
             
             if is_dragging_progress:
                 relative_x = mouse_pos[0] - progress_bar_rect.x
@@ -7424,7 +7552,7 @@ while running:
                             last_touch_y = mouse_pos[1]
 
         elif event.type == pygame.MOUSEBUTTONUP:
-            mouse_pos = get_virtual_mouse_pos()
+            mouse_pos = get_virtual_mouse_pos(event.pos)
             if event.button == 1:
                 # Compute momentum from recent velocity samples and kick the target
                 if _scroll_velocity_samples and is_dragging_grid:
@@ -7802,30 +7930,11 @@ while running:
                                 if row_rect.collidepoint(mouse_pos):
                                     result = art_search_results[idx]
                                     art_url = result.get("artworkUrl100", "")
-                                    if art_url:
-                                        tmp_path = apply_itunes_art(art_url)
-                                        if tmp_path:
-                                            try:
-                                                raw_img = pygame.image.load(tmp_path)
-                                                grid_cover_surf = pygame.transform.smoothscale(raw_img, (130, 130))
-                                                t_path = current_track["path"]
-                                                track_covers[t_path] = {"image_path": tmp_path, "surface": grid_cover_surf}
-                                                current_track["cover_surface"] = grid_cover_surf
-                                                for t in imported_tracks:
-                                                    if t["path"] == t_path:
-                                                        t["cover_surface"] = grid_cover_surf
-                                                for t in liked_tracks:
-                                                    if t["path"] == t_path:
-                                                        t["cover_surface"] = grid_cover_surf
-                                                for p_data in custom_playlists.values():
-                                                    for t in p_data["tracks"]:
-                                                        if t["path"] == t_path:
-                                                            t["cover_surface"] = grid_cover_surf
-                                                save_app_data()
-                                                show_art_search_modal = False
-                                                is_browsing_for_cover = False
-                                            except Exception as art_err:
-                                                art_search_error = f"Failed - {art_err}"
+                                    if art_url and not art_apply_pending:
+                                        # Download in the background instead of blocking the UI thread here.
+                                        # art_apply_pending is polled each frame (see main loop) and the
+                                        # cover gets applied once the download finishes.
+                                        start_apply_itunes_art(art_url, current_track["path"])
                                     break
                         continue
 
