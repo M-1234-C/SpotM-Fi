@@ -3383,6 +3383,22 @@ def start_lyrics_search(title, artist):
     lyrics_search_thread = threading.Thread(target=fetch_synced_lyrics_candidates, args=(title, artist), daemon=True)
     lyrics_search_thread.start()
 
+def _decode_image_bytes_safely(img_bytes):
+    """Decode raw image bytes into a pygame Surface, going through Pillow first.
+    Pygame's own built-in image loader can lack full JPEG support (and has been
+    seen to hard-crash the whole app instead of raising a catchable error) on
+    some Android builds — this is the same workaround already used elsewhere in
+    this file for embedded ID3/FLAC/MP4 cover art. iTunes artwork downloads hit
+    the exact same decoder, so they need the same protection. Falls back to
+    pygame's own loader only if Pillow isn't available."""
+    try:
+        from PIL import Image
+        pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        return pygame.image.fromstring(pil_img.tobytes(), pil_img.size, "RGB")
+    except Exception:
+        pass
+    return pygame.image.load(io.BytesIO(img_bytes))
+
 def fetch_itunes_art_candidates(title, artist):
     """Background thread: queries the iTunes Search API for artwork candidates."""
     global art_search_loading, art_search_results, art_search_error
@@ -3434,7 +3450,7 @@ def _fetch_art_search_thumbnails_worker(results, my_gen):
             req = urllib.request.Request(url, headers={"User-Agent": "SpotMFi/1.0"})
             with urllib.request.urlopen(req, timeout=10) as resp:
                 img_bytes = resp.read()
-            raw_img = pygame.image.load(io.BytesIO(img_bytes))
+            raw_img = _decode_image_bytes_safely(img_bytes)
             thumb_surf = pygame.transform.smoothscale(raw_img, (52, 52))
             if my_gen == art_search_thumb_gen:
                 art_search_thumb_surfaces[url] = thumb_surf
@@ -3771,10 +3787,32 @@ def _start_listen_session(path):
     _listen_session_start = time.time()
 
 
+def _json_safe_track(t):
+    """Return a copy of a track dict with runtime-only, non-JSON-serializable
+    fields stripped out (currently just "cover_surface", a pygame.Surface).
+
+    Track dicts get a live "cover_surface" attached in-memory whenever art is
+    applied (from the iTunes search, from a local file, or from embedded
+    ID3/FLAC/MP4 tags) so they render immediately without a reload. That same
+    dict object is what liked_tracks / custom_playlists store, so saving them
+    as-is means the Surface goes straight into json.dump(), which doesn't
+    know how to serialize it. That raised a TypeError partway through writing
+    the file - after it was already truncated open in "w" mode - leaving a
+    corrupt, half-written data file on disk. The next load would then fail to
+    parse it and silently reset the whole library (saved folders, liked
+    songs, playlists) to empty, even though nothing looked wrong at the time
+    the art was applied. Stripping the surface here (the actual pixels are
+    still safe on disk via "image_path"/track_covers) avoids that entirely.
+    """
+    if "cover_surface" in t:
+        t = {k: v for k, v in t.items() if k != "cover_surface"}
+    return t
+
+
 def save_app_data():
     data = {
         "saved_directories": saved_directories,
-        "liked_tracks": liked_tracks,
+        "liked_tracks": [_json_safe_track(t) for t in liked_tracks],
         "liked_songs_custom_cover": {"image_path": liked_songs_custom_cover.get("image_path")},
         "custom_playlists": {},
         "song_lyrics_database": song_lyrics_database,
@@ -3790,7 +3828,7 @@ def save_app_data():
     
     for p_name, p_data in custom_playlists.items():
         data["custom_playlists"][p_name] = {
-            "tracks": p_data["tracks"],
+            "tracks": [_json_safe_track(t) for t in p_data["tracks"]],
             "image_path": p_data["image_path"],
             "description": p_data["description"]
         }
@@ -3826,7 +3864,9 @@ def load_app_data():
         liked_songs_custom_cover["image_path"] = lsc.get("image_path")
         if liked_songs_custom_cover["image_path"] and os.path.exists(liked_songs_custom_cover["image_path"]):
             try:
-                raw_img = pygame.image.load(liked_songs_custom_cover["image_path"])
+                with open(liked_songs_custom_cover["image_path"], "rb") as _f:
+                    raw_img = _decode_image_bytes_safely(_f.read())
+                raw_img = raw_img.convert()
                 liked_songs_custom_cover["surface"] = pygame.transform.smoothscale(raw_img, (130, 110))
             except:
                 pass
@@ -3841,7 +3881,9 @@ def load_app_data():
             img_path = t_cover.get("image_path")
             if img_path and os.path.exists(img_path):
                 try:
-                    raw_img = pygame.image.load(img_path)
+                    with open(img_path, "rb") as _f:
+                        raw_img = _decode_image_bytes_safely(_f.read())
+                    raw_img = raw_img.convert()
                     cover_surf = pygame.transform.smoothscale(raw_img, (130, 130))
                     track_covers[t_path] = {"image_path": img_path, "surface": cover_surf}
                 except:
@@ -3852,7 +3894,9 @@ def load_app_data():
             surface = None
             if p_data.get("image_path") and os.path.exists(p_data["image_path"]):
                 try:
-                    raw_img = pygame.image.load(p_data["image_path"])
+                    with open(p_data["image_path"], "rb") as _f:
+                        raw_img = _decode_image_bytes_safely(_f.read())
+                    raw_img = raw_img.convert()
                     surface = pygame.transform.smoothscale(raw_img, (130, 110))
                 except:
                     pass
@@ -4160,6 +4204,20 @@ def get_virtual_mouse_pos(real_pos=None):
     # get_pos() can drift slightly from the position an actual touch event
     # carried, which showed up as every tap needing to land above the button
     # it was meant to hit. Passing the event's own pos avoids that mismatch.
+    #
+    # On top of that: if a real touch was just seen (_last_touch_norm, set from
+    # FINGERDOWN/FINGERMOTION/FINGERUP's own normalized [0,1] coordinates),
+    # prefer computing straight from that instead of any pixel-space position at
+    # all. SDL synthesizes MOUSEBUTTONDOWN/UP's pixel event.pos from the same
+    # touch using SDL's own internally-tracked window size - if that internal
+    # size is stale, the synthesized pixel position is wrong in a way neither
+    # get_pos() nor event.pos can recover from. Normalized touch coordinates
+    # aren't derived from any window-size assumption, so they can't drift.
+    if _last_touch_norm is not None:
+        nx, ny = _last_touch_norm
+        virtual_x = int(nx * WIDTH)
+        virtual_y = int(ny * HEIGHT)
+        return (virtual_x, virtual_y)
     real_x, real_y = real_pos if real_pos is not None else pygame.mouse.get_pos()
     scale_x = REAL_WIDTH / WIDTH
     scale_y = REAL_HEIGHT / HEIGHT
@@ -7025,6 +7083,14 @@ virtual_keyboard_active = False
 mouse_held = False
 mouse_just_released = False
 button_flash_frames = 0
+# Most recent touch position as SDL's own normalized [0,1] finger coordinates
+# (from FINGERDOWN/FINGERMOTION/FINGERUP). These are resolution-independent by
+# definition, unlike the synthesized MOUSEBUTTONDOWN/UP event.pos Android
+# derives from them - if SDL's touch-to-pixel translation is using a stale
+# window size internally, event.pos can be scaled wrong in a way nothing on
+# the Python side can detect or correct. Preferring the raw normalized touch
+# position sidesteps that class of bug entirely. None on desktop (no touches).
+_last_touch_norm = None
 
 while running:
     # Keep REAL_WIDTH/REAL_HEIGHT in sync with the actual window size every frame.
@@ -7069,21 +7135,24 @@ while running:
         art_apply_track_path = None
         if tmp_path:
             try:
-                raw_img = pygame.image.load(tmp_path)
+                with open(tmp_path, "rb") as _cover_f:
+                    _cover_bytes = _cover_f.read()
+                raw_img = _decode_image_bytes_safely(_cover_bytes)
+                raw_img = raw_img.convert()  # normalize to the display's pixel format (main thread only) before smoothscale/blit
                 grid_cover_surf = pygame.transform.smoothscale(raw_img, (130, 130))
                 track_covers[t_path] = {"image_path": tmp_path, "surface": grid_cover_surf}
                 if current_track.get("path") == t_path:
                     current_track["cover_surface"] = grid_cover_surf
-                for t in imported_tracks:
-                    if t["path"] == t_path:
-                        t["cover_surface"] = grid_cover_surf
-                for t in liked_tracks:
-                    if t["path"] == t_path:
-                        t["cover_surface"] = grid_cover_surf
+                for trk in imported_tracks:
+                    if trk["path"] == t_path:
+                        trk["cover_surface"] = grid_cover_surf
+                for trk in liked_tracks:
+                    if trk["path"] == t_path:
+                        trk["cover_surface"] = grid_cover_surf
                 for p_data in custom_playlists.values():
-                    for t in p_data["tracks"]:
-                        if t["path"] == t_path:
-                            t["cover_surface"] = grid_cover_surf
+                    for trk in p_data["tracks"]:
+                        if trk["path"] == t_path:
+                            trk["cover_surface"] = grid_cover_surf
                 save_app_data()
                 show_art_search_modal = False
                 is_browsing_for_cover = False
@@ -7407,6 +7476,13 @@ while running:
         elif event.type == pygame.FINGERDOWN:
             button_flash_frames = 3
             mouse_held = True
+            _last_touch_norm = (event.x, event.y)
+
+        elif event.type == pygame.FINGERMOTION:
+            _last_touch_norm = (event.x, event.y)
+
+        elif event.type == pygame.FINGERUP:
+            _last_touch_norm = (event.x, event.y)
 
         elif event.type == getattr(pygame, 'WINDOWFOCUSLOST', None) or \
              event.type == getattr(pygame, 'WINDOWEVENT', None):
@@ -7979,16 +8055,16 @@ while running:
                                                 grid_cover_surf = pygame.transform.smoothscale(raw_img, (130, 130))
                                                 track_covers[current_track["path"]] = {"image_path": item["path"], "surface": grid_cover_surf}
                                                 current_track["cover_surface"] = grid_cover_surf
-                                                for t in imported_tracks:
-                                                    if t["path"] == current_track["path"]:
-                                                        t["cover_surface"] = grid_cover_surf
-                                                for t in liked_tracks:
-                                                    if t["path"] == current_track["path"]:
-                                                        t["cover_surface"] = grid_cover_surf
+                                                for trk in imported_tracks:
+                                                    if trk["path"] == current_track["path"]:
+                                                        trk["cover_surface"] = grid_cover_surf
+                                                for trk in liked_tracks:
+                                                    if trk["path"] == current_track["path"]:
+                                                        trk["cover_surface"] = grid_cover_surf
                                                 for p_data in custom_playlists.values():
-                                                    for t in p_data["tracks"]:
-                                                        if t["path"] == current_track["path"]:
-                                                            t["cover_surface"] = grid_cover_surf
+                                                    for trk in p_data["tracks"]:
+                                                        if trk["path"] == current_track["path"]:
+                                                            trk["cover_surface"] = grid_cover_surf
                                             save_app_data()
                                         except Exception as image_err:
                                             print(f"Error importing cover layout graphics: {image_err}")
@@ -8307,11 +8383,35 @@ while running:
 
     virtual_surface.fill(COLOR_BLACK)
     
-    draw_main_content()
-    draw_sidebar()
-    draw_media_bar()
-    draw_modals()
-    
+    # Each draw call gets its own try/except instead of one shared block: if a
+    # single section (e.g. modals, right after a cover finishes applying) hits
+    # an error, the others still render instead of the whole frame coming out
+    # blank/gray. Previously all four were in one try, so an early failure in
+    # draw_main_content meant NOTHING else drew that frame - and since the
+    # underlying state causing the error didn't change, it repeated every
+    # single frame, which is exactly what a "stuck gray screen" looks like.
+    import traceback as _tb
+    try:
+        draw_main_content()
+    except Exception as _e:
+        print("Render error in draw_main_content (recovered):")
+        _tb.print_exc()
+    try:
+        draw_sidebar()
+    except Exception as _e:
+        print("Render error in draw_sidebar (recovered):")
+        _tb.print_exc()
+    try:
+        draw_media_bar()
+    except Exception as _e:
+        print("Render error in draw_media_bar (recovered):")
+        _tb.print_exc()
+    try:
+        draw_modals()
+    except Exception as _e:
+        print("Render error in draw_modals (recovered):")
+        _tb.print_exc()
+
     # Accurate Letterbox/Pillarbox Screen Scaling
     scaled_frame = pygame.transform.scale(virtual_surface, (REAL_WIDTH, REAL_HEIGHT))
     screen.blit(scaled_frame, (0, 0))
