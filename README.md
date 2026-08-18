@@ -41,7 +41,7 @@ SpotM-Fi supports a wide range of formats out of the box, with even more availab
 | OGG | ✅ | MPEG Audio | ✅ |
 | OPUS | ✅ | WMA | ⚠️ Platform Dependent |
 | M4A | ✅ | MP4 Audio | ✅ |
-| AAC | ✅ | ALAC | ✅ |
+| AAC | ✅ | F/ALAC | ✅ |
 
 > Some formats require the optional libraries listed in [Installation](#installation).
 
