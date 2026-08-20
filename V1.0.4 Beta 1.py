@@ -16,6 +16,7 @@ import urllib.error
 import webbrowser
 import datetime
 import socket
+import difflib
 
 # --- NETWORK FIX: force IPv4-only DNS resolution ---
 # On some Android devices, Python's socket.getaddrinfo() (used internally by
@@ -48,6 +49,17 @@ try:
 except Exception:
     pass
 
+# --- BACKGROUND PLAYBACK: don't let SDL pause audio / freeze the main loop
+# when the app is backgrounded (screen locked, user switches app, etc.) ---
+# By default, SDL's Android activity pauses BOTH audio playback and the main
+# thread the moment the app loses focus. That's fine for a game, but it's
+# exactly why music used to just stop instead of continuing (and finished
+# tracks never advanced to the next one) once the screen turned off or the
+# app was minimized. These hints must be set before pygame.init() opens the
+# audio device / activity.
+os.environ.setdefault("SDL_ANDROID_BLOCK_ON_PAUSE_PAUSEAUDIO", "0")  # keep playing audio in the background
+os.environ.setdefault("SDL_ANDROID_BLOCK_ON_PAUSE", "0")             # keep the main loop (and therefore auto-advance-to-next-track) running in the background
+
 # --- WINDOW & SCALING CONFIGURATION ---
 pygame.mixer.pre_init(44100, -16, 2, 2048)
 pygame.init()
@@ -62,6 +74,30 @@ REAL_WIDTH, REAL_HEIGHT = info.current_w, info.current_h
 # and does the actual library rescan on the main thread — see
 # request_android_permissions() / _on_permissions_result() below.
 _permissions_just_granted = False
+_wake_lock_obj = None  # lazily created by _get_wake_lock() the first time playback starts
+
+# --- FIRST-LAUNCH ONBOARDING ---
+# Shown once, ever, on the very first time the app is opened (persisted via
+# "onboarding_complete" in the save file so it never appears again after
+# that). Three stages: a green animated welcome screen, then a notifications
+# permission step, then a storage/files permission step. onboarding_stage is
+# None once the flow is finished or on any later launch.
+onboarding_complete = False
+onboarding_stage = None            # None | "welcome" | "notifications" | "storage" | "folder" | "scrape"
+onboarding_anim_start = 0.0        # time.time() when the current stage started, for animation
+onboarding_button_rect = pygame.Rect(0, 0, 0, 0)   # set fresh each frame by draw_onboarding_overlay()
+onboarding_button_rect_2 = pygame.Rect(0, 0, 0, 0) # second button on two-button stages (e.g. "scrape" Yes/No)
+onboarding_skip_rect = pygame.Rect(0, 0, 0, 0)     # "Skip" link on the "folder" stage
+onboarding_awaiting_folder = False  # True while the storage browser is open on behalf of the "folder" onboarding stage
+onboarding_awaiting_permission = False  # True while the "notifications"/"storage" onboarding screens are waiting on an actual OS permission result before advancing
+_notification_permission_result = None  # None=waiting/not asked yet, True=granted (or nothing to ask), False=denied
+_storage_legacy_perm_done = False       # True once the READ/WRITE_EXTERNAL_STORAGE runtime dialog has been answered (or there was nothing to ask)
+_manage_storage_intent_launched = False # True once we've launched the Android 11+ "All files access" settings screen for the current request, so we only launch it once
+auto_scrape_media = None            # None (never asked) | True | False - user's answer on the "scrape" onboarding stage
+onboarding_scrape_active = False    # True while the background art/lyrics scrape kicked off from onboarding is running
+onboarding_scrape_progress = (0, 0) # (done, total) tracks processed by the onboarding scrape
+_onboarding_hover_smooth = {}       # per-button eased hover amount (0..1), keyed by a label string, for smooth color/scale transitions
+_onboarding_bar_disp = 0.0          # smoothed/animated display value of the scrape progress bar (chases onboarding_scrape_progress)
 
 
 try:
@@ -174,7 +210,160 @@ def _maybe_request_manage_external_storage():
     except Exception:
         pass
 
-request_android_permissions()
+def request_notification_permission():
+    """Used by the onboarding 'notifications' screen's button. Only requests
+    POST_NOTIFICATIONS (Android 13+/API 33+ — older Android has no runtime
+    notification prompt, so this is a no-op there and onboarding just moves
+    on to the next screen)."""
+    try:
+        from android.permissions import Permission, request_permissions
+    except Exception:
+        return  # not on Android / desktop testing
+    post_notifications = getattr(Permission, "POST_NOTIFICATIONS", None)
+    if post_notifications is None:
+        return
+    try:
+        request_permissions([post_notifications])
+    except Exception:
+        pass
+
+def request_notification_permission_for_onboarding():
+    """Same POST_NOTIFICATIONS request as request_notification_permission(),
+    but for the onboarding 'notifications' screen, which needs to know the
+    actual result (not just fire-and-forget) so it can wait on that screen
+    until the user actually answers the OS dialog instead of advancing
+    immediately. Result lands in the _notification_permission_result global:
+    None while waiting, then True (granted, or nothing to ask) / False (denied)."""
+    global _notification_permission_result
+    _notification_permission_result = None
+    try:
+        from android.permissions import Permission, request_permissions
+    except Exception:
+        _notification_permission_result = True  # not on Android - nothing to wait on
+        return
+    post_notifications = getattr(Permission, "POST_NOTIFICATIONS", None)
+    if post_notifications is None:
+        _notification_permission_result = True  # older Android - no runtime prompt exists
+        return
+
+    def _on_result(permissions, results):
+        global _notification_permission_result
+        _notification_permission_result = bool(results and all(results))
+
+    try:
+        request_permissions([post_notifications], _on_result)
+    except Exception:
+        _notification_permission_result = True
+
+def _check_storage_access_granted():
+    """Polled once per frame while the onboarding 'storage' screen is waiting
+    on a response, so that screen only advances once access has actually been
+    granted (covers both the normal runtime-permission dialog on older
+    Android, and the 'All files access' settings screen on Android 11+, which
+    has no callback and can only be checked by polling)."""
+    try:
+        from jnius import autoclass
+        VERSION = autoclass('android.os.Build$VERSION')
+        if VERSION.SDK_INT >= 30:
+            Environment = autoclass('android.os.Environment')
+            return bool(Environment.isExternalStorageManager())
+        from android.permissions import Permission, check_permission
+        return bool(check_permission(Permission.READ_EXTERNAL_STORAGE)) and bool(check_permission(Permission.WRITE_EXTERNAL_STORAGE))
+    except Exception:
+        return True  # not on Android / desktop testing - nothing to wait on
+
+def _get_wake_lock():
+    """Lazily creates (once) and returns a partial WakeLock, or None if
+    unavailable. A partial wake lock keeps the CPU running while the screen
+    is off/locked without turning the screen back on - which is exactly
+    what's needed so playback (and the auto-advance-to-next-track check)
+    keeps going instead of the whole process going to sleep the moment the
+    screen locks. Requires the WAKE_LOCK permission to be declared in
+    buildozer.spec / the manifest; if it isn't, this just fails quietly and
+    background playback falls back to whatever SDL/Android allow on their own."""
+    global _wake_lock_obj
+    if _wake_lock_obj is not None:
+        return _wake_lock_obj
+    try:
+        from jnius import autoclass
+        PowerManager = autoclass('android.os.PowerManager')
+        try:
+            SDLActivity = autoclass('org.libsdl.app.SDLActivity')
+            activity = SDLActivity.mSingleton if hasattr(SDLActivity, 'mSingleton') else SDLActivity.mActivity
+        except Exception:
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            activity = PythonActivity.mActivity
+        power_service = activity.getSystemService(activity.POWER_SERVICE)
+        _wake_lock_obj = power_service.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SpotMFi:PlaybackWakeLock")
+        _wake_lock_obj.setReferenceCounted(False)
+    except Exception:
+        _wake_lock_obj = False  # remember failure so we don't retry every call
+    return _wake_lock_obj or None
+
+def acquire_playback_wake_lock():
+    """Call whenever playback starts/resumes, so the device can't fully sleep
+    (which would silently stop playback and prevent auto-advance) while a
+    song is playing in the background."""
+    try:
+        lock = _get_wake_lock()
+        if lock is not None and not lock.isHeld():
+            lock.acquire()
+    except Exception:
+        pass
+
+def release_playback_wake_lock():
+    """Call whenever playback pauses/stops, so the wake lock isn't held (and
+    draining battery) while nothing is actually playing."""
+    try:
+        lock = _get_wake_lock()
+        if lock is not None and lock.isHeld():
+            lock.release()
+    except Exception:
+        pass
+
+def request_storage_permission_for_onboarding():
+    """Sequenced storage-permission flow for the onboarding 'storage' screen.
+    Firing the legacy READ/WRITE_EXTERNAL_STORAGE runtime dialog AND
+    launching the Android 11+ 'All files access' settings screen at the same
+    time (as request_android_permissions() does for returning users) can
+    crash on some devices when a permission dialog and a fresh Activity
+    launch collide, and can also silently drop the first dialog - which is
+    what made the onboarding button look like it needed a second tap. This
+    version only opens the settings screen (via the poll in the main loop)
+    once the first dialog has actually been answered."""
+    global _storage_legacy_perm_done, _manage_storage_intent_launched
+    _storage_legacy_perm_done = False
+    _manage_storage_intent_launched = False
+
+    try:
+        from android.permissions import Permission, request_permissions
+    except Exception:
+        _storage_legacy_perm_done = True  # not on Android - nothing to wait on
+        return
+
+    perms = [Permission.READ_EXTERNAL_STORAGE, Permission.WRITE_EXTERNAL_STORAGE]
+
+    def _on_result(permissions, results):
+        # Runs on Android's own callback thread - just flip a flag, the main
+        # loop does the actual follow-up (settings screen, etc) on the main thread.
+        global _storage_legacy_perm_done
+        _storage_legacy_perm_done = True
+
+    try:
+        request_permissions(perms, _on_result)
+    except Exception:
+        _storage_legacy_perm_done = True
+
+def request_storage_permission():
+    """Used by the onboarding 'storage' screen's button. Reuses the existing
+    full permission flow (storage runtime dialog + the Android 11+ 'All
+    files access' settings screen)."""
+    request_android_permissions()
+
+# NOTE: request_android_permissions() used to be called unconditionally here at
+# boot. It's now only auto-called for returning users (see right after
+# load_app_data() near the main loop) — first-time users grant these via the
+# onboarding screens instead, one at a time, via explicit buttons.
 
 # Opening links (Spotify/YouTube/Apple search URLs). webbrowser.open() is the
 # safe, standard way to do this and works reliably across devices; wrapped in
@@ -315,6 +504,7 @@ current_track = {
 }
 is_playing = False     
 is_shuffle = False  
+_wake_lock_prev_is_playing = False  # tracks is_playing transitions for acquire/release_playback_wake_lock()
 
 green_toggled_tracks = set()
 track_covers = {}  # { track_path: {"image_path": str, "surface": pygame.Surface} }
@@ -3512,6 +3702,192 @@ def start_apply_itunes_art(artwork_url, track_path):
     art_apply_thread = threading.Thread(target=_apply_itunes_art_worker, args=(artwork_url, track_path), daemon=True)
     art_apply_thread.start()
 
+def _normalize_match_text(s):
+    """Lowercases, strips bracketed noise (feat./remaster/official video tags
+    etc.) and punctuation, so two differently-formatted strings for the same
+    song ('Song Title (Remastered 2011)' vs 'Song Title') compare as equal
+    rather than merely similar."""
+    s = (s or "").lower()
+    s = re.sub(r'[\(\[\{][^\)\]\}]*[\)\]\}]', ' ', s)
+    s = re.sub(r"[^a-z0-9']+", ' ', s)
+    return re.sub(r'\s+', ' ', s).strip()
+
+def _match_score(candidate_title, candidate_artist, wanted_title, wanted_artist):
+    """0..1 similarity score blending title and artist closeness. Used to
+    pick the right result out of several search-API candidates instead of
+    blindly trusting whichever one the API happens to list first - which is
+    what let unrelated songs' art/lyrics get attached to the wrong track."""
+    t_score = difflib.SequenceMatcher(None, _normalize_match_text(candidate_title), _normalize_match_text(wanted_title)).ratio()
+    if wanted_artist:
+        a_score = difflib.SequenceMatcher(None, _normalize_match_text(candidate_artist), _normalize_match_text(wanted_artist)).ratio()
+        return t_score * 0.65 + a_score * 0.35
+    return t_score
+
+def _onboarding_fetch_lyrics_for_track(title, artist):
+    """Best-effort lrclib.net lyrics lookup for the onboarding auto-scrape
+    flow. Unlike fetch_synced_lyrics_candidates this doesn't touch any of the
+    "Search Lyrics" modal's UI globals - it just returns a lyrics string or
+    None so it's safe to run in a plain background loop over the whole
+    library.
+
+    Two accuracy improvements over the old version: it falls back to plain
+    (unsynced) lyrics when lrclib has no synced version for a track, instead
+    of skipping that track entirely - so "yes, find lyrics for everything"
+    actually covers everything lrclib has, not just the subset with karaoke
+    timing. And every candidate is scored against the track's own
+    title/artist (see _match_score) so a loosely-related search hit can't
+    get attached to the wrong song; only a strong-enough match is used."""
+    try:
+        has_artist = bool(artist and artist.lower() not in ("unknown artist", "unknown", ""))
+        variants = []
+        shortened = shorten_title_keywords(title)
+        if shortened:
+            variants.append({"track_name": shortened})
+        if title and title != shortened:
+            variants.append({"track_name": title})
+        fuzzy_text = f"{title} {artist}".strip() if has_artist else (title or "")
+        if fuzzy_text:
+            variants.append({"q": fuzzy_text})
+
+        best_lyrics = None
+        best_score = 0.0
+        for base in variants:
+            params = dict(base)
+            if has_artist and "q" not in params:
+                params["artist_name"] = artist
+            try:
+                data = _query_lrclib(params)
+            except Exception:
+                continue
+            if not isinstance(data, list):
+                continue
+            for item in data:
+                lyr = item.get("syncedLyrics") or item.get("plainLyrics")
+                if not lyr:
+                    continue
+                score = _match_score(item.get("trackName", ""), item.get("artistName", ""), title, artist if has_artist else "")
+                if item.get("syncedLyrics"):
+                    score += 0.05  # small nudge - prefer synced over plain when scores are close
+                if score > best_score:
+                    best_score = score
+                    best_lyrics = lyr
+            if best_score >= 0.8:
+                break  # good enough match already - no need to burn another request
+
+        if best_lyrics and best_score >= 0.35:
+            return best_lyrics
+    except Exception:
+        pass
+    return None
+
+def _onboarding_fetch_art_for_track(title, artist):
+    """Best-effort iTunes artwork lookup + download for the onboarding
+    auto-scrape flow. Returns a saved local file path (see apply_itunes_art)
+    or None on failure.
+
+    Two accuracy improvements over the old version: it queries with a
+    cleaned-up title first (stripping noise like "(Official Video)" or
+    "Remastered 2011" - the same cleanup lyrics matching already used),
+    falling back to the raw title if that turns up nothing; and it pulls
+    back several candidates per query and scores each one's title/artist
+    against the track's own (see _match_score) instead of blindly trusting
+    result #1, so a same-named-but-different song can't get attached as the
+    cover. A match that's too weak is skipped rather than guessed at."""
+    try:
+        has_artist = bool(artist and artist.lower() not in ("unknown artist", "unknown", ""))
+        cleaned_title = shorten_title_keywords(title) or title
+
+        query_variants = []
+        if cleaned_title:
+            query_variants.append(f"{cleaned_title} {artist}" if has_artist else cleaned_title)
+        if title and title != cleaned_title:
+            query_variants.append(f"{title} {artist}" if has_artist else title)
+        seen = set()
+        query_variants = [q for q in query_variants if q.strip() and not (q in seen or seen.add(q))]
+        if not query_variants:
+            return None
+
+        best_result = None
+        best_score = 0.0
+        for query in query_variants:
+            params = urllib.parse.urlencode({"term": query, "entity": "song", "media": "music", "limit": 8})
+            url = f"https://itunes.apple.com/search?{params}"
+            req = urllib.request.Request(url, headers={"User-Agent": "SpotMFi/1.0"})
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+            except Exception:
+                continue
+            for result in data.get("results", []):
+                score = _match_score(result.get("trackName", ""), result.get("artistName", ""), title, artist if has_artist else "")
+                if score > best_score:
+                    best_score = score
+                    best_result = result
+            if best_score >= 0.75:
+                break  # strong match already - no need to also burn the raw-title fallback request
+
+        if best_result is None or best_score < 0.4:
+            return None  # nothing close enough to trust - skip rather than attach the wrong cover
+
+        art_url = best_result.get("artworkUrl100")
+        if art_url:
+            return apply_itunes_art(art_url)
+    except Exception:
+        pass
+    return None
+
+def _onboarding_scrape_worker():
+    """Runs on a background thread once the user opts in on the "scrape"
+    onboarding stage: walks every currently-imported track and, for any track
+    still missing lyrics and/or cover art, tries to fill them in from lrclib.net
+    / the iTunes Search API. Skips tracks that already have either, so it never
+    clobbers something the user (or the tag/embedded art) already set."""
+    global onboarding_scrape_active, onboarding_scrape_progress
+    tracks_todo = list(imported_tracks)
+    total = len(tracks_todo)
+    onboarding_scrape_progress = (0, total)
+    for i, trk in enumerate(tracks_todo):
+        path = trk.get("path", "")
+        title = trk.get("title", "") or ""
+        artist = trk.get("artist", "") or ""
+
+        if path and not song_lyrics_database.get(path):
+            try:
+                lyrics = _onboarding_fetch_lyrics_for_track(title, artist)
+                if lyrics:
+                    song_lyrics_database[path] = lyrics
+            except Exception:
+                pass
+
+        if path and path not in track_covers:
+            try:
+                art_path = _onboarding_fetch_art_for_track(title, artist)
+                if art_path:
+                    with open(art_path, "rb") as f:
+                        img_bytes = f.read()
+                    raw_img = _decode_image_bytes_safely(img_bytes)
+                    cover_surf = pygame.transform.smoothscale(raw_img, (130, 130))
+                    track_covers[path] = {"image_path": art_path, "surface": cover_surf}
+                    for t2 in imported_tracks:
+                        if t2["path"] == path:
+                            t2["cover_surface"] = cover_surf
+            except Exception:
+                pass
+
+        onboarding_scrape_progress = (i + 1, total)
+
+    try:
+        save_app_data()
+    except Exception:
+        pass
+    onboarding_scrape_active = False
+
+def start_onboarding_scrape():
+    global onboarding_scrape_active, onboarding_scrape_progress
+    onboarding_scrape_active = True
+    onboarding_scrape_progress = (0, len(imported_tracks))
+    threading.Thread(target=_onboarding_scrape_worker, daemon=True).start()
+
 def _fetch_top100_worker():
     """Background thread: fetches chart data then kicks off artwork downloads."""
     global top100_tracks, top100_loading, top100_error, top100_last_fetched
@@ -3824,6 +4200,8 @@ def save_app_data():
         "current_language": current_language,
         "track_covers": {p: {"image_path": v.get("image_path")} for p, v in track_covers.items()},
         "listen_stats": listen_stats,
+        "onboarding_complete": onboarding_complete,
+        "auto_scrape_media": auto_scrape_media,
     }
     
     for p_name, p_data in custom_playlists.items():
@@ -3843,6 +4221,7 @@ def load_app_data():
     global saved_directories, liked_tracks
     global song_lyrics_database, green_toggled_tracks, layout_mode, track_covers
     global grid_cols_override, listen_stats
+    global onboarding_complete, onboarding_stage, auto_scrape_media
     
     if not os.path.exists(DATA_FILE):
         layout_mode = detect_device_layout_mode()
@@ -3874,6 +4253,9 @@ def load_app_data():
         song_lyrics_database = data.get("song_lyrics_database", {})
         green_toggled_tracks = set(data.get("green_toggled_tracks", []))
         listen_stats = data.get("listen_stats", {})
+        onboarding_complete = data.get("onboarding_complete", False)
+        onboarding_stage = None if onboarding_complete else "welcome"
+        auto_scrape_media = data.get("auto_scrape_media", None)
         
         loaded_track_covers = data.get("track_covers", {})
         track_covers = {}
@@ -5944,6 +6326,484 @@ def draw_main_content():
             virtual_surface.blit(name_lbl, (box_x + 15, box_y + 135))
             virtual_surface.blit(count_lbl, (box_x + 15, box_y + 160))
 
+def _wrap_text_lines(text, font, max_width):
+    """Simple word-wrap: splits text into a list of lines that each fit
+    within max_width when rendered with the given font."""
+    words = text.split(" ")
+    lines = []
+    current = ""
+    for word in words:
+        trial = (current + " " + word).strip()
+        if font.size(trial)[0] <= max_width or not current:
+            current = trial
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+# --- FIRST-LAUNCH ONBOARDING OVERLAY ---
+def _draw_onboarding_icon(surface, center, kind, size, color):
+    """Small vector glyphs for the onboarding cards - drawn with plain shapes
+    (no image assets needed) so they always match the current accent color."""
+    cx, cy = center
+    r = size / 2
+    if kind == "folder":
+        w, h = size, size * 0.72
+        x, y = cx - w / 2, cy - h / 2
+        tab_w, tab_h = w * 0.42, h * 0.24
+        pygame.draw.rect(surface, color, (x, y + tab_h, w, h - tab_h), border_radius=6)
+        pygame.draw.rect(surface, color, (x, y, tab_w, tab_h + 6), border_radius=4)
+    elif kind == "sparkle":
+        def _star(sx, sy, sr):
+            pts = []
+            for i in range(8):
+                ang = i * (math.pi / 4)
+                rad = sr if i % 2 == 0 else sr * 0.32
+                pts.append((sx + rad * math.sin(ang), sy - rad * math.cos(ang)))
+            pygame.draw.polygon(surface, color, pts)
+        _star(cx - r * 0.12, cy - r * 0.12, r)
+        _star(cx + r * 0.62, cy + r * 0.55, r * 0.4)
+
+
+def _ease_out_cubic(t):
+    t = max(0.0, min(1.0, t))
+    return 1 - (1 - t) ** 3
+
+
+def _ease_out_back(t, overshoot=1.6):
+    t = max(0.0, min(1.0, t))
+    t -= 1
+    return t * t * ((overshoot + 1) * t + overshoot) + 1
+
+
+def _smooth_hover(key, hovered, rate=0.30):
+    """Eases a per-button hover amount towards 0/1 instead of snapping, so
+    hover/press color and scale changes feel like a real transition rather
+    than a hard flip. Persists across frames in _onboarding_hover_smooth."""
+    global _onboarding_hover_smooth
+    current = _onboarding_hover_smooth.get(key, 0.0)
+    target = 1.0 if hovered else 0.0
+    current += (target - current) * rate
+    if abs(current - target) < 0.004:
+        current = target
+    _onboarding_hover_smooth[key] = current
+    return current
+
+
+def _lerp_color(c1, c2, t):
+    t = max(0.0, min(1.0, t))
+    return (int(c1[0] + (c2[0] - c1[0]) * t),
+            int(c1[1] + (c2[1] - c1[1]) * t),
+            int(c1[2] + (c2[2] - c1[2]) * t))
+
+
+def _ease_out_elastic(t):
+    """Classic elastic-out easing - overshoots past the target and settles
+    back like a rubber band. t is 0..1."""
+    if t <= 0:
+        return 0.0
+    if t >= 1:
+        return 1.0
+    c4 = (2 * math.pi) / 3
+    return (2 ** (-10 * t)) * math.sin((t * 10 - 0.75) * c4) + 1
+
+
+def _blit_rubber_band_line(surface, text_surf, target_center, elapsed, delay=0.0, duration=0.7, from_left=True):
+    """Blits a pre-rendered text surface sliding in from off-screen to
+    target_center with an elastic/rubber-band settle. Returns True once the
+    entrance animation has fully finished (so callers can chain follow-up
+    fades)."""
+    t = max(0.0, min(1.0, (elapsed - delay) / duration))
+    if elapsed < delay:
+        return False
+    eased = _ease_out_elastic(t)
+    off_x = -WIDTH * 0.9 if from_left else WIDTH * 0.9
+    cur_x = target_center[0] + off_x * (1 - eased)
+    surface.blit(text_surf, text_surf.get_rect(center=(int(cur_x), target_center[1])))
+    return t >= 1.0
+
+
+def draw_onboarding_overlay():
+    """Full-screen first-launch flow: animated green welcome screen, then a
+    notifications-permission screen, then a storage/files-permission screen.
+    Drawn on top of everything else and owns all clicks while active (see the
+    onboarding_stage check in the main event loop)."""
+    global onboarding_button_rect, onboarding_button_rect_2, onboarding_skip_rect
+
+    # A darker shade of the app's own brand green (COLOR_SPOTIFY_GREEN), used
+    # everywhere else in SpotM-Fi for accents/buttons/liked icon - kept as the
+    # same hue rather than a new color so onboarding still feels on-brand.
+    ONBOARDING_GREEN = (18, 158, 71)
+    virtual_surface.fill(ONBOARDING_GREEN)
+    center_x = WIDTH // 2
+    center_y = HEIGHT // 2
+    elapsed = time.time() - onboarding_anim_start
+
+    if onboarding_stage == "welcome":
+        # Title rubber-bands in from the left, subtext fades in once it settles.
+        anim_dur = 0.7
+        title_surf = render_fit_text("Welcome to SpotM-Fi", COLOR_BLACK, WIDTH - 80, base_size=48, bold=True, min_size=24)
+        target_y = center_y - 10
+        settled = _blit_rubber_band_line(virtual_surface, title_surf, (center_x, target_y), elapsed, delay=0.0, duration=anim_dur, from_left=True)
+
+        # Subtext fades in once the title has essentially settled in place.
+        if settled or elapsed >= anim_dur * 0.9:
+            fade_elapsed = elapsed - (anim_dur * 0.9)
+            fade_alpha = max(0, min(255, int(fade_elapsed * 500)))
+            sub_surf = font_title.render("Click/tap anywhere to continue", True, COLOR_BLACK)
+            sub_surf.set_alpha(fade_alpha)
+            virtual_surface.blit(sub_surf, sub_surf.get_rect(center=(center_x, target_y + 55)))
+
+        onboarding_button_rect = None  # the whole screen is the "button" on this stage
+        onboarding_button_rect_2 = None
+        onboarding_skip_rect = None
+        return
+
+    onboarding_button_rect_2 = None
+    onboarding_skip_rect = None
+
+    if onboarding_stage == "notifications":
+        heading = "First we need permission to give you notifications"
+        button_label = "Allow Notifications"
+    elif onboarding_stage == "storage":
+        heading = "Now give us access to your files so you can find your music"
+        button_label = "Give File Access"
+
+    if onboarding_stage in ("notifications", "storage"):
+        lines = _wrap_text_lines(heading, font_huge, WIDTH - 140)
+        if len(lines) == 1 and font_huge.size(lines[0])[0] > WIDTH - 140:
+            lines = _wrap_text_lines(heading, font_title, WIDTH - 140)
+            line_font = font_title
+        else:
+            line_font = font_huge
+        line_h = line_font.get_height() + 4
+        block_h = line_h * len(lines)
+        start_y = center_y - 90 - block_h // 2
+        for i, line in enumerate(lines):
+            line_surf = line_font.render(line, True, COLOR_BLACK)
+            # Each line rubber-bands in from alternating sides, staggered
+            # slightly so a multi-line heading doesn't all snap in at once.
+            _blit_rubber_band_line(
+                virtual_surface, line_surf,
+                (center_x, start_y + i * line_h + line_h // 2),
+                elapsed, delay=i * 0.1, duration=0.7, from_left=(i % 2 == 0)
+            )
+
+        mouse_pos = get_virtual_mouse_pos()
+        btn_w, btn_h = 300, 60
+        btn_rect = pygame.Rect(0, 0, btn_w, btn_h)
+        btn_rect.center = (center_x, center_y + 90)
+        waiting = onboarding_awaiting_permission
+        hovered = (not waiting) and btn_rect.collidepoint(mouse_pos)
+        hv = _smooth_hover("perm_btn", hovered)
+        fill = _lerp_color(COLOR_DARK_GREY, COLOR_BLACK, hv)
+        txt_color = _lerp_color(COLOR_WHITE, COLOR_SPOTIFY_GREEN, hv)
+        shown_label = "Waiting for you..." if waiting else button_label
+        # Button gently fades/rises in once the heading has mostly settled,
+        # rather than just appearing the instant the stage starts.
+        btn_appear = _ease_out_cubic(max(0.0, min(1.0, (elapsed - 0.35) / 0.35)))
+        if btn_appear > 0:
+            btn_surf = pygame.Surface((btn_w + 4, btn_h + 4), pygame.SRCALPHA)
+            local_rect = pygame.Rect(2, 2, btn_w, btn_h)
+            # Slow pulse while waiting on the OS dialog/settings screen, so it
+            # reads as "actively waiting" rather than stuck.
+            pulse = 0.5 + 0.5 * math.sin(time.time() * 3.0) if waiting else 1.0
+            draw_fill = _lerp_color(fill, COLOR_DARK_GREY, 0) if not waiting else _lerp_color((40, 40, 40), (70, 70, 70), pulse)
+            pygame.draw.rect(btn_surf, draw_fill if waiting else fill, local_rect, border_radius=30)
+            btn_text_surf = render_fit_text(shown_label, COLOR_TEXT_MUTED if waiting else txt_color, btn_w - 30, base_size=20, bold=True)
+            btn_surf.blit(btn_text_surf, btn_text_surf.get_rect(center=local_rect.center))
+            btn_surf.set_alpha(int(255 * btn_appear))
+            rise = int(10 * (1 - btn_appear))
+            virtual_surface.blit(btn_surf, (btn_rect.x - 2, btn_rect.y - 2 + rise))
+
+        if waiting:
+            hint_surf = font_small.render("Answer the prompt to continue", True, COLOR_DARK_GREY)
+            virtual_surface.blit(hint_surf, hint_surf.get_rect(center=(center_x, btn_rect.bottom + 34)))
+
+        onboarding_button_rect = btn_rect
+        return
+
+    # --- "folder" and "scrape" stages: a polished dark card floating on the
+    # brand-green background (matching the app's own black/near-black
+    # surfaces), instead of text sitting directly on the green, so these two
+    # feel like a deliberate part of the app rather than a placeholder screen. ---
+    mouse_pos = get_virtual_mouse_pos()
+
+    ONBOARDING_CARD_BG = (16, 16, 16)
+
+    card_w = min(520, WIDTH - 80)
+    if onboarding_stage == "scrape" and onboarding_scrape_active:
+        card_h = 260
+    elif onboarding_stage == "scrape":
+        card_h = 400
+    else:
+        card_h = 380
+    card_rect = pygame.Rect(0, 0, card_w, card_h)
+    card_rect.center = (center_x, center_y)
+
+    # Smooth entrance: the whole card (shadow, background, icon, text,
+    # buttons - everything below) is composited onto its own surface first,
+    # then faded + eased upward into place as one piece, instead of popping
+    # in instantly. Reset per-stage since elapsed restarts on every stage change.
+    entrance_dur = 0.32
+    entrance_t = _ease_out_cubic(min(1.0, elapsed / entrance_dur))
+    entrance_alpha = int(255 * entrance_t)
+    entrance_rise = int(24 * (1 - entrance_t))
+
+    pad = 24
+    canvas = pygame.Surface((card_w + pad * 2, card_h + pad * 2 + 20), pygame.SRCALPHA)
+    origin_x, origin_y = card_rect.x - pad, card_rect.y - pad
+    local_card_rect = pygame.Rect(pad, pad, card_w, card_h)
+
+    # Soft drop shadow, then the card itself, both rounded to match the
+    # pill buttons/rounded cards used everywhere else in the app.
+    pygame.draw.rect(canvas, (0, 0, 0, 90), local_card_rect.move(0, 10), border_radius=28)
+    pygame.draw.rect(canvas, ONBOARDING_CARD_BG, local_card_rect, border_radius=28)
+
+    inner_w = card_w - 72
+    cursor_y = local_card_rect.y + 34
+
+    local_center_x = local_card_rect.centerx
+
+    if onboarding_stage == "folder":
+        _draw_onboarding_icon(canvas, (local_center_x, cursor_y + 26), "folder", 52, COLOR_SPOTIFY_GREEN)
+        cursor_y += 78
+        heading, subtitle = "Where's your music?", "Pick the folder with your songs - we'll scan it (and any subfolders) for tracks."
+    elif onboarding_scrape_active:
+        _draw_onboarding_icon(canvas, (local_center_x, cursor_y + 26), "sparkle", 52, COLOR_SPOTIFY_GREEN)
+        cursor_y += 78
+        heading, subtitle = "Finding album art & lyrics", ""
+    else:
+        _draw_onboarding_icon(canvas, (local_center_x, cursor_y + 26), "sparkle", 52, COLOR_SPOTIFY_GREEN)
+        cursor_y += 78
+        heading = "Fill in missing covers & lyrics?"
+        subtitle = "We'll check iTunes and lrclib.net for anything missing. Anything you've already set stays untouched."
+
+    head_lines = _wrap_text_lines(heading, font_title, inner_w)
+    for line in head_lines:
+        line_surf = font_title.render(line, True, COLOR_WHITE)
+        canvas.blit(line_surf, line_surf.get_rect(center=(local_center_x, cursor_y)))
+        cursor_y += font_title.get_height() + 2
+    cursor_y += 6
+
+    if subtitle:
+        sub_lines = _wrap_text_lines(subtitle, font_small, inner_w)
+        for line in sub_lines:
+            line_surf = font_small.render(line, True, COLOR_TEXT_MUTED)
+            canvas.blit(line_surf, line_surf.get_rect(center=(local_center_x, cursor_y)))
+            cursor_y += font_small.get_height() + 4
+        cursor_y += 10
+
+    if onboarding_stage == "scrape" and onboarding_scrape_active:
+        # Progress bar instead of buttons while the batch job is running -
+        # the fill smoothly chases the real progress instead of snapping
+        # forward each time a track finishes.
+        global _onboarding_bar_disp
+        done, total = onboarding_scrape_progress
+        target_frac = 0.0 if total <= 0 else max(0.0, min(1.0, done / total))
+        _onboarding_bar_disp += (target_frac - _onboarding_bar_disp) * 0.12
+        if abs(_onboarding_bar_disp - target_frac) < 0.003:
+            _onboarding_bar_disp = target_frac
+        disp_frac = _onboarding_bar_disp
+
+        bar_w, bar_h = inner_w, 14
+        bar_rect = pygame.Rect(0, 0, bar_w, bar_h)
+        bar_rect.center = (local_center_x, local_card_rect.bottom - 60)
+        pygame.draw.rect(canvas, COLOR_LIGHT_GREY, bar_rect, border_radius=bar_h // 2)
+        if disp_frac > 0:
+            fill_rect = pygame.Rect(bar_rect.x, bar_rect.y, max(bar_h, int(bar_w * disp_frac)), bar_h)
+            pygame.draw.rect(canvas, COLOR_SPOTIFY_GREEN, fill_rect, border_radius=bar_h // 2)
+            # A soft lighter cap at the leading edge gives the fill a gentle
+            # "glow" so it doesn't feel like a static bar even when progress
+            # is momentarily paused between tracks.
+            cap_x = fill_rect.right - bar_h // 2
+            pygame.draw.circle(canvas, COLOR_SPOTIFY_GREEN, (cap_x, bar_rect.centery), bar_h // 2)
+        pct_surf = font_small.render(f"{done} / {max(total, done)} tracks", True, COLOR_TEXT_MUTED)
+        canvas.blit(pct_surf, pct_surf.get_rect(center=(local_center_x, bar_rect.bottom + 20)))
+
+        canvas.set_alpha(entrance_alpha)
+        virtual_surface.blit(canvas, (origin_x, origin_y + entrance_rise))
+        onboarding_button_rect = None
+        return
+
+    if onboarding_stage == "scrape":
+        btn_w, btn_h, gap = (inner_w - 16) // 2, 54, 16
+        yes_local = pygame.Rect(0, 0, btn_w, btn_h)
+        no_local = pygame.Rect(0, 0, btn_w, btn_h)
+        total_w = btn_w * 2 + gap
+        row_y = local_card_rect.bottom - 100
+        yes_local.topleft = (local_center_x - total_w // 2, row_y)
+        no_local.topleft = (yes_local.right + gap, row_y)
+        # Screen-space equivalents, used for hit-testing/hover only.
+        yes_rect = yes_local.move(origin_x, origin_y)
+        no_rect = no_local.move(origin_x, origin_y)
+
+        for local_rect, screen_rect, key, label, is_primary in (
+            (yes_local, yes_rect, "scrape_yes", "Yes, Find Them", True),
+            (no_local, no_rect, "scrape_no", "No Thanks", False),
+        ):
+            hovered = screen_rect.collidepoint(mouse_pos)
+            hv = _smooth_hover(key, hovered)
+            if is_primary:
+                fill = _lerp_color(COLOR_SPOTIFY_GREEN, COLOR_HOVER, hv)
+                txt_color = _lerp_color(COLOR_BLACK, COLOR_SPOTIFY_GREEN, hv)
+            else:
+                fill = _lerp_color(COLOR_LIGHT_GREY, COLOR_HOVER, hv)
+                txt_color = COLOR_WHITE
+            # A subtle press-in scale on hover, eased via the same smoothed value.
+            scale = 1.0 - 0.02 * hv
+            scaled = local_rect.inflate(-int(local_rect.w * (1 - scale)), -int(local_rect.h * (1 - scale)))
+            pygame.draw.rect(canvas, fill, scaled, border_radius=27)
+            if not is_primary:
+                pygame.draw.rect(canvas, COLOR_TEXT_MUTED, scaled, width=1, border_radius=27)
+            txt_surf = render_fit_text(label, txt_color, btn_w - 24, base_size=17, bold=True)
+            canvas.blit(txt_surf, txt_surf.get_rect(center=scaled.center))
+
+        canvas.set_alpha(entrance_alpha)
+        virtual_surface.blit(canvas, (origin_x, origin_y + entrance_rise))
+        onboarding_button_rect = yes_rect
+        onboarding_button_rect_2 = no_rect
+        return
+
+    # "folder" stage button + skip link
+    btn_w, btn_h = inner_w, 54
+    btn_local = pygame.Rect(0, 0, btn_w, btn_h)
+    btn_local.center = (local_center_x, local_card_rect.bottom - 100)
+    btn_rect = btn_local.move(origin_x, origin_y)
+    hovered = btn_rect.collidepoint(mouse_pos)
+    hv = _smooth_hover("folder_choose", hovered)
+    fill = _lerp_color(COLOR_SPOTIFY_GREEN, COLOR_HOVER, hv)
+    txt_color = _lerp_color(COLOR_BLACK, COLOR_SPOTIFY_GREEN, hv)
+    scale = 1.0 - 0.02 * hv
+    scaled_btn = btn_local.inflate(-int(btn_local.w * (1 - scale)), -int(btn_local.h * (1 - scale)))
+    pygame.draw.rect(canvas, fill, scaled_btn, border_radius=27)
+    btn_text_surf = render_fit_text("Choose Folder", txt_color, btn_w - 30, base_size=18, bold=True)
+    canvas.blit(btn_text_surf, btn_text_surf.get_rect(center=scaled_btn.center))
+    onboarding_button_rect = btn_rect
+
+    skip_local = pygame.Rect(0, 0, 160, 30)
+    skip_local.center = (local_center_x, btn_local.bottom + 30)
+    skip_rect = skip_local.move(origin_x, origin_y)
+    skip_hovered = skip_rect.collidepoint(mouse_pos)
+    skip_hv = _smooth_hover("folder_skip", skip_hovered)
+    skip_color = _lerp_color(COLOR_TEXT_MUTED, COLOR_WHITE, skip_hv)
+    skip_surf = font_small.render("Skip for now", True, skip_color)
+    canvas.blit(skip_surf, skip_surf.get_rect(center=skip_local.center))
+    onboarding_skip_rect = skip_rect
+
+    canvas.set_alpha(entrance_alpha)
+    virtual_surface.blit(canvas, (origin_x, origin_y + entrance_rise))
+
+
+def _onboarding_default_music_dir():
+    """Best-guess starting folder for the onboarding folder browser - the
+    device's actual Music folder when it exists, so the user doesn't have to
+    dig through unrelated system folders to find their songs."""
+    candidates = [
+        os.path.join(ROOT_PATH, "Music"),
+        os.path.join(ROOT_PATH, "Download", "Music"),
+        ROOT_PATH,
+    ]
+    for path in candidates:
+        if os.path.isdir(path):
+            return path
+    return ROOT_PATH
+
+
+def _refresh_onboarding_rects():
+    """Recomputes onboarding_button_rect / onboarding_button_rect_2 /
+    onboarding_skip_rect immediately after an onboarding stage change,
+    instead of waiting for the next full render frame to redraw them. Without
+    this, a fast tap right after a stage transition could still land on the
+    *previous* stage's stale rect (e.g. tapping "Skip for now" on the new
+    "folder" screen landing on where the old "storage" screen's button used
+    to be) - which is what caused onboarding buttons needing two taps, and
+    "Skip for now" sometimes opening the folder browser instead of skipping."""
+    try:
+        draw_onboarding_overlay()
+    except Exception:
+        pass
+
+
+def handle_onboarding_click(pos):
+    """Handles a click/tap anywhere on the onboarding overlay. pos is already
+    in virtual-surface coordinates (via get_virtual_mouse_pos())."""
+    global onboarding_stage, onboarding_anim_start, onboarding_complete
+    global onboarding_awaiting_folder, auto_scrape_media, current_page, is_browsing_storage, current_browser_path
+    global onboarding_awaiting_permission
+
+    if onboarding_stage == "welcome":
+        # Click anywhere advances to the notifications-permission screen.
+        onboarding_stage = "notifications"
+        onboarding_anim_start = time.time()
+        _refresh_onboarding_rects()
+        return
+
+    if onboarding_stage == "folder" and onboarding_skip_rect is not None and onboarding_skip_rect.collidepoint(pos):
+        # "Skip for now" actually skips - it finishes onboarding right here
+        # instead of still funneling into the scrape question.
+        _onboarding_hover_smooth["folder_skip"] = 0.0
+        auto_scrape_media = False
+        onboarding_complete = True
+        onboarding_stage = None
+        save_app_data()
+        return
+
+    if onboarding_stage == "scrape" and onboarding_scrape_active:
+        return  # scrape in progress - ignore clicks until it finishes
+
+    if onboarding_stage == "scrape" and onboarding_button_rect_2 is not None and onboarding_button_rect_2.collidepoint(pos):
+        # "No Thanks" - skip the auto-scrape and finish onboarding.
+        _onboarding_hover_smooth["scrape_no"] = 0.0
+        auto_scrape_media = False
+        onboarding_complete = True
+        onboarding_stage = None
+        save_app_data()
+        return
+
+    if onboarding_stage in ("notifications", "storage") and onboarding_awaiting_permission:
+        return  # already waiting on an OS permission result - ignore taps until it resolves
+
+    if onboarding_button_rect is None or not onboarding_button_rect.collidepoint(pos):
+        return  # click missed the button on a permission screen - do nothing
+
+    if onboarding_stage == "notifications":
+        # Stay on this screen - the main loop advances to "storage" only once
+        # _notification_permission_result actually comes back True.
+        onboarding_awaiting_permission = True
+        _onboarding_hover_smooth["perm_btn"] = 0.0  # snap the button back to its normal look immediately, not stuck "hovered"
+        request_notification_permission_for_onboarding()
+    elif onboarding_stage == "storage":
+        # Stay on this screen - the main loop advances to "folder" only once
+        # _check_storage_access_granted() actually confirms access. Uses the
+        # sequenced request (legacy dialog, THEN the settings screen) so the
+        # two don't collide.
+        onboarding_awaiting_permission = True
+        _onboarding_hover_smooth["perm_btn"] = 0.0
+        request_storage_permission_for_onboarding()
+    elif onboarding_stage == "folder":
+        # Open the app's own in-app storage browser (same one used by the
+        # "+ Add Folder" button in Search) so the user can pick their music
+        # folder, starting from the device's actual Music folder when there
+        # is one. The overlay hides itself while it's open; the main loop
+        # brings the "scrape" stage back once a folder is picked or cancelled.
+        _onboarding_hover_smooth["folder_choose"] = 0.0
+        onboarding_awaiting_folder = True
+        current_page = "Search"
+        is_browsing_storage = True
+        current_browser_path = _onboarding_default_music_dir()
+        update_browser_contents()
+        onboarding_stage = None
+    elif onboarding_stage == "scrape":
+        # "Yes, Find Them" - kick off the background auto-scrape, then finish
+        # onboarding once it completes (see the main loop's onboarding_scrape_active check).
+        _onboarding_hover_smooth["scrape_yes"] = 0.0
+        auto_scrape_media = True
+        start_onboarding_scrape()
+
+
 # --- MODAL RENDERING ENGINE ---
 def draw_modals():
     global modal_close_rect, modal_save_rect, modal_input_rect, modal_desc_rect, modal_playlist_rects, modal_image_picker_rect, lyrics_close_rect, lyrics_save_rect, lyrics_clear_rect, lyrics_import_rect, lyrics_search_rect, lyrics_textarea_rect, max_music_scroll, max_lyrics_scroll, target_lyrics_scroll, lyrics_text_changed, lyrics_search_close_rect, lyrics_search_item_rects, max_lyrics_search_scroll, lyrics_manual_rect, lyrics_manual_title_rect, lyrics_manual_artist_rect, lyrics_manual_go_rect, lyrics_manual_close_rect, art_search_close_rect, art_search_item_rects, max_art_search_scroll, art_manual_rect, art_manual_title_rect, art_manual_artist_rect, art_manual_go_rect
@@ -7072,6 +7932,14 @@ def draw_media_bar():
 # --- MAIN LOOP ---
 load_app_data()
 search_message = t("Tap '+ Add Folder' to open the built-in storage browser.")
+if onboarding_complete:
+    # Returning user — same behavior as before: request permissions right away.
+    request_android_permissions()
+else:
+    # First launch ever — hold off on the OS permission dialogs; the
+    # onboarding screens below trigger them one at a time via their buttons.
+    onboarding_stage = "welcome"
+    onboarding_anim_start = time.time()
 set_android_orientation(layout_mode == "phone")
 if layout_mode == "phone":
     is_portrait = True
@@ -7091,6 +7959,10 @@ button_flash_frames = 0
 # the Python side can detect or correct. Preferring the raw normalized touch
 # position sidesteps that class of bug entirely. None on desktop (no touches).
 _last_touch_norm = None
+# Timestamp of the last onboarding click handled directly from a FINGERDOWN
+# event (see the FINGERDOWN handler below). Used to stop the synthesized
+# MOUSEBUTTONDOWN that follows a real touch from re-handling the same tap.
+_last_onboarding_finger_click_time = 0.0
 
 while running:
     # Keep REAL_WIDTH/REAL_HEIGHT in sync with the actual window size every frame.
@@ -7123,6 +7995,43 @@ while running:
             rebuild_imported_tracks()
         except Exception:
             pass
+
+    # Onboarding "notifications"/"storage" screens only advance once the OS
+    # permission result actually comes back - not the instant the button is
+    # tapped. Polled every frame while onboarding_awaiting_permission is set.
+    if onboarding_awaiting_permission and onboarding_stage == "notifications":
+        if _notification_permission_result is True:
+            onboarding_awaiting_permission = False
+            onboarding_stage = "storage"
+            onboarding_anim_start = time.time()
+            _refresh_onboarding_rects()
+        elif _notification_permission_result is False:
+            onboarding_awaiting_permission = False  # denied - let them try again from the same screen
+    elif onboarding_awaiting_permission and onboarding_stage == "storage":
+        # Sequenced: wait for the legacy runtime dialog to be answered first,
+        # THEN (only once) open the Android 11+ "All files access" settings
+        # screen if it's still needed, THEN wait for access to actually show
+        # up as granted. Never overlaps the dialog and the settings screen.
+        if not _storage_legacy_perm_done:
+            pass
+        elif not _manage_storage_intent_launched:
+            _manage_storage_intent_launched = True
+            try:
+                _maybe_request_manage_external_storage()  # no-ops if already granted or below Android 11
+            except Exception:
+                pass
+        elif _check_storage_access_granted():
+            onboarding_awaiting_permission = False
+            onboarding_stage = "folder"
+            onboarding_anim_start = time.time()
+            _refresh_onboarding_rects()
+
+    # Once the onboarding "scrape" background job (see start_onboarding_scrape)
+    # finishes, close out onboarding for good - it was the last step.
+    if onboarding_stage == "scrape" and not onboarding_scrape_active and auto_scrape_media is True:
+        onboarding_complete = True
+        onboarding_stage = None
+        save_app_data()
 
     # Pick up the result of a background artwork download started from the
     # "Search Album Art" modal (see start_apply_itunes_art). We poll here
@@ -7477,6 +8386,20 @@ while running:
             button_flash_frames = 3
             mouse_held = True
             _last_touch_norm = (event.x, event.y)
+            # Handle onboarding taps right here, on the raw touch-down, instead
+            # of waiting for SDL's synthesized MOUSEBUTTONDOWN. On some
+            # Android/SDL builds that synthesized mouse event lags a full event
+            # pump behind the real touch - sometimes only showing up once the
+            # *next* tap happens - which is exactly what made onboarding
+            # buttons like "Skip for now" and "Allow Notifications" look like
+            # they needed two taps: the first tap's FINGERDOWN produced no
+            # click, and the second tap was what finally flushed the first
+            # tap's delayed synthesized mouse event. Acting on FINGERDOWN
+            # directly removes that dependency (and its lag) entirely.
+            if onboarding_stage:
+                _onboarding_finger_pos = (int(event.x * WIDTH), int(event.y * HEIGHT))
+                handle_onboarding_click(_onboarding_finger_pos)
+                _last_onboarding_finger_click_time = time.time()
 
         elif event.type == pygame.FINGERMOTION:
             _last_touch_norm = (event.x, event.y)
@@ -7494,6 +8417,25 @@ while running:
                 button_flash_frames = 3
                 mouse_held = True
             mouse_pos = get_virtual_mouse_pos(event.pos)
+
+            # If a FINGERDOWN moments ago already handled this exact tap (see
+            # the FINGERDOWN handler above), this MOUSEBUTTONDOWN is just
+            # SDL's synthesized echo of that same physical touch arriving
+            # late - swallow it outright instead of letting it fall through
+            # onto whatever's on screen NOW. Without this, tapping "Skip for
+            # now" would close onboarding on the FINGERDOWN, and then this
+            # delayed echo would land on the newly-revealed Search page at
+            # the same screen position - e.g. right on "Add Folder" - and
+            # open the folder browser as an unwanted second click. Real
+            # desktop mouse clicks never trigger a preceding FINGERDOWN, so
+            # they're unaffected.
+            if event.button == 1 and time.time() - _last_onboarding_finger_click_time <= 0.4:
+                continue
+
+            if onboarding_stage:
+                if event.button == 1:
+                    handle_onboarding_click(mouse_pos)
+                continue
             
             if current_track["title"] != "Select a song" and not show_lyrics_editor_view and not show_create_playlist_modal:
                 if progress_bar_rect.collidepoint(mouse_pos) and track_duration > 0 and music_loaded:
@@ -8131,8 +9073,18 @@ while running:
                     if is_browsing_storage and current_page == "Search":
                         if select_folder_btn_rect.collidepoint(mouse_pos):
                             scan_confirmed_directory(current_browser_path)
+                            if onboarding_awaiting_folder:
+                                onboarding_awaiting_folder = False
+                                onboarding_stage = "scrape"
+                                onboarding_anim_start = time.time()
+                                _refresh_onboarding_rects()
                         elif cancel_browser_btn_rect.collidepoint(mouse_pos):
                             is_browsing_storage = False
+                            if onboarding_awaiting_folder:
+                                onboarding_awaiting_folder = False
+                                onboarding_stage = "scrape"
+                                onboarding_anim_start = time.time()
+                                _refresh_onboarding_rects()
                         else:
                             for rect, item in browser_rects:
                                 if rect.collidepoint(mouse_pos) and item["is_dir"]:
@@ -8361,6 +9313,19 @@ while running:
                 target_theme_page_scroll -= event.y * 60
                 target_theme_page_scroll = max(0.0, min(float(max_theme_page_scroll), target_theme_page_scroll))
             
+    # Keep a partial wake lock held for exactly as long as something is
+    # actually playing, so the device can't fully sleep mid-song (which
+    # would silently stop playback and prevent auto-advance once the
+    # screen locks / app is backgrounded). Edge-triggered on is_playing
+    # changing, rather than hooked into every individual play/pause button,
+    # so it can't be missed by any one of them.
+    if is_playing != _wake_lock_prev_is_playing:
+        if is_playing:
+            acquire_playback_wake_lock()
+        else:
+            release_playback_wake_lock()
+        _wake_lock_prev_is_playing = is_playing
+
     if is_playing and track_duration > 0 and music_loaded and not is_dragging_progress:
         if current_backend == "android" and android_media_player:
             try: elapsed = android_media_player.getCurrentPosition() / 1000.0
@@ -8383,34 +9348,41 @@ while running:
 
     virtual_surface.fill(COLOR_BLACK)
     
-    # Each draw call gets its own try/except instead of one shared block: if a
-    # single section (e.g. modals, right after a cover finishes applying) hits
-    # an error, the others still render instead of the whole frame coming out
-    # blank/gray. Previously all four were in one try, so an early failure in
-    # draw_main_content meant NOTHING else drew that frame - and since the
-    # underlying state causing the error didn't change, it repeated every
-    # single frame, which is exactly what a "stuck gray screen" looks like.
     import traceback as _tb
-    try:
-        draw_main_content()
-    except Exception as _e:
-        print("Render error in draw_main_content (recovered):")
-        _tb.print_exc()
-    try:
-        draw_sidebar()
-    except Exception as _e:
-        print("Render error in draw_sidebar (recovered):")
-        _tb.print_exc()
-    try:
-        draw_media_bar()
-    except Exception as _e:
-        print("Render error in draw_media_bar (recovered):")
-        _tb.print_exc()
-    try:
-        draw_modals()
-    except Exception as _e:
-        print("Render error in draw_modals (recovered):")
-        _tb.print_exc()
+    if onboarding_stage:
+        try:
+            draw_onboarding_overlay()
+        except Exception as _e:
+            print("Render error in draw_onboarding_overlay (recovered):")
+            _tb.print_exc()
+    else:
+        # Each draw call gets its own try/except instead of one shared block: if a
+        # single section (e.g. modals, right after a cover finishes applying) hits
+        # an error, the others still render instead of the whole frame coming out
+        # blank/gray. Previously all four were in one try, so an early failure in
+        # draw_main_content meant NOTHING else drew that frame - and since the
+        # underlying state causing the error didn't change, it repeated every
+        # single frame, which is exactly what a "stuck gray screen" looks like.
+        try:
+            draw_main_content()
+        except Exception as _e:
+            print("Render error in draw_main_content (recovered):")
+            _tb.print_exc()
+        try:
+            draw_sidebar()
+        except Exception as _e:
+            print("Render error in draw_sidebar (recovered):")
+            _tb.print_exc()
+        try:
+            draw_media_bar()
+        except Exception as _e:
+            print("Render error in draw_media_bar (recovered):")
+            _tb.print_exc()
+        try:
+            draw_modals()
+        except Exception as _e:
+            print("Render error in draw_modals (recovered):")
+            _tb.print_exc()
 
     # Accurate Letterbox/Pillarbox Screen Scaling
     scaled_frame = pygame.transform.scale(virtual_surface, (REAL_WIDTH, REAL_HEIGHT))
