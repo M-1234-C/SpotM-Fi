@@ -321,6 +321,206 @@ def release_playback_wake_lock():
     except Exception:
         pass
 
+# --- "NOW PLAYING" NOTIFICATION ---
+# Note on what's actually achievable here: Android doesn't let apps paint an
+# arbitrary full-bleed image as a system notification's background - the OS
+# owns and locks that chrome (this has only gotten stricter since Android
+# 12's notification redesign). The platform-supported equivalent - and what
+# real media apps (Spotify, YT Music, etc.) actually ship - is a "colorized"
+# notification whose background is tinted with a color, with the album art
+# shown as the large thumbnail. That's what's built below: real album art as
+# the thumbnail with the background tinted to a color sampled from that same
+# art, or a plain green tile with the song name drawn on it when there's no
+# art at all.
+NOTIF_CHANNEL_ID = "spotmfi_playback"
+NOTIF_ID = 1001
+_notif_manager_obj = None
+_notif_small_icon_id = None
+_notif_last_state = (None, None)  # (track_path, is_playing) last posted
+
+def _get_android_activity():
+    try:
+        from jnius import autoclass
+        try:
+            SDLActivity = autoclass('org.libsdl.app.SDLActivity')
+            act = getattr(SDLActivity, 'mSingleton', None) or getattr(SDLActivity, 'mActivity', None)
+            if act is not None:
+                return act
+        except Exception:
+            pass
+        PythonActivity = autoclass('org.kivy.android.PythonActivity')
+        return PythonActivity.mActivity
+    except Exception:
+        return None
+
+def _get_notif_manager():
+    """Lazily creates (once) the NotificationManager + playback notification
+    channel. Returns (manager, activity) or None if unavailable (desktop
+    testing, missing permission, etc)."""
+    global _notif_manager_obj, _notif_small_icon_id
+    if _notif_manager_obj is not None:
+        return _notif_manager_obj or None
+    try:
+        from jnius import autoclass
+        activity = _get_android_activity()
+        if activity is None:
+            raise Exception("no activity")
+        NotificationManager = autoclass('android.app.NotificationManager')
+        manager = activity.getSystemService(activity.NOTIFICATION_SERVICE)
+        VERSION = autoclass('android.os.Build$VERSION')
+        if VERSION.SDK_INT >= 26:
+            NotificationChannel = autoclass('android.app.NotificationChannel')
+            if manager.getNotificationChannel(NOTIF_CHANNEL_ID) is None:
+                channel = NotificationChannel(NOTIF_CHANNEL_ID, "Now Playing", NotificationManager.IMPORTANCE_LOW)
+                channel.setDescription("Shows the currently playing song")
+                channel.setShowBadge(False)
+                manager.createNotificationChannel(channel)
+
+        # Resolve the app's own launcher icon as the small status-bar icon;
+        # fall back to a built-in system icon if that lookup fails.
+        try:
+            res = activity.getResources()
+            pkg = activity.getPackageName()
+            icon_id = res.getIdentifier("icon", "mipmap", pkg)
+            if not icon_id:
+                icon_id = res.getIdentifier("icon", "drawable", pkg)
+        except Exception:
+            icon_id = 0
+        if not icon_id:
+            android_R_drawable = autoclass('android.R$drawable')
+            icon_id = android_R_drawable.ic_media_play
+        _notif_small_icon_id = icon_id
+
+        _notif_manager_obj = (manager, activity)
+    except Exception:
+        _notif_manager_obj = False
+    return _notif_manager_obj or None
+
+def _notif_dominant_color(cover_surf):
+    """Cheap average-color sample of the album art (no PIL needed - just
+    pygame, which is already loaded), used to tint the colorized
+    notification's background so it visually matches the art."""
+    try:
+        small = pygame.transform.smoothscale(cover_surf.convert(), (8, 8))
+        r_total = g_total = b_total = 0
+        for x in range(8):
+            for y in range(8):
+                r, g, b = small.get_at((x, y))[:3]
+                r_total += r; g_total += g; b_total += b
+        n = 64
+        return (r_total // n, g_total // n, b_total // n)
+    except Exception:
+        return None
+
+def _notif_build_art_bitmap(title):
+    """Returns (android.graphics.Bitmap, is_fallback). is_fallback is True
+    when there was no real album art and a green placeholder tile with the
+    song name on it was drawn instead."""
+    try:
+        from jnius import autoclass
+        Bitmap = autoclass('android.graphics.Bitmap')
+        BitmapConfig = autoclass('android.graphics.Bitmap$Config')
+        Canvas = autoclass('android.graphics.Canvas')
+        Paint = autoclass('android.graphics.Paint')
+        Color = autoclass('android.graphics.Color')
+        BitmapFactory = autoclass('android.graphics.BitmapFactory')
+
+        cover_surf = current_track.get("cover_surface")
+        if cover_surf is not None:
+            try:
+                tmp_art_path = os.path.join(tempfile.gettempdir(), "spotmfi_notif_art.png")
+                pygame.image.save(cover_surf, tmp_art_path)
+                art_bitmap = BitmapFactory.decodeFile(tmp_art_path)
+                if art_bitmap is not None:
+                    return art_bitmap, False
+            except Exception:
+                pass
+
+        # No usable art - draw a solid green square with the song name on it.
+        size = 512
+        bmp = Bitmap.createBitmap(size, size, BitmapConfig.ARGB_8888)
+        canvas = Canvas(bmp)
+        canvas.drawColor(Color.parseColor("#1DB954"))
+        paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.setColor(Color.WHITE)
+        paint.setTextAlign(Paint.Align.CENTER)
+        paint.setTextSize(size * 0.09)
+        paint.setFakeBoldText(True)
+
+        text = (title or "Unknown Track").strip()
+        words = text.split()
+        lines, line = [], ""
+        for w in words:
+            trial = (line + " " + w).strip()
+            if line and paint.measureText(trial) > size * 0.85:
+                lines.append(line)
+                line = w
+            else:
+                line = trial
+        if line:
+            lines.append(line)
+        lines = lines[:4] or ["Unknown Track"]
+
+        line_height = size * 0.12
+        start_y = size / 2 - (line_height * (len(lines) - 1)) / 2
+        for i, ln in enumerate(lines):
+            canvas.drawText(ln, size / 2, start_y + i * line_height, paint)
+
+        return bmp, True
+    except Exception:
+        return None, True
+
+def update_playback_notification():
+    """Posts/updates the persistent 'now playing' notification for the
+    current track: song name, artist, real album art (or a green
+    song-name placeholder tile when there's no art), and a background tint
+    sampled from that same art."""
+    try:
+        result = _get_notif_manager()
+        if result is None:
+            return
+        manager, activity = result
+        if not current_track.get("path"):
+            return
+
+        from jnius import autoclass
+        NotificationBuilder = autoclass('android.app.Notification$Builder')
+        MediaStyle = autoclass('android.app.Notification$MediaStyle')
+        Color = autoclass('android.graphics.Color')
+        VERSION = autoclass('android.os.Build$VERSION')
+
+        title = current_track.get("title", "Unknown Track")
+        artist = current_track.get("artist", "")
+
+        bitmap, is_fallback = _notif_build_art_bitmap(title)
+
+        dom = None
+        if not is_fallback and current_track.get("cover_surface") is not None:
+            dom = _notif_dominant_color(current_track["cover_surface"])
+        notif_color = Color.rgb(*dom) if dom else Color.parseColor("#1DB954")
+
+        builder = NotificationBuilder(activity, NOTIF_CHANNEL_ID) if VERSION.SDK_INT >= 26 else NotificationBuilder(activity)
+        builder.setContentTitle(title)
+        builder.setContentText(artist)
+        builder.setSmallIcon(_notif_small_icon_id)
+        builder.setOngoing(bool(is_playing))
+        builder.setOnlyAlertOnce(True)
+        if bitmap is not None:
+            builder.setLargeIcon(bitmap)
+        try:
+            builder.setStyle(MediaStyle())
+        except Exception:
+            pass
+        try:
+            builder.setColorized(True)
+            builder.setColor(notif_color)
+        except Exception:
+            pass
+
+        manager.notify(NOTIF_ID, builder.build())
+    except Exception:
+        pass
+
 def request_storage_permission_for_onboarding():
     """Sequenced storage-permission flow for the onboarding 'storage' screen.
     Firing the legacy READ/WRITE_EXTERNAL_STORAGE runtime dialog AND
@@ -2692,6 +2892,8 @@ is_dragging_row = False
 last_touch_y = 0
 last_touch_x = 0
 total_drag_dy = 0
+press_origin_pos = (0, 0)  # touch/click position at press-down, used to measure NET
+                            # displacement for the tap-vs-drag decision (see MOUSEMOTION below)
 _scroll_velocity_samples = []   # [(time, dy), ...] rolling window for momentum on lift
 
 music_grid_scroll_offset = 0.0  
@@ -3751,6 +3953,11 @@ def _onboarding_fetch_lyrics_for_track(title, artist):
 
         best_lyrics = None
         best_score = 0.0
+        top_of_list_lyrics = None  # first usable result seen, in API order - same thing a
+                                    # manual "Search Lyrics" lookup shows at the top and is
+                                    # almost always right, used as a fallback below so a
+                                    # merely-imperfect score doesn't cause a track to be
+                                    # skipped entirely
         for base in variants:
             params = dict(base)
             if has_artist and "q" not in params:
@@ -3765,6 +3972,8 @@ def _onboarding_fetch_lyrics_for_track(title, artist):
                 lyr = item.get("syncedLyrics") or item.get("plainLyrics")
                 if not lyr:
                     continue
+                if top_of_list_lyrics is None:
+                    top_of_list_lyrics = lyr
                 score = _match_score(item.get("trackName", ""), item.get("artistName", ""), title, artist if has_artist else "")
                 if item.get("syncedLyrics"):
                     score += 0.05  # small nudge - prefer synced over plain when scores are close
@@ -3773,9 +3982,16 @@ def _onboarding_fetch_lyrics_for_track(title, artist):
                     best_lyrics = lyr
             if best_score >= 0.8:
                 break  # good enough match already - no need to burn another request
+            if top_of_list_lyrics is not None:
+                break  # already have a top-of-list fallback candidate, no need to widen the search
 
         if best_lyrics and best_score >= 0.35:
             return best_lyrics
+        if top_of_list_lyrics:
+            # scoring wasn't confident enough, but the top search result is exactly
+            # what a manual lyrics search would show and use - trust it rather than
+            # skipping the track entirely
+            return top_of_list_lyrics
     except Exception:
         pass
     return None
@@ -3809,6 +4025,11 @@ def _onboarding_fetch_art_for_track(title, artist):
 
         best_result = None
         best_score = 0.0
+        top_of_list_result = None  # first result returned by iTunes, in API order - this is
+                                    # exactly what a manual "Search Artwork" lookup shows at
+                                    # the top of the list (and picks correctly), so it's used
+                                    # as a fallback below instead of skipping the track just
+                                    # because our own scoring wasn't confident enough
         for query in query_variants:
             params = urllib.parse.urlencode({"term": query, "entity": "song", "media": "music", "limit": 8})
             url = f"https://itunes.apple.com/search?{params}"
@@ -3818,16 +4039,23 @@ def _onboarding_fetch_art_for_track(title, artist):
                     data = json.loads(resp.read().decode("utf-8"))
             except Exception:
                 continue
-            for result in data.get("results", []):
+            results = data.get("results", [])
+            if results and top_of_list_result is None:
+                top_of_list_result = results[0]
+            for result in results:
                 score = _match_score(result.get("trackName", ""), result.get("artistName", ""), title, artist if has_artist else "")
                 if score > best_score:
                     best_score = score
                     best_result = result
             if best_score >= 0.75:
                 break  # strong match already - no need to also burn the raw-title fallback request
+            if top_of_list_result is not None:
+                break  # already have a top-of-list fallback candidate, no need to widen the search
 
         if best_result is None or best_score < 0.4:
-            return None  # nothing close enough to trust - skip rather than attach the wrong cover
+            if top_of_list_result is None:
+                return None  # genuinely no results at all - nothing to fall back to
+            best_result = top_of_list_result  # trust the top-of-list result, same as a manual search would
 
         art_url = best_result.get("artworkUrl100")
         if art_url:
@@ -5005,12 +5233,27 @@ def draw_main_content():
         path_lbl = font_small.render(f"Path: {current_browser_path}", True, COLOR_SPOTIFY_GREEN)
         virtual_surface.blit(path_lbl, (content_pad_x, 75))
         
-        if not is_portrait:
+        _phone_browser = is_portrait and layout_mode == "phone"
+        if _phone_browser:
+            # Phone: the title text ("Import Cover (.png, .jpg)" etc.) is too wide for
+            # this button row to sit top-right without overlapping it, so the 3 buttons
+            # move to their own left-aligned row underneath the title/path text instead.
+            # Extra headroom below the path line (vs. just clearing its bottom edge) so
+            # this row can't crowd/touch the text on any device's font metrics - this is
+            # what made "Add Folder" (title "Device Storage Explorer") look like it
+            # overlapped even though it shares this exact layout with "Import Cover".
+            _browser_btn_row_y = 118
+            browser_extra_search_btn_rect = pygame.Rect(content_pad_x, _browser_btn_row_y, 80, 35)
+            select_folder_btn_rect = pygame.Rect(content_pad_x + 90, _browser_btn_row_y, 140, 35)
+            cancel_browser_btn_rect = pygame.Rect(content_pad_x + 240, _browser_btn_row_y, 80, 35)
+        elif not is_portrait:
             cancel_browser_btn_rect = pygame.Rect(main_x + main_w - 250, 35, 90, 35)
+            select_folder_btn_rect = pygame.Rect(cancel_browser_btn_rect.x - 170, 35, 160, 35)
+            browser_extra_search_btn_rect = pygame.Rect(select_folder_btn_rect.x - 110, 35, 100, 35)
         else:
             cancel_browser_btn_rect = pygame.Rect(main_x + main_w - 130, 35, 90, 35)
-        select_folder_btn_rect = pygame.Rect(cancel_browser_btn_rect.x - 170, 35, 160, 35)
-        browser_extra_search_btn_rect = pygame.Rect(select_folder_btn_rect.x - 110, 35, 100, 35)
+            select_folder_btn_rect = pygame.Rect(cancel_browser_btn_rect.x - 170, 35, 160, 35)
+            browser_extra_search_btn_rect = pygame.Rect(select_folder_btn_rect.x - 110, 35, 100, 35)
 
         bes_hovered = browser_extra_search_btn_rect.collidepoint(mouse_pos)
         bes_clicked = bes_hovered and mouse_held
@@ -5019,7 +5262,7 @@ def draw_main_content():
             pygame.draw.rect(virtual_surface, bes_color, browser_extra_search_btn_rect, border_radius=15)
             bes_lbl = font_small.render(t("Search"), True, COLOR_WHITE)
             bes_lbl_x = browser_extra_search_btn_rect.x + (browser_extra_search_btn_rect.width - bes_lbl.get_width()) // 2
-            virtual_surface.blit(bes_lbl, (bes_lbl_x, 44))
+            virtual_surface.blit(bes_lbl, (bes_lbl_x, browser_extra_search_btn_rect.y + 9))
         
         sf_hovered = select_folder_btn_rect.collidepoint(mouse_pos)
         sf_clicked = sf_hovered and mouse_held
@@ -5032,7 +5275,7 @@ def draw_main_content():
         sf_text = "Confirm File" if is_browsing_for_cover else "Select Current"
         sf_lbl = font_small.render(sf_text, True, COLOR_WHITE if sf_color == COLOR_LIGHT_GREY else COLOR_BLACK)
         sf_lbl_x = select_folder_btn_rect.x + (select_folder_btn_rect.width - sf_lbl.get_width()) // 2
-        virtual_surface.blit(sf_lbl, (sf_lbl_x, 44))
+        virtual_surface.blit(sf_lbl, (sf_lbl_x, select_folder_btn_rect.y + 9))
         
         cc_hovered = cancel_browser_btn_rect.collidepoint(mouse_pos)
         cc_clicked = cc_hovered and mouse_held
@@ -5042,18 +5285,20 @@ def draw_main_content():
             cc_color = COLOR_HOVER if cc_hovered else COLOR_LIGHT_GREY
         pygame.draw.rect(virtual_surface, cc_color, cancel_browser_btn_rect, border_radius=15)
         cc_lbl = font_small.render(t("Cancel"), True, COLOR_WHITE)
-        virtual_surface.blit(cc_lbl, (cancel_browser_btn_rect.x + 20, 44))
+        virtual_surface.blit(cc_lbl, (cancel_browser_btn_rect.x + (cancel_browser_btn_rect.width - cc_lbl.get_width()) // 2, cancel_browser_btn_rect.y + 9))
         
-        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
+        _browser_list_top = 163 if _phone_browser else 130   # phone needs extra room below the button row
+        _browser_divider_y = 163 if _phone_browser else 115
+        pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, _browser_divider_y), (main_x + main_w - 40, _browser_divider_y), 1)
         
         browser_available_h = HEIGHT - portrait_sidebar_h
         total_content_height = len(browser_items) * 42
-        max_browser_scroll = max(0, total_content_height - (browser_available_h - 130) + 30)
+        max_browser_scroll = max(0, total_content_height - (browser_available_h - _browser_list_top) + 30)
         
-        clip_rect = pygame.Rect(main_x, 130, main_w, browser_available_h - 130)
+        clip_rect = pygame.Rect(main_x, _browser_list_top, main_w, browser_available_h - _browser_list_top)
         virtual_surface.set_clip(clip_rect)
         
-        y_offset = 130 - round(browser_scroll_offset)
+        y_offset = _browser_list_top - round(browser_scroll_offset)
         for item in browser_items:
             item_row_rect = pygame.Rect(main_x + 20, y_offset - 4, main_w - 50, 35)
             if item_row_rect.colliderect(clip_rect):
@@ -6982,7 +7227,15 @@ def draw_modals():
         virtual_surface.blit(header_lbl, (main_x + 40, 45))
         virtual_surface.blit(track_lbl, (main_x + 40, 105))
         
-        lyrics_box_h = HEIGHT - portrait_sidebar_h - 250 if is_portrait else 420
+        _phone_lyrics = is_portrait and layout_mode == "phone"
+        # Phone has 2 rows of buttons below the textarea now (vs. 1 on desktop), so it
+        # needs extra headroom subtracted here or the second row clips off the bottom.
+        if _phone_lyrics:
+            lyrics_box_h = HEIGHT - portrait_sidebar_h - 305
+        elif is_portrait:
+            lyrics_box_h = HEIGHT - portrait_sidebar_h - 250
+        else:
+            lyrics_box_h = 420
         lyrics_textarea_rect = pygame.Rect(main_x + 40, 145, main_w - 80, lyrics_box_h)
         pygame.draw.rect(virtual_surface, COLOR_CARD_BG, lyrics_textarea_rect, border_radius=8)
         
@@ -7095,7 +7348,22 @@ def draw_modals():
             placeholder = font_small.render("Type or paste the song lyrics here... (e.g., [00:12] Synced Line! Press Ctrl+V to paste)", True, COLOR_TEXT_MUTED)
             virtual_surface.blit(placeholder, (lyrics_textarea_rect.x + 15, lyrics_textarea_rect.y + 15))
             
-        if is_portrait:
+        if is_portrait and layout_mode == "phone":
+            # Phone: row of 3 (Close/Save/Clear) doesn't leave room for Import/Search
+            # on this narrow width, so those two go on their own centred row below.
+            row1_y = lyrics_textarea_rect.bottom + 20
+            row1_w = 100 * 3 + 10 * 2
+            row1_x = main_x + (main_w - row1_w) // 2
+            lyrics_close_rect = pygame.Rect(row1_x, row1_y, 100, 42)
+            lyrics_save_rect = pygame.Rect(row1_x + 110, row1_y, 100, 42)
+            lyrics_clear_rect = pygame.Rect(row1_x + 220, row1_y, 100, 42)
+
+            row2_y = row1_y + 52
+            row2_w = 100 * 2 + 10
+            row2_x = main_x + (main_w - row2_w) // 2
+            lyrics_import_rect = pygame.Rect(row2_x, row2_y, 100, 42)
+            lyrics_search_rect = pygame.Rect(row2_x + 110, row2_y, 100, 42)
+        elif is_portrait:
             btn_y = lyrics_textarea_rect.bottom + 20
             start_x = main_x + (main_w - 570) // 2 
             lyrics_close_rect = pygame.Rect(start_x, btn_y, 100, 42)
@@ -7527,7 +7795,8 @@ def draw_media_bar():
         # Icon cluster is centred on its own row; title/artist moved below the progress bar
         ctrl_y = bar_y + 32
 
-        icon_gap = 48   # bigger gap between each icon for easier tapping
+        icon_gap = 38   # gap between each icon - pulled in a bit so the cluster
+                         # isn't spread so wide it sits right on the screen edges
         # Total span of the 10-icon cluster, centred independently within WIDTH
         cluster_span = icon_gap * 9 + 8 + 6 + 6 + 8
         icons_start_x = (WIDTH - cluster_span) // 2
@@ -7959,6 +8228,19 @@ button_flash_frames = 0
 # the Python side can detect or correct. Preferring the raw normalized touch
 # position sidesteps that class of bug entirely. None on desktop (no touches).
 _last_touch_norm = None
+# Per-gesture snapshots of the normalized touch position, captured exactly once
+# at FINGERDOWN/FINGERUP and consumed exactly once by the synthesized
+# MOUSEBUTTONDOWN/MOUSEBUTTONUP that follows. Needed because _last_touch_norm
+# above is a single shared "most recent touch" value: if a second tap starts
+# before the first tap's delayed synthesized mouse event has arrived (the SDL
+# lag documented above), _last_touch_norm gets overwritten by the second touch
+# before the first touch's MOUSEBUTTONUP is processed - so the first tap's
+# click ends up acting on wherever the second touch landed instead of where it
+# was actually pressed. This was the cause of tapping a media bar button also
+# registering on the song row underneath it. Snapshotting per-gesture and
+# consuming (then clearing) on use avoids that mix-up.
+_pending_touch_down_norm = None
+_pending_touch_up_norm = None
 # Timestamp of the last onboarding click handled directly from a FINGERDOWN
 # event (see the FINGERDOWN handler below). Used to stop the synthesized
 # MOUSEBUTTONDOWN that follows a real touch from re-handling the same tap.
@@ -8386,6 +8668,7 @@ while running:
             button_flash_frames = 3
             mouse_held = True
             _last_touch_norm = (event.x, event.y)
+            _pending_touch_down_norm = (event.x, event.y)
             # Handle onboarding taps right here, on the raw touch-down, instead
             # of waiting for SDL's synthesized MOUSEBUTTONDOWN. On some
             # Android/SDL builds that synthesized mouse event lags a full event
@@ -8400,12 +8683,33 @@ while running:
                 _onboarding_finger_pos = (int(event.x * WIDTH), int(event.y * HEIGHT))
                 handle_onboarding_click(_onboarding_finger_pos)
                 _last_onboarding_finger_click_time = time.time()
+            elif HAS_ANDROID_MEDIA:
+                # The SAME lag described above breaks every OTHER button in the
+                # app too, not just onboarding - anything gated on MOUSEBUTTONDOWN/
+                # MOUSEBUTTONUP was still waiting on SDL's unreliable synthesized
+                # echo, which is why it could take two taps to register: the first
+                # tap's echo doesn't get flushed into the queue until a second tap
+                # happens. Fix it the same way onboarding was fixed: post our OWN
+                # mouse-down immediately off the real touch, tagged synthetic=True
+                # so it's never mistaken for SDL's own echo. It shows up on the
+                # very next frame regardless of whether/when SDL's echo arrives -
+                # that echo is discarded outright below once it does.
+                pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=(0, 0), button=1, synthetic=True))
 
         elif event.type == pygame.FINGERMOTION:
             _last_touch_norm = (event.x, event.y)
+            if HAS_ANDROID_MEDIA:
+                pygame.event.post(pygame.event.Event(pygame.MOUSEMOTION, pos=(0, 0), rel=(0, 0), buttons=(1, 0, 0), synthetic=True))
 
         elif event.type == pygame.FINGERUP:
             _last_touch_norm = (event.x, event.y)
+            _pending_touch_up_norm = (event.x, event.y)
+            if HAS_ANDROID_MEDIA and not onboarding_stage:
+                # Same reasoning as FINGERDOWN above, for the release half of the
+                # tap - most of the app's actual button actions (see the
+                # MOUSEBUTTONUP handler below) fire on release, not press, so this
+                # is the half that was most responsible for "needs two taps."
+                pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONUP, pos=(0, 0), button=1, synthetic=True))
 
         elif event.type == getattr(pygame, 'WINDOWFOCUSLOST', None) or \
              event.type == getattr(pygame, 'WINDOWEVENT', None):
@@ -8413,10 +8717,31 @@ while running:
                 search_input_active = False
 
         elif event.type == pygame.MOUSEBUTTONDOWN:
+            if HAS_ANDROID_MEDIA and not getattr(event, 'synthetic', False):
+                # On Android every mouse event is SDL's own synthesized echo of a
+                # touch - there's no real mouse. We now drive every tap directly
+                # off FINGERDOWN/FINGERUP instead (see those handlers above),
+                # posting our own mouse events tagged synthetic=True the instant
+                # the real touch happens. Anything that reaches here WITHOUT that
+                # tag is SDL's unreliable, unpredictably-delayed echo of a touch
+                # we already handled - discard it outright instead of letting it
+                # fire late (possibly on a stale position, or requiring a second
+                # tap to even show up at all).
+                continue
             if event.button == 1:
                 button_flash_frames = 3
                 mouse_held = True
-            mouse_pos = get_virtual_mouse_pos(event.pos)
+            if event.button == 1 and _pending_touch_down_norm is not None:
+                # Use the exact touch position captured at THIS gesture's own
+                # FINGERDOWN rather than get_virtual_mouse_pos()'s "most recent
+                # touch" fallback, which a later tap could have already
+                # overwritten if this synthesized event arrived late (see the
+                # _pending_touch_down_norm comment above).
+                _pdx, _pdy = _pending_touch_down_norm
+                mouse_pos = (int(_pdx * WIDTH), int(_pdy * HEIGHT))
+                _pending_touch_down_norm = None
+            else:
+                mouse_pos = get_virtual_mouse_pos(event.pos)
 
             # If a FINGERDOWN moments ago already handled this exact tap (see
             # the FINGERDOWN handler above), this MOUSEBUTTONDOWN is just
@@ -8483,6 +8808,7 @@ while running:
                 is_dragging_row = False
                 last_touch_y = mouse_pos[1]
                 total_drag_dy = 0
+                press_origin_pos = mouse_pos
                 _scroll_velocity_samples.clear()
                 if media_bar_rect.collidepoint(mouse_pos) and current_track["title"] != "Select a song":
                     is_dragging_grid = False
@@ -8495,6 +8821,9 @@ while running:
                     last_touch_x = mouse_pos[0]
                 
         elif event.type == pygame.MOUSEMOTION:
+            if HAS_ANDROID_MEDIA and not getattr(event, 'synthetic', False):
+                # Same reasoning as the MOUSEBUTTONDOWN guard above.
+                continue
             mouse_pos = get_virtual_mouse_pos(event.pos)
             
             if is_dragging_progress:
@@ -8503,14 +8832,22 @@ while running:
                 drag_seek_target = fraction * track_duration
             elif is_dragging_row:
                 dx = last_touch_x - mouse_pos[0]
-                total_drag_dy += abs(dx)
+                # NET distance from the original press point, not a running sum of
+                # every intermediate frame's movement - touchscreen digitizer noise
+                # fires several tiny motion events even while a finger is basically
+                # held still, and summing their absolute deltas made that noise add
+                # up past the tap/drag threshold, which is why taps were needing 2-3
+                # presses before one happened to have little enough jitter to count
+                # as a tap instead of a drag.
+                total_drag_dy = abs(mouse_pos[0] - press_origin_pos[0])
                 if abs(dx) > 0:
                     user_scrolled_btn_row = True
                 target_btn_row_scroll += dx * 2.5
                 last_touch_x = mouse_pos[0]
             elif is_dragging_grid:
                 dy = last_touch_y - mouse_pos[1]
-                total_drag_dy += abs(dy)
+                # Same net-distance-from-origin reasoning as is_dragging_row above.
+                total_drag_dy = abs(mouse_pos[1] - press_origin_pos[1])
 
                 # Record for momentum — keep only the last 120ms
                 _now = time.time()
@@ -8570,7 +8907,24 @@ while running:
                             last_touch_y = mouse_pos[1]
 
         elif event.type == pygame.MOUSEBUTTONUP:
-            mouse_pos = get_virtual_mouse_pos(event.pos)
+            if HAS_ANDROID_MEDIA and not getattr(event, 'synthetic', False):
+                # Same reasoning as the MOUSEBUTTONDOWN guard above. This is the
+                # release half of the tap, and it's the half that actually fires
+                # most of the app's button actions (see below), so it's the half
+                # most responsible for the "needs two taps" symptom.
+                continue
+            if event.button == 1 and _pending_touch_up_norm is not None:
+                # Same reasoning as the MOUSEBUTTONDOWN case above: use this
+                # gesture's own captured touch-up position instead of the
+                # shared "most recent touch" fallback, which a later tap could
+                # have already overwritten by the time this synthesized event
+                # is finally processed. This was the direct cause of tapping a
+                # media bar button also registering on the song row behind it.
+                _pux, _puy = _pending_touch_up_norm
+                mouse_pos = (int(_pux * WIDTH), int(_puy * HEIGHT))
+                _pending_touch_up_norm = None
+            else:
+                mouse_pos = get_virtual_mouse_pos(event.pos)
             if event.button == 1:
                 # Compute momentum from recent velocity samples and kick the target
                 if _scroll_velocity_samples and is_dragging_grid:
@@ -9326,6 +9680,14 @@ while running:
             release_playback_wake_lock()
         _wake_lock_prev_is_playing = is_playing
 
+    # Keep the "now playing" notification in sync with whatever's actually
+    # loaded/playing, edge-triggered on (track, is_playing) changing so it's
+    # only rebuilt when something actually changed, not every frame.
+    _notif_key = (current_track.get("path"), is_playing)
+    if _notif_key != _notif_last_state and current_track.get("path"):
+        update_playback_notification()
+        _notif_last_state = _notif_key
+
     if is_playing and track_duration > 0 and music_loaded and not is_dragging_progress:
         if current_backend == "android" and android_media_player:
             try: elapsed = android_media_player.getCurrentPosition() / 1000.0
@@ -9385,7 +9747,10 @@ while running:
             _tb.print_exc()
 
     # Accurate Letterbox/Pillarbox Screen Scaling
-    scaled_frame = pygame.transform.scale(virtual_surface, (REAL_WIDTH, REAL_HEIGHT))
+    # smoothscale (bilinear) instead of the old blocky nearest-neighbor scale -
+    # same layout/content, just crisp/anti-aliased instead of pixelated when
+    # the small virtual canvas gets blown up to the real screen resolution
+    scaled_frame = pygame.transform.smoothscale(virtual_surface, (REAL_WIDTH, REAL_HEIGHT))
     screen.blit(scaled_frame, (0, 0))
 
     pygame.display.flip()
