@@ -1,4 +1,5 @@
 import pygame
+import gc
 import sys
 import os
 import io
@@ -65,9 +66,39 @@ pygame.mixer.pre_init(44100, -16, 2, 2048)
 pygame.init()
 pygame.mixer.init()
 pygame.font.init()
+gc.disable()
+
+# --- PLATFORM DETECTION (Android vs PC/desktop) ---
+# Used below to decide fullscreen-locked (Android) vs a normal resizable
+# window (PC) at startup, and again on window resize.
+def _detect_is_android():
+    try:
+        from jnius import autoclass
+        autoclass('org.libsdl.app.SDLActivity')
+        return True
+    except Exception:
+        pass
+    try:
+        import android  # noqa: F401
+        return True
+    except Exception:
+        pass
+    return False
+
+IS_ANDROID = _detect_is_android()
+
+# Debug reveal: hidden by default. Press F5 to toggle back on — shows the
+# Phone / Desktop-Tablet layout buttons in Settings again, plus a live FPS
+# counter in the top-left corner. Press F5 again to hide both.
+_debug_reveal = False
 
 info = pygame.display.Info()
-REAL_WIDTH, REAL_HEIGHT = info.current_w, info.current_h
+if IS_ANDROID:
+    REAL_WIDTH, REAL_HEIGHT = info.current_w, info.current_h
+else:
+    # PC/desktop: open as a normal window that always starts at 1080p,
+    # instead of fullscreen at the monitor's native resolution.
+    REAL_WIDTH, REAL_HEIGHT = 1920, 1080
 
 # Set (from a background/Android callback thread) when the user grants
 # storage permission after app start; the main loop checks this each frame
@@ -131,6 +162,34 @@ def set_android_orientation(portrait_locked):
         pass
 
 set_android_orientation(False)  # default: sensor/auto-rotate
+
+# --- SUSTAINED PERFORMANCE MODE ---
+# Window.setSustainedPerformanceMode(true) is a standard Android API (24+)
+# meant for apps like games/media players that need stable frame timing: it
+# asks the OS to keep CPU clocks steady during sustained load instead of
+# aggressively scaling them down/up, which is the actual bottleneck behind
+# low FPS on some devices/power profiles. It's a request, not a guarantee -
+# the OS/vendor skin decides how much to honor it, and it silently does
+# nothing on devices/API levels that don't support it. No-ops harmlessly on
+# desktop. Isolated on purpose: doesn't touch rendering, display mode, or
+# anything else, so it's trivial to remove if it doesn't help.
+def set_android_sustained_performance_mode():
+    try:
+        from jnius import autoclass
+        SDLActivity = autoclass('org.libsdl.app.SDLActivity')
+        activity = SDLActivity.mSingleton if hasattr(SDLActivity, 'mSingleton') else SDLActivity.mActivity
+        activity.getWindow().setSustainedPerformanceMode(True)
+        return
+    except Exception:
+        pass
+    try:
+        from jnius import autoclass
+        PythonActivity = autoclass('org.kivy.android.PythonActivity')
+        PythonActivity.mActivity.getWindow().setSustainedPerformanceMode(True)
+    except Exception:
+        pass
+
+set_android_sustained_performance_mode()
 
 # --- ANDROID RUNTIME PERMISSIONS ---
 # Listing permissions in buildozer.spec only adds them to the manifest — on
@@ -318,6 +377,58 @@ def release_playback_wake_lock():
         lock = _get_wake_lock()
         if lock is not None and lock.isHeld():
             lock.release()
+    except Exception:
+        pass
+
+# --- HAPTIC FEEDBACK (Android only) ---
+# Settings > Haptics toggle: fires a short vibration "tick" on every button
+# tap so the UI feels more tactile/responsive on Android. Off by default on
+# PC/desktop (no vibration hardware there, and the setting is hidden there
+# too - see the Settings page). Persisted the same way as every other
+# setting, in save_app_data()/load_app_data().
+haptics_enabled = True if IS_ANDROID else False
+_vibrator_service = None  # lazily resolved the first time a haptic actually fires
+
+def _get_vibrator_service():
+    """Lazily resolves (once) and returns the Android Vibrator system
+    service, or False if it's unavailable (PC, missing VIBRATE permission,
+    older/unusual device, etc.) so we don't keep retrying jnius every tap."""
+    global _vibrator_service
+    if _vibrator_service is not None:
+        return _vibrator_service
+    try:
+        from jnius import autoclass, cast
+        try:
+            SDLActivity = autoclass('org.libsdl.app.SDLActivity')
+            activity = SDLActivity.mSingleton if hasattr(SDLActivity, 'mSingleton') else SDLActivity.mActivity
+        except Exception:
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            activity = PythonActivity.mActivity
+        Context = autoclass('android.content.Context')
+        vibrator = activity.getSystemService(Context.VIBRATOR_SERVICE)
+        _vibrator_service = cast('android.os.Vibrator', vibrator)
+    except Exception:
+        _vibrator_service = False
+    return _vibrator_service
+
+def trigger_haptic(duration_ms=15):
+    """Fire one short vibration 'tick' for button-press feedback. No-op on
+    PC/desktop and whenever the user has Haptics turned off in Settings, so
+    it's always safe to call from anywhere a tap is handled."""
+    if not IS_ANDROID or not haptics_enabled:
+        return
+    try:
+        vibrator = _get_vibrator_service()
+        if not vibrator:
+            return
+        try:
+            from jnius import autoclass
+            VibrationEffect = autoclass('android.os.VibrationEffect')
+            effect = VibrationEffect.createOneShot(duration_ms, VibrationEffect.DEFAULT_AMPLITUDE)
+            vibrator.vibrate(effect)
+        except Exception:
+            # Pre-Android-8 (API < 26) devices don't have VibrationEffect.
+            vibrator.vibrate(duration_ms)
     except Exception:
         pass
 
@@ -620,7 +731,20 @@ def compute_virtual_size(real_w, real_h, portrait, _layout_mode="desktop"):
 
 WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, "desktop")
 
-screen = pygame.display.set_mode((REAL_WIDTH, REAL_HEIGHT), pygame.FULLSCREEN | pygame.RESIZABLE)
+WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, "desktop")
+
+# NOTE: pygame.SCALED (GPU-side upscale) was tried here to avoid the per-frame
+# CPU smoothscale below, but it produced a black screen on this build's
+# Android/SDL2 setup instead of raising an exception, so the try/except
+# fallback never got a chance to engage - reverted back to the known-working
+# CPU smoothscale path. USING_GPU_SCALE stays False/present so the FPS
+# overlay and the flip logic later in the file don't need to change.
+USING_GPU_SCALE = False
+
+screen = pygame.display.set_mode(
+    (REAL_WIDTH, REAL_HEIGHT),
+    (pygame.FULLSCREEN | pygame.RESIZABLE) if IS_ANDROID else pygame.RESIZABLE
+)
 virtual_surface = pygame.Surface((WIDTH, HEIGHT))
 clock = pygame.time.Clock()
 
@@ -2886,6 +3010,7 @@ btn_row_rect = pygame.Rect(0, 0, 0, 0)
 user_scrolled_btn_row = False
 playlist_is_playing = None  
 layout_mode = "desktop"  
+_last_gc_time = 0.0
 
 is_dragging_grid = False
 is_dragging_row = False
@@ -2895,6 +3020,74 @@ total_drag_dy = 0
 press_origin_pos = (0, 0)  # touch/click position at press-down, used to measure NET
                             # displacement for the tap-vs-drag decision (see MOUSEMOTION below)
 _scroll_velocity_samples = []   # [(time, dy), ...] rolling window for momentum on lift
+
+# --- REAL INERTIAL SCROLL PHYSICS ---
+# The old approach kept a single "target" position and eased the visible
+# offset toward it every frame with offset += (target-offset)*12*dt. That's
+# fine for programmatic jumps (tapping a tab), but for a flick-to-scroll it's
+# the wrong model: on release we computed one average velocity and used it to
+# pick a *new target position*, then chased that target with the same generic
+# ease. That chase curve doesn't match how a flung list actually decelerates
+# (constant, framerate-independent friction), so every flick "arrived" with a
+# slightly different, faintly laggy feel instead of smoothly bleeding off
+# speed like Spotify/iOS lists do. Below, released flicks get a real velocity
+# that decays continuously each frame (framerate-independent via dt), plus a
+# touch of rubber-band resistance at the scroll bounds instead of a hard
+# stop. Non-flick scroll changes (tab switches, wheel nudges, buttons) still
+# use a snappy ease so they don't feel physics-y when they shouldn't.
+_scroll_momentum = {}      # name -> current velocity in px/sec, while a flick is decelerating
+SCROLL_FRICTION = 3.4       # higher = flicks stop sooner. velocity *= e^(-SCROLL_FRICTION*dt)
+SCROLL_MIN_VELOCITY = 40.0  # px/sec floor - below this we just snap to 0 instead of creeping forever
+SCROLL_MAX_FLICK_VELOCITY = 4500.0  # px/sec cap so a wild flick can't launch the list off screen
+SCROLL_EASE_RATE = 16.0     # 1/sec rate for the non-momentum "chase the target" ease
+# (area_name, target_var_name, offset_var_name, max_var_name_or_None)
+SCROLL_AREAS = [
+    ("music",         "target_music_scroll",         "music_grid_scroll_offset",     "max_music_scroll"),
+    ("browser",        "target_browser_scroll",        "browser_scroll_offset",        "max_browser_scroll"),
+    ("settings",        "target_settings_scroll",       "settings_scroll_offset",       "max_settings_scroll"),
+    ("lyrics",          "target_lyrics_scroll",         "lyrics_scroll_offset",         "max_lyrics_scroll"),
+    ("top100",          "target_top100_scroll",         "top100_scroll_offset",         "max_top100_scroll"),
+    ("theme_page",      "target_theme_page_scroll",     "theme_page_scroll_offset",     "max_theme_page_scroll"),
+    ("sotd",            "target_sotd_scroll",           "sotd_scroll_offset",           "max_sotd_scroll"),
+    ("aotd",            "target_aotd_scroll",           "aotd_scroll_offset",           "max_aotd_scroll"),
+    ("hm",              "target_hm_scroll",             "hm_scroll_offset",             "max_hm_scroll"),
+    ("art_search",      "target_art_search_scroll",     "art_search_scroll_offset",     "max_art_search_scroll"),
+    ("lyrics_search",   "target_lyrics_search_scroll",  "lyrics_search_scroll_offset",  "max_lyrics_search_scroll"),
+    ("btn_row",         "target_btn_row_scroll",        "btn_row_scroll_offset",        None),
+]
+
+def _update_scroll_physics(dt):
+    """Called once per frame. Areas with an active flick (_scroll_momentum[name]
+    != 0) get real velocity/friction physics; everything else gets the old
+    snappy ease-toward-target so tab switches etc. still feel immediate."""
+    g = globals()
+    for name, target_var, offset_var, max_var in SCROLL_AREAS:
+        vel = _scroll_momentum.get(name, 0.0)
+        if vel == 0.0:
+            g[offset_var] += (g[target_var] - g[offset_var]) * (SCROLL_EASE_RATE * dt)
+            continue
+
+        offset = g[offset_var] + vel * dt
+        vel *= math.exp(-SCROLL_FRICTION * dt)
+        if abs(vel) < SCROLL_MIN_VELOCITY:
+            vel = 0.0
+
+        max_val = g.get(max_var) if max_var else None
+        if max_val is not None:
+            max_val = float(max_val)
+            if offset < 0.0:
+                offset *= 0.55          # rubber-band resistance past the top
+                vel *= 0.6
+            elif offset > max_val:
+                overshoot = offset - max_val
+                offset = max_val + overshoot * 0.55
+                vel *= 0.6
+            if vel == 0.0:
+                offset = max(0.0, min(max_val, offset))  # bounce settled - snap firmly in bounds
+
+        g[offset_var] = offset
+        g[target_var] = offset
+        _scroll_momentum[name] = vel
 
 music_grid_scroll_offset = 0.0  
 target_music_scroll = 0.0
@@ -2975,6 +3168,9 @@ desktop_btn_rect = pygame.Rect(0, 0, 0, 0)
 phone_btn_rect = pygame.Rect(0, 0, 0, 0)
 theme_btn_rect = pygame.Rect(0, 0, 0, 0)
 language_btn_rect = pygame.Rect(0, 0, 0, 0)
+resolution_btn_rect = pygame.Rect(0, 0, 0, 0)
+font_size_btn_rect = pygame.Rect(0, 0, 0, 0)
+haptics_btn_rect = pygame.Rect(0, 0, 0, 0)
 
 # --- PERSONALIZE / THEME SYSTEM ---
 current_theme = "classic"
@@ -2990,6 +3186,28 @@ font_option_rects = []   # [(pygame.Rect, font_key), ...]
 FONTS = {
     "classic":   {"label": "Classic",   "family": "Arial"},
 }
+
+# Settings > Font Size button: cycles Small/Medium/Large by scaling the base
+# point sizes used in apply_font() above.
+font_scale = 1.0
+FONT_SCALE_STEPS = [("Small", 0.85), ("Medium", 1.0), ("Large", 1.2)]
+def cycle_font_size():
+    global font_scale
+    labels = [lbl for lbl, _ in FONT_SCALE_STEPS]
+    scales = [sc for _, sc in FONT_SCALE_STEPS]
+    try:
+        idx = scales.index(font_scale)
+    except ValueError:
+        idx = 1  # default to Medium if font_scale was ever an odd value
+    idx = (idx + 1) % len(FONT_SCALE_STEPS)
+    font_scale = scales[idx]
+    apply_font(current_font_family)
+
+def current_font_size_label():
+    for lbl, sc in FONT_SCALE_STEPS:
+        if sc == font_scale:
+            return lbl
+    return "Medium"
 
 # Cache for the small preview-only font objects used on the Personalize page,
 # so scrolling doesn't rebuild ~16 SysFont objects every single frame.
@@ -3009,10 +3227,10 @@ def apply_font(font_key):
     font = FONTS.get(font_key, FONTS["classic"])
     family = font["family"]
     current_font_family = font_key
-    font_title = pygame.font.SysFont(family, 22, bold=True)
-    font_body  = pygame.font.SysFont(family, 16, bold=True)
-    font_small = pygame.font.SysFont(family, 14)
-    font_huge  = pygame.font.SysFont(family, 50, bold=True)
+    font_title = pygame.font.SysFont(family, round(22 * font_scale), bold=True)
+    font_body  = pygame.font.SysFont(family, round(16 * font_scale), bold=True)
+    font_small = pygame.font.SysFont(family, round(14 * font_scale))
+    font_huge  = pygame.font.SysFont(family, round(50 * font_scale), bold=True)
 
 # --- LANGUAGE SYSTEM (Settings tab) ---
 current_language = "English"
@@ -3547,6 +3765,19 @@ THEMES = {
         "gradient": [
             (255, 50, 50), (255, 150, 0), (255, 220, 0), (60, 220, 90), (0, 180, 255), (170, 60, 255), (255, 50, 50),
         ],
+    },
+    "high_contrast": {
+        "label": "High Contrast",
+        "COLOR_BLACK":          (0, 0, 0),
+        "COLOR_DARK_GREY":      (0, 0, 0),
+        "COLOR_LIGHT_GREY":     (35, 35, 35),
+        "COLOR_SPOTIFY_GREEN":  (255, 230, 0),   # high-visibility accent
+        "COLOR_WHITE":          (255, 255, 255),
+        "COLOR_TEXT_MUTED":     (225, 225, 225), # much lighter than the usual muted grey, for readability
+        "COLOR_HOVER":          (90, 90, 90),
+        "COLOR_CARD_BG":        (15, 15, 15),
+        "COLOR_RED":            (255, 70, 70),
+        "gradient":             None,
     },
 }
 
@@ -4425,6 +4656,8 @@ def save_app_data():
         "grid_cols_override": grid_cols_override,
         "current_theme": current_theme,
         "current_font_family": current_font_family,
+        "font_scale": font_scale,
+        "haptics_enabled": haptics_enabled,
         "current_language": current_language,
         "track_covers": {p: {"image_path": v.get("image_path")} for p, v in track_covers.items()},
         "listen_stats": listen_stats,
@@ -4450,6 +4683,7 @@ def load_app_data():
     global song_lyrics_database, green_toggled_tracks, layout_mode, track_covers
     global grid_cols_override, listen_stats
     global onboarding_complete, onboarding_stage, auto_scrape_media
+    global font_scale, haptics_enabled
     
     if not os.path.exists(DATA_FILE):
         layout_mode = detect_device_layout_mode()
@@ -4464,6 +4698,8 @@ def load_app_data():
         layout_mode = data.get("layout_mode", detect_device_layout_mode())
         grid_cols_override = data.get("grid_cols_override", None)
         apply_theme(data.get("current_theme", "classic"))
+        font_scale = data.get("font_scale", 1.0)
+        haptics_enabled = data.get("haptics_enabled", True if IS_ANDROID else False)
         apply_font(data.get("current_font_family", "classic"))
         apply_language(data.get("current_language", "English"))
         
@@ -4965,11 +5201,58 @@ def draw_unified_cover_overlay(surface, rect, mouse_pos):
         overlay_surf = pygame.Surface((rect.width, overlay_height), pygame.SRCALPHA)
         overlay_surf.fill((0, 0, 0, 180))
         
-        hint_surf = font_small.render(t("Choose Cover Image"), True, COLOR_WHITE)
+        hint_surf = _cached_render(font_small, t("Choose Cover Image"), True, COLOR_WHITE)
         tx = (rect.width - hint_surf.get_width()) // 2
         ty = (overlay_height - hint_surf.get_height()) // 2
         overlay_surf.blit(hint_surf, (tx, ty))
         surface.blit(overlay_surf, (rect.x, rect.bottom - overlay_height))
+
+# --- SCALED-COVER CACHE ---
+# Several places below re-run pygame.transform.smoothscale() on the exact
+# same cover-art Surface at the exact same target size on EVERY frame (once
+# per visible grid card/row), even though neither the source image nor the
+# target size changes between frames while just sitting there or scrolling.
+# smoothscale is a real per-pixel bilinear resample, so redoing it for every
+# visible card every single frame was a large, entirely avoidable chunk of
+# per-frame cost - this was the main reason framerate was so low even though
+# nothing on screen was actually changing frame to frame.
+# Keyed on (surface object, size): pygame.Surface uses default identity-based
+# hashing/equality (no custom __eq__), so a cache hit only ever happens for
+# the literal same image object at the literal same size. If a cover is
+# later replaced with a new Surface (e.g. user changes a playlist's cover),
+# that's simply a different object -> automatic cache miss -> scaled fresh,
+# same as before. Holding the surface as a dict key also keeps it alive for
+# as long as it's cached, so there's no risk of a stale/incorrect hit.
+_scale_cache = {}
+def _cached_scale(surf, size):
+    key = (surf, size)
+    out = _scale_cache.get(key)
+    if out is None:
+        out = pygame.transform.smoothscale(surf, size)
+        _scale_cache[key] = out
+    return out
+
+# --- RENDERED-TEXT CACHE ---
+# Same idea as the cover-scale cache above, applied to text: font.render()
+# does real per-glyph antialiased rasterization, and it was being re-run for
+# every visible label on every single frame - track titles/artists, rank
+# numbers, playlist names, buttons - even though the same font+text+color
+# produces the exact same bitmap every time until the underlying data
+# actually changes. That per-frame re-rendering of dozens of labels (times
+# every visible row in a scrolling list) was a large remaining chunk of
+# per-frame cost. Keyed on (font object, text, antialias flag, color) with
+# the same identity-based-key reasoning as _cached_scale above: a cache hit
+# only happens for the literal same request, so genuinely new/changed text
+# (search-as-you-type, live counters, etc.) simply misses and renders fresh,
+# identical to before.
+_text_cache = {}
+def _cached_render(font, text, antialias, color):
+    key = (font, text, antialias, color)
+    out = _text_cache.get(key)
+    if out is None:
+        out = font.render(text, antialias, color)
+        _text_cache[key] = out
+    return out
 
 def draw_sidebar():
     global sidebar_rects
@@ -4979,7 +5262,7 @@ def draw_sidebar():
         sidebar_rect = pygame.Rect(0, 0, 230, HEIGHT)
         pygame.draw.rect(virtual_surface, COLOR_DARK_GREY, sidebar_rect)
         
-        logo_text = font_title.render("SpotM-Fi", True, COLOR_SPOTIFY_GREEN)
+        logo_text = _cached_render(font_title, "SpotM-Fi", True, COLOR_SPOTIFY_GREEN)
         virtual_surface.blit(logo_text, (20, 30))
         
         y_offset = 90
@@ -5044,7 +5327,7 @@ def draw_sidebar():
             virtual_surface.blit(text_surf, (tx, ty))
 
 def draw_main_content():
-    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, browser_extra_search_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction, desktop_btn_rect, phone_btn_rect, search_box_rect, top100_btn_rect, song_of_day_btn_rect, artist_of_day_btn_rect, history_maker_btn_rect, subpage_back_rect, max_btn_row_scroll, btn_row_rect, btn_row_scroll_offset, target_btn_row_scroll, grid_toggle_btn_rect, theme_btn_rect, language_btn_rect
+    global track_rects, add_folder_btn_rect, settings_btn_rect, create_playlist_btn_rect, browser_rects, settings_dir_rects, custom_playlist_rects, select_folder_btn_rect, browser_extra_search_btn_rect, cancel_browser_btn_rect, close_settings_btn_rect, liked_songs_card_rect, playlist_play_btn_rect, playlist_random_btn_rect, playlist_cover_rect, max_music_scroll, max_browser_scroll, max_settings_scroll, marquee_offset, marquee_direction, desktop_btn_rect, phone_btn_rect, search_box_rect, top100_btn_rect, song_of_day_btn_rect, artist_of_day_btn_rect, history_maker_btn_rect, subpage_back_rect, max_btn_row_scroll, btn_row_rect, btn_row_scroll_offset, target_btn_row_scroll, grid_toggle_btn_rect, theme_btn_rect, language_btn_rect, resolution_btn_rect, font_size_btn_rect, haptics_btn_rect
     track_rects = []
     browser_rects = []
     settings_dir_rects = []
@@ -5079,10 +5362,10 @@ def draw_main_content():
         playlist_cover_rect = pygame.Rect(content_pad_x, 30, 140, 140)
         
         if is_custom and custom_playlists[selected_custom_playlist_name]["surface"]:
-            disp_surf = pygame.transform.smoothscale(custom_playlists[selected_custom_playlist_name]["surface"], (140, 140))
+            disp_surf = _cached_scale(custom_playlists[selected_custom_playlist_name]["surface"], (140, 140))
             virtual_surface.blit(disp_surf, (content_pad_x, 30))
         elif not is_custom and liked_songs_custom_cover["surface"]:
-            disp_surf = pygame.transform.smoothscale(liked_songs_custom_cover["surface"], (140, 140))
+            disp_surf = _cached_scale(liked_songs_custom_cover["surface"], (140, 140))
             virtual_surface.blit(disp_surf, (content_pad_x, 30))
         else:
             pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, playlist_cover_rect)
@@ -5093,8 +5376,8 @@ def draw_main_content():
                 
         draw_unified_cover_overlay(virtual_surface, playlist_cover_rect, mouse_pos)
         
-        type_lbl = font_small.render(t("CUSTOM PLAYLIST") if is_custom else t("PUBLIC PLAYLIST"), True, COLOR_WHITE)
-        playlist_title = font_huge.render(p_title_text, True, COLOR_WHITE)
+        type_lbl = _cached_render(font_small, t("CUSTOM PLAYLIST") if is_custom else t("PUBLIC PLAYLIST"), True, COLOR_WHITE)
+        playlist_title = _cached_render(font_huge, p_title_text, True, COLOR_WHITE)
         
         virtual_surface.blit(type_lbl, (content_pad_x + 160, 45))
         virtual_surface.blit(playlist_title, (content_pad_x + 160, 70))
@@ -5111,7 +5394,7 @@ def draw_main_content():
                 if desc_w > max_allowed_w and max_allowed_w > 0:
                     max_scroll_range = desc_w - max_allowed_w
                     marquee_offset += marquee_direction * (40.0 * (clock.get_time() / 1000.0))
-                    
+
                     if marquee_offset >= max_scroll_range + 20:
                         marquee_offset = max_scroll_range + 20
                         marquee_direction = -1
@@ -5120,20 +5403,20 @@ def draw_main_content():
                         marquee_direction = 1
                     
                     marquee_surf = pygame.Surface((max_allowed_w, 24), pygame.SRCALPHA)
-                    desc_raw_surf = font_body.render(desc_str, True, COLOR_WHITE)
+                    desc_raw_surf = _cached_render(font_body, desc_str, True, COLOR_WHITE)
                     marquee_surf.blit(desc_raw_surf, (-int(marquee_offset), 0))
                     virtual_surface.blit(marquee_surf, (content_pad_x + 160, 140))
                     
-                    meta_lbl = font_body.render(base_meta_str, True, COLOR_TEXT_MUTED)
+                    meta_lbl = _cached_render(font_body, base_meta_str, True, COLOR_TEXT_MUTED)
                     virtual_surface.blit(meta_lbl, (content_pad_x + 160 + max_allowed_w, 140))
                 else:
-                    info_lbl = font_body.render(f"{desc_str}{base_meta_str}", True, COLOR_TEXT_MUTED)
+                    info_lbl = _cached_render(font_body, f"{desc_str}{base_meta_str}", True, COLOR_TEXT_MUTED)
                     virtual_surface.blit(info_lbl, (content_pad_x + 160, 140))
             else:
-                info_lbl = font_body.render(f"Local Account{base_meta_str}", True, COLOR_TEXT_MUTED)
+                info_lbl = _cached_render(font_body, f"Local Account{base_meta_str}", True, COLOR_TEXT_MUTED)
                 virtual_surface.blit(info_lbl, (content_pad_x + 160, 140))
         else:
-            info_lbl = font_body.render(f"Local Account • {len(active_tracks)} songs", True, COLOR_TEXT_MUTED)
+            info_lbl = _cached_render(font_body, f"Local Account • {len(active_tracks)} songs", True, COLOR_TEXT_MUTED)
             virtual_surface.blit(info_lbl, (content_pad_x + 160, 140))
         
         playlist_play_btn_rect = pygame.Rect(content_pad_x, 215, 50, 50)
@@ -5167,11 +5450,11 @@ def draw_main_content():
         if is_shuffle:
             pygame.draw.circle(virtual_surface, COLOR_SPOTIFY_GREEN, (playlist_random_btn_rect.centerx, playlist_random_btn_rect.centery + 12), 2)
             
-        hash_lbl = font_small.render("#  TITLE", True, COLOR_TEXT_MUTED)
+        hash_lbl = _cached_render(font_small, "#  TITLE", True, COLOR_TEXT_MUTED)
         virtual_surface.blit(hash_lbl, (content_pad_x + 10, 285))
         
         if not is_portrait:
-            album_lbl = font_small.render(t("ALBUM"), True, COLOR_TEXT_MUTED)
+            album_lbl = _cached_render(font_small, t("ALBUM"), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(album_lbl, (content_pad_x + 390, 285))
             
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 305), (main_x + main_w - 40, 305), 1)
@@ -5203,16 +5486,16 @@ def draw_main_content():
                 else:
                     title_color = COLOR_WHITE
                 
-                num_surf = font_body.render(str(index + 1), True, COLOR_TEXT_MUTED)
-                title_surf = font_body.render(track["title"], True, title_color)
-                artist_surf = font_small.render(track["artist"], True, COLOR_TEXT_MUTED)
+                num_surf = _cached_render(font_body, str(index + 1), True, COLOR_TEXT_MUTED)
+                title_surf = _cached_render(font_body, track["title"], True, title_color)
+                artist_surf = _cached_render(font_small, track["artist"], True, COLOR_TEXT_MUTED)
                 
                 virtual_surface.blit(num_surf, (main_x + 40, y_offset + 12))
                 virtual_surface.blit(title_surf, (main_x + 80, y_offset + 4))
                 virtual_surface.blit(artist_surf, (main_x + 80, y_offset + 24))
                 
                 if not is_portrait:
-                    album_surf = font_body.render(track["album"], True, COLOR_TEXT_MUTED)
+                    album_surf = _cached_render(font_body, track["album"], True, COLOR_TEXT_MUTED)
                     virtual_surface.blit(album_surf, (main_x + 420, y_offset + 12))
                 
             y_offset += 50
@@ -5227,10 +5510,10 @@ def draw_main_content():
             title_string = "Import Cover (.png, .jpg)"
         else:
             title_string = "Device Storage Explorer"
-        browser_title = font_title.render(title_string, True, COLOR_WHITE)
+        browser_title = _cached_render(font_title, title_string, True, COLOR_WHITE)
         virtual_surface.blit(browser_title, (content_pad_x, 40))
         
-        path_lbl = font_small.render(f"Path: {current_browser_path}", True, COLOR_SPOTIFY_GREEN)
+        path_lbl = _cached_render(font_small, f"Path: {current_browser_path}", True, COLOR_SPOTIFY_GREEN)
         virtual_surface.blit(path_lbl, (content_pad_x, 75))
         
         _phone_browser = is_portrait and layout_mode == "phone"
@@ -5243,9 +5526,17 @@ def draw_main_content():
             # what made "Add Folder" (title "Device Storage Explorer") look like it
             # overlapped even though it shares this exact layout with "Import Cover".
             _browser_btn_row_y = 118
-            browser_extra_search_btn_rect = pygame.Rect(content_pad_x, _browser_btn_row_y, 80, 35)
-            select_folder_btn_rect = pygame.Rect(content_pad_x + 90, _browser_btn_row_y, 140, 35)
-            cancel_browser_btn_rect = pygame.Rect(content_pad_x + 240, _browser_btn_row_y, 80, 35)
+            if is_browsing_for_cover and browsing_cover_target not in ("lyrics_import",):
+                browser_extra_search_btn_rect = pygame.Rect(content_pad_x, _browser_btn_row_y, 80, 35)
+                select_folder_btn_rect = pygame.Rect(content_pad_x + 90, _browser_btn_row_y, 140, 35)
+                cancel_browser_btn_rect = pygame.Rect(content_pad_x + 240, _browser_btn_row_y, 80, 35)
+            else:
+                # No "Search" button on this screen (Add Folder / lyrics import), so
+                # don't reserve its space - start the row flush left like the other two
+                # buttons do when Search is actually shown.
+                browser_extra_search_btn_rect = pygame.Rect(content_pad_x, _browser_btn_row_y, 80, 35)
+                select_folder_btn_rect = pygame.Rect(content_pad_x, _browser_btn_row_y, 140, 35)
+                cancel_browser_btn_rect = pygame.Rect(content_pad_x + 150, _browser_btn_row_y, 80, 35)
         elif not is_portrait:
             cancel_browser_btn_rect = pygame.Rect(main_x + main_w - 250, 35, 90, 35)
             select_folder_btn_rect = pygame.Rect(cancel_browser_btn_rect.x - 170, 35, 160, 35)
@@ -5260,7 +5551,7 @@ def draw_main_content():
         bes_color = (20, 150, 65) if bes_clicked else (COLOR_HOVER if bes_hovered else COLOR_LIGHT_GREY)
         if is_browsing_for_cover and browsing_cover_target not in ("lyrics_import",):
             pygame.draw.rect(virtual_surface, bes_color, browser_extra_search_btn_rect, border_radius=15)
-            bes_lbl = font_small.render(t("Search"), True, COLOR_WHITE)
+            bes_lbl = _cached_render(font_small, t("Search"), True, COLOR_WHITE)
             bes_lbl_x = browser_extra_search_btn_rect.x + (browser_extra_search_btn_rect.width - bes_lbl.get_width()) // 2
             virtual_surface.blit(bes_lbl, (bes_lbl_x, browser_extra_search_btn_rect.y + 9))
         
@@ -5273,7 +5564,7 @@ def draw_main_content():
         pygame.draw.rect(virtual_surface, sf_color, select_folder_btn_rect, border_radius=15)
         
         sf_text = "Confirm File" if is_browsing_for_cover else "Select Current"
-        sf_lbl = font_small.render(sf_text, True, COLOR_WHITE if sf_color == COLOR_LIGHT_GREY else COLOR_BLACK)
+        sf_lbl = _cached_render(font_small, sf_text, True, COLOR_WHITE if sf_color == COLOR_LIGHT_GREY else COLOR_BLACK)
         sf_lbl_x = select_folder_btn_rect.x + (select_folder_btn_rect.width - sf_lbl.get_width()) // 2
         virtual_surface.blit(sf_lbl, (sf_lbl_x, select_folder_btn_rect.y + 9))
         
@@ -5284,7 +5575,7 @@ def draw_main_content():
         else:
             cc_color = COLOR_HOVER if cc_hovered else COLOR_LIGHT_GREY
         pygame.draw.rect(virtual_surface, cc_color, cancel_browser_btn_rect, border_radius=15)
-        cc_lbl = font_small.render(t("Cancel"), True, COLOR_WHITE)
+        cc_lbl = _cached_render(font_small, t("Cancel"), True, COLOR_WHITE)
         virtual_surface.blit(cc_lbl, (cancel_browser_btn_rect.x + (cancel_browser_btn_rect.width - cc_lbl.get_width()) // 2, cancel_browser_btn_rect.y + 9))
         
         _browser_list_top = 163 if _phone_browser else 130   # phone needs extra room below the button row
@@ -5319,14 +5610,14 @@ def draw_main_content():
                     prefix = "[IMAGE] "
                     display_color = COLOR_SPOTIFY_GREEN
                 
-                item_surf = font_body.render(f"{prefix}{item['name']}", True, display_color)
+                item_surf = _cached_render(font_body, f"{prefix}{item['name']}", True, display_color)
                 virtual_surface.blit(item_surf, (content_pad_x, y_offset))
             y_offset += 42
         virtual_surface.set_clip(None)
 
     # --- DEDICATED SETTINGS PAGE VIEW ---
     elif viewing_settings_page and current_page == "Search":
-        settings_title = font_title.render(t("Imported Music Directories"), True, COLOR_WHITE)
+        settings_title = _cached_render(font_title, t("Imported Music Directories"), True, COLOR_WHITE)
         virtual_surface.blit(settings_title, (content_pad_x, 40))
         
         if not is_portrait:
@@ -5341,7 +5632,7 @@ def draw_main_content():
         else:
             cs_color = COLOR_HOVER if cs_hovered else COLOR_LIGHT_GREY
         pygame.draw.rect(virtual_surface, cs_color, close_settings_btn_rect, border_radius=15)
-        cs_lbl = font_small.render(t("Back"), True, COLOR_WHITE)
+        cs_lbl = _cached_render(font_small, t("Back"), True, COLOR_WHITE)
         virtual_surface.blit(cs_lbl, (close_settings_btn_rect.x + 26, 44))
         
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
@@ -5362,8 +5653,8 @@ def draw_main_content():
                 row_bg = COLOR_RED if is_row_h else COLOR_LIGHT_GREY
                 pygame.draw.rect(virtual_surface, row_bg, row_item_rect, border_radius=6)
                 
-                lbl_path = font_body.render(f"  [FOLDER]  {d_path}", True, COLOR_WHITE)
-                lbl_del = font_body.render(t("Delete [x]") if is_portrait else t("Delete and Clear Music  [x] "), True, COLOR_WHITE if is_row_h else COLOR_TEXT_MUTED)
+                lbl_path = _cached_render(font_body, f"  [FOLDER]  {d_path}", True, COLOR_WHITE)
+                lbl_del = _cached_render(font_body, t("Delete [x]") if is_portrait else t("Delete and Clear Music  [x] "), True, COLOR_WHITE if is_row_h else COLOR_TEXT_MUTED)
                 
                 virtual_surface.blit(lbl_path, (main_x + 35, y_offset + 6))
                 virtual_surface.blit(lbl_del, (main_x + main_w - (120 if is_portrait else 250), y_offset + 6))
@@ -5375,14 +5666,14 @@ def draw_main_content():
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
 
         # --- Header ---
-        page_title = font_title.render(t("Top 100"), True, COLOR_WHITE)
+        page_title = _cached_render(font_title, t("Top 100"), True, COLOR_WHITE)
         virtual_surface.blit(page_title, (content_pad_x, 40))
         subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
         sb_hov = subpage_back_rect.collidepoint(mouse_pos)
         sb_clk = sb_hov and mouse_held
         sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
-        sb_lbl = font_small.render(t("Back"), True, COLOR_WHITE)
+        sb_lbl = _cached_render(font_small, t("Back"), True, COLOR_WHITE)
         virtual_surface.blit(sb_lbl, (subpage_back_rect.x + 26, 44))
 
         # Refresh button
@@ -5391,14 +5682,14 @@ def draw_main_content():
         rf_clk = rf_hov and mouse_held
         rf_color = COLOR_SPOTIFY_GREEN if rf_clk else (COLOR_HOVER if rf_hov else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, rf_color, refresh_rect, border_radius=15)
-        rf_lbl = font_small.render(t("Refresh"), True, COLOR_WHITE)
+        rf_lbl = _cached_render(font_small, t("Refresh"), True, COLOR_WHITE)
         virtual_surface.blit(rf_lbl, (refresh_rect.x + (refresh_rect.width - rf_lbl.get_width()) // 2, 44))
 
         # Freshness label
         if top100_last_fetched > 0:
             import datetime
             age_str = datetime.datetime.fromtimestamp(top100_last_fetched).strftime("Updated %d %b %H:%M")
-            age_surf = font_small.render(age_str, True, COLOR_TEXT_MUTED)
+            age_surf = _cached_render(font_small, age_str, True, COLOR_TEXT_MUTED)
             virtual_surface.blit(age_surf, (content_pad_x, 88))
 
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY,
@@ -5409,11 +5700,11 @@ def draw_main_content():
         body_rect = pygame.Rect(main_x, body_top, main_w, body_h)
 
         if top100_loading:
-            wait = font_body.render(t("Loading chart data..."), True, COLOR_TEXT_MUTED)
+            wait = _cached_render(font_body, t("Loading chart data..."), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(wait, (content_pad_x, body_top + 30))
         elif top100_error and not top100_tracks:
             for ei, el in enumerate(top100_error.split("\n")):
-                virtual_surface.blit(font_body.render(el, True, (200, 90, 90)),
+                virtual_surface.blit(_cached_render(font_body, el, True, (200, 90, 90)),
                                      (content_pad_x, body_top + 30 + ei * 28))
         else:
             virtual_surface.set_clip(body_rect)
@@ -5444,7 +5735,7 @@ def draw_main_content():
                                  row_rect, border_radius=6)
 
                 # Rank number — uniform muted colour
-                rank_surf = font_body.render(str(track["rank"]), True, COLOR_TEXT_MUTED)
+                rank_surf = _cached_render(font_body, str(track["rank"]), True, COLOR_TEXT_MUTED)
                 rx = row_rect.x + 10 + (rank_w - rank_surf.get_width()) // 2
                 info_h = 68 if phone_rows else (row_h - 6)
                 virtual_surface.blit(rank_surf, (rx, y_row + (info_h - rank_surf.get_height()) // 2))
@@ -5453,11 +5744,11 @@ def draw_main_content():
                 art_rect = pygame.Rect(row_rect.x + rank_w + 8, y_row + 8, art_w, art_w)
                 cached = top100_art_cache.get(track["rank"])
                 if cached is not None:
-                    virtual_surface.blit(pygame.transform.smoothscale(cached, (art_w, art_w)), art_rect)
+                    virtual_surface.blit(_cached_scale(cached, (art_w, art_w)), art_rect)
                     pygame.draw.rect(virtual_surface, (50, 50, 50), art_rect, width=1, border_radius=4)
                 else:
                     pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, art_rect, border_radius=4)
-                    note = font_small.render("\u266a", True, (120, 120, 120))
+                    note = _cached_render(font_small, "\u266a", True, (120, 120, 120))
                     virtual_surface.blit(note, (art_rect.x + (art_w - note.get_width()) // 2,
                                                 art_rect.y + (art_w - note.get_height()) // 2))
 
@@ -5479,9 +5770,9 @@ def draw_main_content():
                 if title_str  != track["title"]:  title_str  += "\u2026"
                 if artist_str != track["artist"]: artist_str += "\u2026"
 
-                virtual_surface.blit(font_body.render(title_str,  True, COLOR_WHITE),
+                virtual_surface.blit(_cached_render(font_body, title_str,  True, COLOR_WHITE),
                                      (tx, y_row + 12))
-                virtual_surface.blit(font_small.render(artist_str, True, COLOR_TEXT_MUTED),
+                virtual_surface.blit(_cached_render(font_small, artist_str, True, COLOR_TEXT_MUTED),
                                      (tx, y_row + 38))
 
                 # Link buttons: black bg, coloured text per service
@@ -5503,7 +5794,7 @@ def draw_main_content():
                         l_clk = l_hov and mouse_held
                         bg = (50, 50, 50) if l_clk else (COLOR_HOVER if l_hov else COLOR_LIGHT_GREY)
                         pygame.draw.rect(virtual_surface, bg, lr, border_radius=15)
-                        ls = font_small.render(lbl, True, txt_col)
+                        ls = _cached_render(font_small, lbl, True, txt_col)
                         virtual_surface.blit(ls, (lr.x + (lr.width - ls.get_width()) // 2,
                                                  lr.y + (lr.height - ls.get_height()) // 2))
                         top100_link_rects.append((lr, url))
@@ -5518,7 +5809,7 @@ def draw_main_content():
                         l_clk = l_hov and mouse_held
                         bg = (50, 50, 50) if l_clk else (COLOR_HOVER if l_hov else COLOR_LIGHT_GREY)
                         pygame.draw.rect(virtual_surface, bg, lr, border_radius=15)
-                        ls = font_small.render(lbl, True, txt_col)
+                        ls = _cached_render(font_small, lbl, True, txt_col)
                         virtual_surface.blit(ls, (lr.x + (lr.width - ls.get_width()) // 2,
                                                  lr.y + (lr.height - ls.get_height()) // 2))
                         top100_link_rects.append((lr, url))
@@ -5533,21 +5824,21 @@ def draw_main_content():
 
             # Error banner at bottom if partial data with warning
             if top100_error:
-                err_surf = font_small.render(top100_error[:80], True, (200, 90, 90))
+                err_surf = _cached_render(font_small, top100_error[:80], True, (200, 90, 90))
                 virtual_surface.blit(err_surf, (content_pad_x, HEIGHT - portrait_sidebar_h - 28))
 
     elif show_song_of_day_page and current_page == "Search":
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
 
         # Header
-        page_title = font_title.render(t("Song of the Day"), True, COLOR_WHITE)
+        page_title = _cached_render(font_title, t("Song of the Day"), True, COLOR_WHITE)
         virtual_surface.blit(page_title, (content_pad_x, 40))
         subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
         sb_hov = subpage_back_rect.collidepoint(mouse_pos)
         sb_clk = sb_hov and mouse_held
         sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
-        virtual_surface.blit(font_small.render(t("Back"), True, COLOR_WHITE), (subpage_back_rect.x + 26, 44))
+        virtual_surface.blit(_cached_render(font_small, t("Back"), True, COLOR_WHITE), (subpage_back_rect.x + 26, 44))
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
 
         # --- Scrollable body ---
@@ -5567,28 +5858,28 @@ def draw_main_content():
         cover_x    = main_x + (main_w - cover_size) // 2
         cover_rect = pygame.Rect(cover_x, cy, cover_size, cover_size)
         if sotd_cover_surface:
-            scaled = pygame.transform.smoothscale(sotd_cover_surface, (cover_size, cover_size))
+            scaled = _cached_scale(sotd_cover_surface, (cover_size, cover_size))
             virtual_surface.blit(scaled, cover_rect)
             pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, width=1, border_radius=8)
         else:
             pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, border_radius=8)
-            note = font_huge.render("\u266a", True, (80, 80, 80))
+            note = _cached_render(font_huge, "\u266a", True, (80, 80, 80))
             virtual_surface.blit(note, (cover_rect.x + (cover_size - note.get_width())  // 2,
                                         cover_rect.y + (cover_size - note.get_height()) // 2))
             if sotd_cover_loading:
-                lbl = font_small.render(t("Loading art..."), True, COLOR_TEXT_MUTED)
+                lbl = _cached_render(font_small, t("Loading art..."), True, COLOR_TEXT_MUTED)
                 virtual_surface.blit(lbl, (cover_rect.x + (cover_size - lbl.get_width()) // 2,
                                            cover_rect.bottom + 8))
         cy += cover_size + 22
 
         # Song title and artist
-        song_title_surf = font_huge.render(_sotd_entry["title"], True, COLOR_WHITE)
+        song_title_surf = _cached_render(font_huge, _sotd_entry["title"], True, COLOR_WHITE)
         if song_title_surf.get_width() > main_w - 60:
-            song_title_surf = font_title.render(_sotd_entry["title"], True, COLOR_WHITE)
+            song_title_surf = _cached_render(font_title, _sotd_entry["title"], True, COLOR_WHITE)
         virtual_surface.blit(song_title_surf, (main_x + (main_w - song_title_surf.get_width()) // 2, cy))
         cy += song_title_surf.get_height() + 8
 
-        artist_surf = font_body.render(_sotd_entry["artist"], True, COLOR_TEXT_MUTED)
+        artist_surf = _cached_render(font_body, _sotd_entry["artist"], True, COLOR_TEXT_MUTED)
         virtual_surface.blit(artist_surf, (main_x + (main_w - artist_surf.get_width()) // 2, cy))
         cy += artist_surf.get_height() + 24
 
@@ -5611,7 +5902,7 @@ def draw_main_content():
             b_clk = b_hov and mouse_held
             bg    = (50, 50, 50) if b_clk else (COLOR_HOVER if b_hov else COLOR_LIGHT_GREY)
             pygame.draw.rect(virtual_surface, bg, br, border_radius=19)
-            bs = font_body.render(lbl, True, txt_col)
+            bs = _cached_render(font_body, lbl, True, txt_col)
             virtual_surface.blit(bs, (br.x + (btn_w - bs.get_width()) // 2,
                                       br.y + (btn_h - bs.get_height()) // 2))
             sotd_link_rects.append((br, url))
@@ -5631,7 +5922,7 @@ def draw_main_content():
             for line in get_wrapped_lines(para.strip(), font_small, desc_max_w):
                 if cy > body_top + body_h + 40:
                     break
-                ls = font_small.render(line, True, (200, 200, 200))
+                ls = _cached_render(font_small, line, True, (200, 200, 200))
                 virtual_surface.blit(ls, (desc_x, cy))
                 cy += ls.get_height() + 4
             cy += 12  # paragraph gap
@@ -5643,14 +5934,14 @@ def draw_main_content():
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
 
         # Header
-        page_title = font_title.render(t("Artist of the Day"), True, COLOR_WHITE)
+        page_title = _cached_render(font_title, t("Artist of the Day"), True, COLOR_WHITE)
         virtual_surface.blit(page_title, (content_pad_x, 40))
         subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
         sb_hov = subpage_back_rect.collidepoint(mouse_pos)
         sb_clk = sb_hov and mouse_held
         sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
-        virtual_surface.blit(font_small.render(t("Back"), True, COLOR_WHITE), (subpage_back_rect.x + 26, 44))
+        virtual_surface.blit(_cached_render(font_small, t("Back"), True, COLOR_WHITE), (subpage_back_rect.x + 26, 44))
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
 
         # --- Scrollable body ---
@@ -5670,28 +5961,28 @@ def draw_main_content():
         cover_x    = main_x + (main_w - cover_size) // 2
         cover_rect = pygame.Rect(cover_x, cy, cover_size, cover_size)
         if aotd_cover_surface:
-            scaled = pygame.transform.smoothscale(aotd_cover_surface, (cover_size, cover_size))
+            scaled = _cached_scale(aotd_cover_surface, (cover_size, cover_size))
             virtual_surface.blit(scaled, cover_rect)
             pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, width=1, border_radius=8)
         else:
             pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, border_radius=8)
-            note = font_huge.render("\u266a", True, (80, 80, 80))
+            note = _cached_render(font_huge, "\u266a", True, (80, 80, 80))
             virtual_surface.blit(note, (cover_rect.x + (cover_size - note.get_width())  // 2,
                                         cover_rect.y + (cover_size - note.get_height()) // 2))
             if aotd_cover_loading:
-                lbl = font_small.render(t("Loading art..."), True, COLOR_TEXT_MUTED)
+                lbl = _cached_render(font_small, t("Loading art..."), True, COLOR_TEXT_MUTED)
                 virtual_surface.blit(lbl, (cover_rect.x + (cover_size - lbl.get_width()) // 2,
                                            cover_rect.bottom + 8))
         cy += cover_size + 22
 
         # Artist name
-        artist_name_surf = font_huge.render(_aotd_entry["name"], True, COLOR_WHITE)
+        artist_name_surf = _cached_render(font_huge, _aotd_entry["name"], True, COLOR_WHITE)
         if artist_name_surf.get_width() > main_w - 60:
-            artist_name_surf = font_title.render(_aotd_entry["name"], True, COLOR_WHITE)
+            artist_name_surf = _cached_render(font_title, _aotd_entry["name"], True, COLOR_WHITE)
         virtual_surface.blit(artist_name_surf, (main_x + (main_w - artist_name_surf.get_width()) // 2, cy))
         cy += artist_name_surf.get_height() + 8
 
-        genre_surf = font_body.render(_aotd_entry["genre"], True, COLOR_TEXT_MUTED)
+        genre_surf = _cached_render(font_body, _aotd_entry["genre"], True, COLOR_TEXT_MUTED)
         virtual_surface.blit(genre_surf, (main_x + (main_w - genre_surf.get_width()) // 2, cy))
         cy += genre_surf.get_height() + 24
 
@@ -5714,7 +6005,7 @@ def draw_main_content():
             b_clk = b_hov and mouse_held
             bg    = (50, 50, 50) if b_clk else (COLOR_HOVER if b_hov else COLOR_LIGHT_GREY)
             pygame.draw.rect(virtual_surface, bg, br, border_radius=19)
-            bs = font_body.render(lbl, True, txt_col)
+            bs = _cached_render(font_body, lbl, True, txt_col)
             virtual_surface.blit(bs, (br.x + (btn_w - bs.get_width()) // 2,
                                       br.y + (btn_h - bs.get_height()) // 2))
             aotd_link_rects.append((br, url))
@@ -5734,7 +6025,7 @@ def draw_main_content():
             for line in get_wrapped_lines(para.strip(), font_small, desc_max_w):
                 if cy > body_top + body_h + 40:
                     break
-                ls = font_small.render(line, True, (200, 200, 200))
+                ls = _cached_render(font_small, line, True, (200, 200, 200))
                 virtual_surface.blit(ls, (desc_x, cy))
                 cy += ls.get_height() + 4
             cy += 12  # paragraph gap
@@ -5746,14 +6037,14 @@ def draw_main_content():
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
 
         # Header
-        page_title = font_title.render(t("History Maker"), True, COLOR_WHITE)
+        page_title = _cached_render(font_title, t("History Maker"), True, COLOR_WHITE)
         virtual_surface.blit(page_title, (content_pad_x, 40))
         subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
         sb_hov = subpage_back_rect.collidepoint(mouse_pos)
         sb_clk = sb_hov and mouse_held
         sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
-        virtual_surface.blit(font_small.render(t("Back"), True, COLOR_WHITE), (subpage_back_rect.x + 26, 44))
+        virtual_surface.blit(_cached_render(font_small, t("Back"), True, COLOR_WHITE), (subpage_back_rect.x + 26, 44))
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
 
         # --- Scrollable body ---
@@ -5773,30 +6064,30 @@ def draw_main_content():
         cover_x    = main_x + (main_w - cover_size) // 2
         cover_rect = pygame.Rect(cover_x, cy, cover_size, cover_size)
         if hm_cover_surface:
-            scaled = pygame.transform.smoothscale(hm_cover_surface, (cover_size, cover_size))
+            scaled = _cached_scale(hm_cover_surface, (cover_size, cover_size))
             virtual_surface.blit(scaled, cover_rect)
             pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, width=1, border_radius=8)
         else:
             pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, border_radius=8)
-            note = font_huge.render("\u266a", True, (80, 80, 80))
+            note = _cached_render(font_huge, "\u266a", True, (80, 80, 80))
             virtual_surface.blit(note, (cover_rect.x + (cover_size - note.get_width())  // 2,
                                         cover_rect.y + (cover_size - note.get_height()) // 2))
             if hm_cover_loading:
-                lbl = font_small.render(t("Loading art..."), True, COLOR_TEXT_MUTED)
+                lbl = _cached_render(font_small, t("Loading art..."), True, COLOR_TEXT_MUTED)
                 virtual_surface.blit(lbl, (cover_rect.x + (cover_size - lbl.get_width()) // 2,
                                            cover_rect.bottom + 8))
         cy += cover_size + 22
 
         # Event title and date
-        hm_title_surf = font_huge.render(_hm_entry["title"], True, COLOR_WHITE)
+        hm_title_surf = _cached_render(font_huge, _hm_entry["title"], True, COLOR_WHITE)
         if hm_title_surf.get_width() > main_w - 60:
-            hm_title_surf = font_title.render(_hm_entry["title"], True, COLOR_WHITE)
+            hm_title_surf = _cached_render(font_title, _hm_entry["title"], True, COLOR_WHITE)
         virtual_surface.blit(hm_title_surf, (main_x + (main_w - hm_title_surf.get_width()) // 2, cy))
         cy += hm_title_surf.get_height() + 8
 
-        date_surf = font_body.render(_hm_entry["date"], True, COLOR_TEXT_MUTED)
+        date_surf = _cached_render(font_body, _hm_entry["date"], True, COLOR_TEXT_MUTED)
         if date_surf.get_width() > main_w - 60:
-            date_surf = font_small.render(_hm_entry["date"], True, COLOR_TEXT_MUTED)
+            date_surf = _cached_render(font_small, _hm_entry["date"], True, COLOR_TEXT_MUTED)
         virtual_surface.blit(date_surf, (main_x + (main_w - date_surf.get_width()) // 2, cy))
         cy += date_surf.get_height() + 24
 
@@ -5819,7 +6110,7 @@ def draw_main_content():
             b_clk = b_hov and mouse_held
             bg    = (50, 50, 50) if b_clk else (COLOR_HOVER if b_hov else COLOR_LIGHT_GREY)
             pygame.draw.rect(virtual_surface, bg, br, border_radius=19)
-            bs = font_body.render(lbl, True, txt_col)
+            bs = _cached_render(font_body, lbl, True, txt_col)
             virtual_surface.blit(bs, (br.x + (btn_w - bs.get_width()) // 2,
                                       br.y + (btn_h - bs.get_height()) // 2))
             hm_link_rects.append((br, url))
@@ -5839,7 +6130,7 @@ def draw_main_content():
             for line in get_wrapped_lines(para.strip(), font_small, desc_max_w):
                 if cy > body_top + body_h + 40:
                     break
-                ls = font_small.render(line, True, (200, 200, 200))
+                ls = _cached_render(font_small, line, True, (200, 200, 200))
                 virtual_surface.blit(ls, (desc_x, cy))
                 cy += ls.get_height() + 4
             cy += 12  # paragraph gap
@@ -5849,7 +6140,7 @@ def draw_main_content():
 
     # --- SEARCH PAGE ---
     elif current_page == "Search":
-        search_title = font_title.render(t("Search Results"), True, COLOR_WHITE)
+        search_title = _cached_render(font_title, t("Search Results"), True, COLOR_WHITE)
         virtual_surface.blit(search_title, (content_pad_x, 40))
 
         # --- PHONE PORTRAIT LAYOUT: search bar full-width on row 1, buttons on row 2 ---
@@ -5864,9 +6155,9 @@ def draw_main_content():
                 pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, search_box_rect, width=2, border_radius=22)
 
             if search_query != "":
-                search_text_surf = font_small.render(f"  {search_query}", True, COLOR_BLACK)
+                search_text_surf = _cached_render(font_small, f"  {search_query}", True, COLOR_BLACK)
             else:
-                search_text_surf = font_small.render(f"  {search_message}", True, COLOR_LIGHT_GREY)
+                search_text_surf = _cached_render(font_small, f"  {search_message}", True, COLOR_LIGHT_GREY)
             # clip long text inside the box
             clip_surf = pygame.Surface((search_box_rect.width - 30, search_text_surf.get_height()), pygame.SRCALPHA)
             clip_surf.blit(search_text_surf, (0, 0))
@@ -5984,7 +6275,7 @@ def draw_main_content():
             else:
                 pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, add_folder_btn_rect, border_radius=20)
                 btn_color = COLOR_WHITE
-            btn_txt = font_small.render(t("+ Add Folder"), True, btn_color)
+            btn_txt = _cached_render(font_small, t("+ Add Folder"), True, btn_color)
             virtual_surface.blit(btn_txt, (add_folder_btn_rect.x + 38, 92))
 
             if saved_directories:
@@ -6010,9 +6301,9 @@ def draw_main_content():
                 pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, search_box_rect, width=2, border_radius=20)
 
             if search_query != "":
-                search_text_surf = font_small.render(f"  {search_query}", True, COLOR_BLACK)
+                search_text_surf = _cached_render(font_small, f"  {search_query}", True, COLOR_BLACK)
             else:
-                search_text_surf = font_small.render(f"  {search_message}", True, COLOR_LIGHT_GREY)
+                search_text_surf = _cached_render(font_small, f"  {search_message}", True, COLOR_LIGHT_GREY)
             virtual_surface.blit(search_text_surf, (content_pad_x + 15, 92))
 
             grid_start_y = 150
@@ -6024,10 +6315,10 @@ def draw_main_content():
                 filtered_tracks.append(track)
 
         if not imported_tracks:
-            empty_surf = font_body.render(t("No local music loaded. Tap '+ Add Folder' above to explore your storage!"), True, COLOR_TEXT_MUTED)
+            empty_surf = _cached_render(font_body, t("No local music loaded. Tap '+ Add Folder' above to explore your storage!"), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(empty_surf, (content_pad_x, grid_start_y + 10))
         elif not filtered_tracks:
-            no_match_surf = font_body.render(f"No results match your search query for '{search_query}'.", True, COLOR_TEXT_MUTED)
+            no_match_surf = _cached_render(font_body, f"No results match your search query for '{search_query}'.", True, COLOR_TEXT_MUTED)
             virtual_surface.blit(no_match_surf, (content_pad_x, grid_start_y + 10))
         else:
             start_y = grid_start_y
@@ -6117,7 +6408,7 @@ def draw_main_content():
                         # Scale to fully cover the box on the limiting dimension, preserving aspect ratio
                         scale_factor = max(box_w / src_w, box_h / src_h)
                         fit_w, fit_h = max(1, round(src_w * scale_factor)), max(1, round(src_h * scale_factor))
-                        scaled_cover = pygame.transform.smoothscale(src_surf, (fit_w, fit_h))
+                        scaled_cover = _cached_scale(src_surf, (fit_w, fit_h))
                         # Center-crop any overflow so nothing is squashed
                         crop_x = (fit_w - box_w) // 2
                         crop_y = (fit_h - box_h) // 2
@@ -6138,19 +6429,19 @@ def draw_main_content():
                     max_text_w = card_width - 24
 
                     title_text = track["title"]
-                    title_surf = font_small.render(title_text, True, title_color)
+                    title_surf = _cached_render(font_small, title_text, True, title_color)
                     if title_surf.get_width() > max_text_w:
                         while title_text and font_small.size(title_text + "...")[0] > max_text_w:
                             title_text = title_text[:-1]
-                        title_surf = font_small.render(title_text + "...", True, title_color)
+                        title_surf = _cached_render(font_small, title_text + "...", True, title_color)
                     virtual_surface.blit(title_surf, (box_x + 12, box_y + card_height - 4))
 
                     sub_text = track["album"]
-                    sub_surf = font_small.render(sub_text, True, sub_color)
+                    sub_surf = _cached_render(font_small, sub_text, True, sub_color)
                     if sub_surf.get_width() > max_text_w:
                         while sub_text and font_small.size(sub_text + "...")[0] > max_text_w:
                             sub_text = sub_text[:-1]
-                        sub_surf = font_small.render(sub_text + "...", True, sub_color)
+                        sub_surf = _cached_render(font_small, sub_text + "...", True, sub_color)
                     virtual_surface.blit(sub_surf, (box_x + 12, box_y + card_height + 14))
             virtual_surface.set_clip(None)
 
@@ -6162,7 +6453,7 @@ def draw_main_content():
 
         theme_order = ["classic", "midnight", "sunset", "rainbow", "neon", "pastel",
                         "galaxy", "vaporwave", "tropical", "candy", "firestorm", "arctic",
-                        "carnival", "bubblegum", "citrus", "cosmic_candy", "disco"]
+                        "carnival", "bubblegum", "citrus", "cosmic_candy", "disco", "high_contrast"]
 
         page_bg_theme = THEMES[current_theme]
         page_body_rect = pygame.Rect(main_x, 0, main_w, HEIGHT - portrait_sidebar_h)
@@ -6171,9 +6462,9 @@ def draw_main_content():
         else:
             pygame.draw.rect(virtual_surface, COLOR_BLACK, page_body_rect)
 
-        page_title = font_title.render(t("Personalize"), True, COLOR_WHITE)
+        page_title = _cached_render(font_title, t("Personalize"), True, COLOR_WHITE)
         virtual_surface.blit(page_title, (content_pad_x, 40))
-        sub_surf = font_small.render(t("Pick a color theme, then a font, for the whole app"), True, COLOR_TEXT_MUTED)
+        sub_surf = _cached_render(font_small, t("Pick a color theme, then a font, for the whole app"), True, COLOR_TEXT_MUTED)
         virtual_surface.blit(sub_surf, (content_pad_x, 68))
 
         subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
@@ -6181,7 +6472,7 @@ def draw_main_content():
         sb_clk = sb_hov and mouse_held
         sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
-        sb_lbl = font_small.render(t("Back"), True, COLOR_WHITE)
+        sb_lbl = _cached_render(font_small, t("Back"), True, COLOR_WHITE)
         virtual_surface.blit(sb_lbl, (subpage_back_rect.x + 26, 44))
 
         body_top = 100
@@ -6192,7 +6483,7 @@ def draw_main_content():
         scroll = round(theme_page_scroll_offset)
 
         # --- THEMES SECTION ---
-        section_lbl = font_body.render(t("Color Themes"), True, COLOR_WHITE)
+        section_lbl = _cached_render(font_body, t("Color Themes"), True, COLOR_WHITE)
         virtual_surface.blit(section_lbl, (content_pad_x, body_top + 10 - scroll))
 
         grid_top = body_top + 45 - scroll
@@ -6240,13 +6531,13 @@ def draw_main_content():
                 pygame.draw.rect(virtual_surface, theme["COLOR_WHITE"], (sw_x, sw_y, 34, 34), width=1, border_radius=6)
                 sw_x += 42
 
-            name_surf = font_body.render(theme["label"], True, theme["COLOR_WHITE"])
+            name_surf = _cached_render(font_body, theme["label"], True, theme["COLOR_WHITE"])
             virtual_surface.blit(name_surf, (card_x + 18, card_y + 76))
             if is_active:
-                active_surf = font_small.render(t("Active"), True, theme["COLOR_SPOTIFY_GREEN"])
+                active_surf = _cached_render(font_small, t("Active"), True, theme["COLOR_SPOTIFY_GREEN"])
                 virtual_surface.blit(active_surf, (card_x + 18, card_y + 98))
             elif is_hovered:
-                tap_surf = font_small.render(t("Tap to apply"), True, theme["COLOR_TEXT_MUTED"])
+                tap_surf = _cached_render(font_small, t("Tap to apply"), True, theme["COLOR_TEXT_MUTED"])
                 virtual_surface.blit(tap_surf, (card_x + 18, card_y + 98))
 
         theme_rows = (len(theme_order) + cols - 1) // cols
@@ -6259,9 +6550,9 @@ def draw_main_content():
 
         # --- FONTS SECTION ---
         font_section_top = divider_y + 25
-        section_lbl2 = font_body.render(t("App Font"), True, COLOR_WHITE)
+        section_lbl2 = _cached_render(font_body, t("App Font"), True, COLOR_WHITE)
         virtual_surface.blit(section_lbl2, (content_pad_x, font_section_top))
-        sub2 = font_small.render(t("Changes the font used everywhere in the app"), True, COLOR_TEXT_MUTED)
+        sub2 = _cached_render(font_small, t("Changes the font used everywhere in the app"), True, COLOR_TEXT_MUTED)
         virtual_surface.blit(sub2, (content_pad_x, font_section_top + 24))
 
         font_row_top = font_section_top + 55
@@ -6300,7 +6591,7 @@ def draw_main_content():
             label_surf = label_font.render(fdef["label"], True, COLOR_TEXT_MUTED)
             virtual_surface.blit(label_surf, (fbox_x + (font_box_w - label_surf.get_width()) // 2, fbox_y + 44))
             if is_font_active:
-                act_surf = font_small.render(t("Active"), True, COLOR_SPOTIFY_GREEN)
+                act_surf = _cached_render(font_small, t("Active"), True, COLOR_SPOTIFY_GREEN)
                 virtual_surface.blit(act_surf, (fbox_x + (font_box_w - act_surf.get_width()) // 2, fbox_y + 66))
 
         font_rows = (len(font_order) + font_cols - 1) // font_cols
@@ -6317,9 +6608,9 @@ def draw_main_content():
 
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
 
-        page_title = font_title.render(t("Language"), True, COLOR_WHITE)
+        page_title = _cached_render(font_title, t("Language"), True, COLOR_WHITE)
         virtual_surface.blit(page_title, (content_pad_x, 40))
-        sub_surf = font_small.render(t("Choose your preferred language"), True, COLOR_TEXT_MUTED)
+        sub_surf = _cached_render(font_small, t("Choose your preferred language"), True, COLOR_TEXT_MUTED)
         virtual_surface.blit(sub_surf, (content_pad_x, 68))
 
         subpage_back_rect = pygame.Rect(main_x + main_w - (130 if is_portrait else 250), 35, 90, 35)
@@ -6327,7 +6618,7 @@ def draw_main_content():
         sb_clk = sb_hov and mouse_held
         sb_color = (30, 30, 30) if sb_clk else (COLOR_HOVER if sb_hov else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, sb_color, subpage_back_rect, border_radius=15)
-        sb_lbl = font_small.render(t("Back"), True, COLOR_WHITE)
+        sb_lbl = _cached_render(font_small, t("Back"), True, COLOR_WHITE)
         virtual_surface.blit(sb_lbl, (subpage_back_rect.x + 26, 44))
 
         # Each language's own native name + a short code chip, for polish
@@ -6365,87 +6656,114 @@ def draw_main_content():
             chip_bg = COLOR_SPOTIFY_GREEN if is_active else COLOR_LIGHT_GREY
             chip_text_color = COLOR_BLACK if is_active else COLOR_WHITE
             pygame.draw.rect(virtual_surface, chip_bg, chip_rect, border_radius=8)
-            code_surf = font_small.render(code, True, chip_text_color)
+            code_surf = _cached_render(font_small, code, True, chip_text_color)
             virtual_surface.blit(code_surf, (chip_rect.x + (chip_rect.width - code_surf.get_width()) // 2,
                                               chip_rect.y + (chip_rect.height - code_surf.get_height()) // 2))
 
             text_x = chip_rect.right + 14
-            lang_surf = font_body.render(lang, True, COLOR_WHITE)
+            lang_surf = _cached_render(font_body, lang, True, COLOR_WHITE)
             virtual_surface.blit(lang_surf, (text_x, box_y + 12))
-            native_surf = font_small.render(native_name, True, COLOR_TEXT_MUTED)
+            native_surf = _cached_render(font_small, native_name, True, COLOR_TEXT_MUTED)
             virtual_surface.blit(native_surf, (text_x, box_y + 36))
 
             if is_active:
-                check_surf = font_small.render(t("Active"), True, COLOR_SPOTIFY_GREEN)
+                check_surf = _cached_render(font_small, t("Active"), True, COLOR_SPOTIFY_GREEN)
                 virtual_surface.blit(check_surf, (box_x + box_w - check_surf.get_width() - 14, box_y + (box_h - check_surf.get_height()) // 2))
 
     # --- SETTINGS PAGE (sidebar tab) ---
     elif current_page == "Settings":
-        settings_page_title = font_title.render(t("Settings"), True, COLOR_WHITE)
+        settings_page_title = _cached_render(font_title, t("Settings"), True, COLOR_WHITE)
         virtual_surface.blit(settings_page_title, (content_pad_x, 40))
 
         btn_w, btn_h = 160, 40
         btn_gap = 20
         btn_y = 100
+        row_h = btn_h + btn_gap  # vertical spacing between rows
 
-        if is_portrait and layout_mode == "phone":
-            # Phone: only 2 buttons fit per row on the narrow screen, so stack
-            # the 5 settings buttons into a 2-column grid instead of letting
-            # the 3rd button in a row run off the edge of the screen.
-            desktop_btn_rect = pygame.Rect(content_pad_x, btn_y, btn_w, btn_h)
-            phone_btn_rect = pygame.Rect(content_pad_x + btn_w + btn_gap, btn_y, btn_w, btn_h)
-            grid_toggle_btn_rect = pygame.Rect(content_pad_x, btn_y + (btn_h + btn_gap), btn_w, btn_h)
-            theme_btn_rect = pygame.Rect(content_pad_x + btn_w + btn_gap, btn_y + (btn_h + btn_gap), btn_w, btn_h)
-            language_btn_rect = pygame.Rect(content_pad_x, btn_y + 2 * (btn_h + btn_gap), btn_w, btn_h)
-        else:
-            # Desktop/Tablet: original 3-then-2 row layout, unchanged
-            desktop_btn_rect = pygame.Rect(content_pad_x, btn_y, btn_w, btn_h)
-            phone_btn_rect = pygame.Rect(content_pad_x + btn_w + btn_gap, btn_y, btn_w, btn_h)
-            grid_toggle_btn_rect = pygame.Rect(phone_btn_rect.x + btn_w + btn_gap, btn_y, btn_w, btn_h)
-            theme_btn_rect = pygame.Rect(content_pad_x, btn_y + btn_h + btn_gap, btn_w, btn_h)
-            language_btn_rect = pygame.Rect(theme_btn_rect.x + btn_w + btn_gap, btn_y + btn_h + btn_gap, btn_w, btn_h)
+        # Build the ordered list of buttons that should actually appear right
+        # now, then lay them out as a centered grid. Centering is per-row (not
+        # just per-page), so a trailing partial row — e.g. a lone Resolution
+        # button — still ends up centered rather than stuck on the left.
+        _settings_btn_keys = []
+        if _debug_reveal:
+            _settings_btn_keys += ["desktop", "phone"]
+        _settings_btn_keys += ["grid_toggle", "theme", "language", "font_size"]
+        if IS_ANDROID:
+            _settings_btn_keys.append("haptics")
+        if not IS_ANDROID:
+            _settings_btn_keys.append("resolution")
 
-        # Desktop/Tablet button — green when active
-        is_dt_hovered = desktop_btn_rect.collidepoint(mouse_pos)
-        is_dt_clicked = is_dt_hovered and mouse_held
-        if layout_mode == "desktop":
-            dt_color = COLOR_SPOTIFY_GREEN
-            dt_text_color = COLOR_BLACK
-        elif is_dt_clicked:
-            dt_color = (20, 150, 65)
-            dt_text_color = COLOR_WHITE
-        elif is_dt_hovered:
-            dt_color = COLOR_SPOTIFY_GREEN
-            dt_text_color = COLOR_BLACK
-        else:
-            dt_color = COLOR_LIGHT_GREY
-            dt_text_color = COLOR_WHITE
-        pygame.draw.rect(virtual_surface, dt_color, desktop_btn_rect, border_radius=20)
-        dt_lbl = render_fit_text(t("Desktop/Tablet"), dt_text_color, btn_w - 16)
-        dt_lbl_x = desktop_btn_rect.x + (btn_w - dt_lbl.get_width()) // 2
-        dt_lbl_y = desktop_btn_rect.y + (btn_h - dt_lbl.get_height()) // 2
-        virtual_surface.blit(dt_lbl, (dt_lbl_x, dt_lbl_y))
+        # Desktop/Tablet layout gets a wide row (4 buttons before wrapping);
+        # Phone layout (how the app runs on most Android phones) stays a
+        # narrow 2-per-row so buttons don't get cramped on a narrow screen.
+        _cols_per_row = 2 if layout_mode == "phone" else 4
+        _avail_w = main_w - 60  # content_pad_x is main_x+30; mirror that as a symmetric right margin
 
-        # Phone button — green when active
-        is_ph_hovered = phone_btn_rect.collidepoint(mouse_pos)
-        is_ph_clicked = is_ph_hovered and mouse_held
-        if layout_mode == "phone":
-            ph_color = COLOR_SPOTIFY_GREEN
-            ph_text_color = COLOR_BLACK
-        elif is_ph_clicked:
-            ph_color = (20, 150, 65)
-            ph_text_color = COLOR_WHITE
-        elif is_ph_hovered:
-            ph_color = COLOR_SPOTIFY_GREEN
-            ph_text_color = COLOR_BLACK
-        else:
-            ph_color = COLOR_LIGHT_GREY
-            ph_text_color = COLOR_WHITE
-        pygame.draw.rect(virtual_surface, ph_color, phone_btn_rect, border_radius=20)
-        ph_lbl = render_fit_text(t("Phone"), ph_text_color, btn_w - 16)
-        ph_lbl_x = phone_btn_rect.x + (btn_w - ph_lbl.get_width()) // 2
-        ph_lbl_y = phone_btn_rect.y + (btn_h - ph_lbl.get_height()) // 2
-        virtual_surface.blit(ph_lbl, (ph_lbl_x, ph_lbl_y))
+        _settings_btn_rects = {}
+        for _i, _key in enumerate(_settings_btn_keys):
+            _row = _i // _cols_per_row
+            _col = _i % _cols_per_row
+            _row_keys = _settings_btn_keys[_row * _cols_per_row: _row * _cols_per_row + _cols_per_row]
+            _row_n = len(_row_keys)
+            _row_w = _row_n * btn_w + (_row_n - 1) * btn_gap
+            _row_start_x = content_pad_x + max(0, (_avail_w - _row_w) // 2)
+            _settings_btn_rects[_key] = pygame.Rect(
+                _row_start_x + _col * (btn_w + btn_gap), btn_y + _row * row_h, btn_w, btn_h
+            )
+
+        _empty_rect = pygame.Rect(0, 0, 0, 0)
+        desktop_btn_rect       = _settings_btn_rects.get("desktop", _empty_rect)
+        phone_btn_rect         = _settings_btn_rects.get("phone", _empty_rect)
+        grid_toggle_btn_rect   = _settings_btn_rects.get("grid_toggle", _empty_rect)
+        theme_btn_rect          = _settings_btn_rects.get("theme", _empty_rect)
+        language_btn_rect       = _settings_btn_rects.get("language", _empty_rect)
+        font_size_btn_rect      = _settings_btn_rects.get("font_size", _empty_rect)
+        haptics_btn_rect        = _settings_btn_rects.get("haptics", _empty_rect)
+        resolution_btn_rect     = _settings_btn_rects.get("resolution", _empty_rect)
+
+        # Desktop/Tablet & Phone layout buttons — hidden by default, press F5 to reveal
+        is_dt_hovered = desktop_btn_rect.collidepoint(mouse_pos) and _debug_reveal
+        is_ph_hovered = phone_btn_rect.collidepoint(mouse_pos) and _debug_reveal
+        if _debug_reveal:
+            # Desktop/Tablet button — green when active
+            is_dt_clicked = is_dt_hovered and mouse_held
+            if layout_mode == "desktop":
+                dt_color = COLOR_SPOTIFY_GREEN
+                dt_text_color = COLOR_BLACK
+            elif is_dt_clicked:
+                dt_color = (20, 150, 65)
+                dt_text_color = COLOR_WHITE
+            elif is_dt_hovered:
+                dt_color = COLOR_SPOTIFY_GREEN
+                dt_text_color = COLOR_BLACK
+            else:
+                dt_color = COLOR_LIGHT_GREY
+                dt_text_color = COLOR_WHITE
+            pygame.draw.rect(virtual_surface, dt_color, desktop_btn_rect, border_radius=20)
+            dt_lbl = render_fit_text(t("Desktop/Tablet"), dt_text_color, btn_w - 16)
+            dt_lbl_x = desktop_btn_rect.x + (btn_w - dt_lbl.get_width()) // 2
+            dt_lbl_y = desktop_btn_rect.y + (btn_h - dt_lbl.get_height()) // 2
+            virtual_surface.blit(dt_lbl, (dt_lbl_x, dt_lbl_y))
+
+            # Phone button — green when active
+            is_ph_clicked = is_ph_hovered and mouse_held
+            if layout_mode == "phone":
+                ph_color = COLOR_SPOTIFY_GREEN
+                ph_text_color = COLOR_BLACK
+            elif is_ph_clicked:
+                ph_color = (20, 150, 65)
+                ph_text_color = COLOR_WHITE
+            elif is_ph_hovered:
+                ph_color = COLOR_SPOTIFY_GREEN
+                ph_text_color = COLOR_BLACK
+            else:
+                ph_color = COLOR_LIGHT_GREY
+                ph_text_color = COLOR_WHITE
+            pygame.draw.rect(virtual_surface, ph_color, phone_btn_rect, border_radius=20)
+            ph_lbl = render_fit_text(t("Phone"), ph_text_color, btn_w - 16)
+            ph_lbl_x = phone_btn_rect.x + (btn_w - ph_lbl.get_width()) // 2
+            ph_lbl_y = phone_btn_rect.y + (btn_h - ph_lbl.get_height()) // 2
+            virtual_surface.blit(ph_lbl, (ph_lbl_x, ph_lbl_y))
 
         # Grid columns button
         gt_hovered = grid_toggle_btn_rect.collidepoint(mouse_pos)
@@ -6483,9 +6801,50 @@ def draw_main_content():
         lg_lbl_y = language_btn_rect.y + (btn_h - lg_lbl.get_height()) // 2
         virtual_surface.blit(lg_lbl, (lg_lbl_x, lg_lbl_y))
 
+        # Font Size — cycles Small/Medium/Large
+        fs_hovered = font_size_btn_rect.collidepoint(mouse_pos)
+        fs_clicked = fs_hovered and mouse_held
+        fs_color = (30, 30, 30) if fs_clicked else (COLOR_HOVER if fs_hovered else COLOR_LIGHT_GREY)
+        pygame.draw.rect(virtual_surface, fs_color, font_size_btn_rect, border_radius=20)
+        fs_lbl = render_fit_text(f"{t('Font')}: {t(current_font_size_label())}", COLOR_WHITE, btn_w - 16)
+        fs_lbl_x = font_size_btn_rect.x + (btn_w - fs_lbl.get_width()) // 2
+        fs_lbl_y = font_size_btn_rect.y + (btn_h - fs_lbl.get_height()) // 2
+        virtual_surface.blit(fs_lbl, (fs_lbl_x, fs_lbl_y))
+
+        # Haptics — on/off toggle (Android only; vibrates on button taps)
+        if IS_ANDROID:
+            hp_hovered = haptics_btn_rect.collidepoint(mouse_pos)
+            hp_clicked = hp_hovered and mouse_held
+            if haptics_enabled or hp_hovered:
+                hp_color, hp_text_color = COLOR_SPOTIFY_GREEN, COLOR_BLACK
+            elif hp_clicked:
+                hp_color, hp_text_color = (20, 150, 65), COLOR_WHITE
+            else:
+                hp_color, hp_text_color = COLOR_LIGHT_GREY, COLOR_WHITE
+            pygame.draw.rect(virtual_surface, hp_color, haptics_btn_rect, border_radius=20)
+            hp_lbl = render_fit_text(f"{t('Haptics')}: {t('On') if haptics_enabled else t('Off')}", hp_text_color, btn_w - 16)
+            hp_lbl_x = haptics_btn_rect.x + (btn_w - hp_lbl.get_width()) // 2
+            hp_lbl_y = haptics_btn_rect.y + (btn_h - hp_lbl.get_height()) // 2
+            virtual_surface.blit(hp_lbl, (hp_lbl_x, hp_lbl_y))
+
+        # Resolution button — PC/desktop-window only (Android is fullscreen and
+        # the resolution isn't user-adjustable there, so there's nothing for
+        # this to do on-device). Shows the current window size; click resets
+        # the window back to 1080p, which is also what it always starts at.
+        if not IS_ANDROID:
+            res_hovered = resolution_btn_rect.collidepoint(mouse_pos)
+            res_clicked = res_hovered and mouse_held
+            res_color = (20, 150, 65) if res_clicked else (COLOR_SPOTIFY_GREEN if res_hovered else COLOR_LIGHT_GREY)
+            res_text_color = COLOR_BLACK if (res_hovered or res_clicked) else COLOR_WHITE
+            pygame.draw.rect(virtual_surface, res_color, resolution_btn_rect, border_radius=20)
+            res_lbl = render_fit_text(f"{REAL_WIDTH}x{REAL_HEIGHT}", res_text_color, btn_w - 16)
+            res_lbl_x = resolution_btn_rect.x + (btn_w - res_lbl.get_width()) // 2
+            res_lbl_y = resolution_btn_rect.y + (btn_h - res_lbl.get_height()) // 2
+            virtual_surface.blit(res_lbl, (res_lbl_x, res_lbl_y))
+
     # --- YOUR LIBRARY GRID VIEW ---
     elif current_page == "Your Library":
-        lib_title = font_title.render(t("Your Library"), True, COLOR_WHITE)
+        lib_title = _cached_render(font_title, t("Your Library"), True, COLOR_WHITE)
         virtual_surface.blit(lib_title, (content_pad_x, 40))
         
         create_playlist_btn_rect = pygame.Rect(content_pad_x + lib_title.get_width() + 20, 35, 40, 40)
@@ -6503,7 +6862,7 @@ def draw_main_content():
             cp_text_color = COLOR_WHITE
             
         pygame.draw.rect(virtual_surface, cp_box_color, create_playlist_btn_rect, border_radius=20)
-        cp_plus_surf = font_body.render("+", True, cp_text_color)
+        cp_plus_surf = _cached_render(font_body, "+", True, cp_text_color)
         
         plus_x = create_playlist_btn_rect.x + (create_playlist_btn_rect.width - cp_plus_surf.get_width()) // 2
         plus_y = create_playlist_btn_rect.y + (create_playlist_btn_rect.height - cp_plus_surf.get_height()) // 2
@@ -6521,14 +6880,14 @@ def draw_main_content():
             pygame.draw.rect(virtual_surface, COLOR_CARD_BG, liked_songs_card_rect, border_radius=8)
             
         if liked_songs_custom_cover["surface"]:
-            disp_thumb = pygame.transform.smoothscale(liked_songs_custom_cover["surface"], (130, 110))
+            disp_thumb = _cached_scale(liked_songs_custom_cover["surface"], (130, 110))
             virtual_surface.blit(disp_thumb, (content_pad_x + 15, 110))
         else:
             pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, (content_pad_x + 15, 110, 130, 110), border_radius=4)
             draw_manual_thumbs_up(virtual_surface, content_pad_x + 55, 140, 50, 50, COLOR_BLACK)
         
-        card_txt1 = font_body.render(t("Liked Songs"), True, COLOR_WHITE)
-        card_txt2 = font_small.render(f"Playlist • {len(liked_tracks)} songs", True, COLOR_TEXT_MUTED)
+        card_txt1 = _cached_render(font_body, t("Liked Songs"), True, COLOR_WHITE)
+        card_txt2 = _cached_render(font_small, f"Playlist • {len(liked_tracks)} songs", True, COLOR_TEXT_MUTED)
         virtual_surface.blit(card_txt1, (content_pad_x + 15, 230))
         virtual_surface.blit(card_txt2, (content_pad_x + 15, 255))
 
@@ -6560,14 +6919,14 @@ def draw_main_content():
                 
             cover_frame = pygame.Rect(box_x + 15, box_y + 15, 130, 110)
             if custom_playlists[p_name]["surface"]:
-                disp_thumb = pygame.transform.smoothscale(custom_playlists[p_name]["surface"], (130, 110))
+                disp_thumb = _cached_scale(custom_playlists[p_name]["surface"], (130, 110))
                 virtual_surface.blit(disp_thumb, (box_x + 15, box_y + 15))
             else:
                 pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, cover_frame, border_radius=4)
                 draw_spotify_pencil(virtual_surface, box_x + 80, box_y + 70, COLOR_BLACK)
                 
-            name_lbl = font_body.render(p_name if len(p_name) <= 14 else p_name[:12] + "...", True, COLOR_WHITE)
-            count_lbl = font_small.render(f"Playlist • {len(custom_playlists[p_name]['tracks'])} tracks", True, COLOR_TEXT_MUTED)
+            name_lbl = _cached_render(font_body, p_name if len(p_name) <= 14 else p_name[:12] + "...", True, COLOR_WHITE)
+            count_lbl = _cached_render(font_small, f"Playlist • {len(custom_playlists[p_name]['tracks'])} tracks", True, COLOR_TEXT_MUTED)
             virtual_surface.blit(name_lbl, (box_x + 15, box_y + 135))
             virtual_surface.blit(count_lbl, (box_x + 15, box_y + 160))
 
@@ -6697,7 +7056,7 @@ def draw_onboarding_overlay():
         if settled or elapsed >= anim_dur * 0.9:
             fade_elapsed = elapsed - (anim_dur * 0.9)
             fade_alpha = max(0, min(255, int(fade_elapsed * 500)))
-            sub_surf = font_title.render("Click/tap anywhere to continue", True, COLOR_BLACK)
+            sub_surf = _cached_render(font_title, "Click/tap anywhere to continue", True, COLOR_BLACK)
             sub_surf.set_alpha(fade_alpha)
             virtual_surface.blit(sub_surf, sub_surf.get_rect(center=(center_x, target_y + 55)))
 
@@ -6764,7 +7123,7 @@ def draw_onboarding_overlay():
             virtual_surface.blit(btn_surf, (btn_rect.x - 2, btn_rect.y - 2 + rise))
 
         if waiting:
-            hint_surf = font_small.render("Answer the prompt to continue", True, COLOR_DARK_GREY)
+            hint_surf = _cached_render(font_small, "Answer the prompt to continue", True, COLOR_DARK_GREY)
             virtual_surface.blit(hint_surf, hint_surf.get_rect(center=(center_x, btn_rect.bottom + 34)))
 
         onboarding_button_rect = btn_rect
@@ -6828,7 +7187,7 @@ def draw_onboarding_overlay():
 
     head_lines = _wrap_text_lines(heading, font_title, inner_w)
     for line in head_lines:
-        line_surf = font_title.render(line, True, COLOR_WHITE)
+        line_surf = _cached_render(font_title, line, True, COLOR_WHITE)
         canvas.blit(line_surf, line_surf.get_rect(center=(local_center_x, cursor_y)))
         cursor_y += font_title.get_height() + 2
     cursor_y += 6
@@ -6836,7 +7195,7 @@ def draw_onboarding_overlay():
     if subtitle:
         sub_lines = _wrap_text_lines(subtitle, font_small, inner_w)
         for line in sub_lines:
-            line_surf = font_small.render(line, True, COLOR_TEXT_MUTED)
+            line_surf = _cached_render(font_small, line, True, COLOR_TEXT_MUTED)
             canvas.blit(line_surf, line_surf.get_rect(center=(local_center_x, cursor_y)))
             cursor_y += font_small.get_height() + 4
         cursor_y += 10
@@ -6865,7 +7224,7 @@ def draw_onboarding_overlay():
             # is momentarily paused between tracks.
             cap_x = fill_rect.right - bar_h // 2
             pygame.draw.circle(canvas, COLOR_SPOTIFY_GREEN, (cap_x, bar_rect.centery), bar_h // 2)
-        pct_surf = font_small.render(f"{done} / {max(total, done)} tracks", True, COLOR_TEXT_MUTED)
+        pct_surf = _cached_render(font_small, f"{done} / {max(total, done)} tracks", True, COLOR_TEXT_MUTED)
         canvas.blit(pct_surf, pct_surf.get_rect(center=(local_center_x, bar_rect.bottom + 20)))
 
         canvas.set_alpha(entrance_alpha)
@@ -6934,7 +7293,7 @@ def draw_onboarding_overlay():
     skip_hovered = skip_rect.collidepoint(mouse_pos)
     skip_hv = _smooth_hover("folder_skip", skip_hovered)
     skip_color = _lerp_color(COLOR_TEXT_MUTED, COLOR_WHITE, skip_hv)
-    skip_surf = font_small.render("Skip for now", True, skip_color)
+    skip_surf = _cached_render(font_small, "Skip for now", True, skip_color)
     canvas.blit(skip_surf, skip_surf.get_rect(center=skip_local.center))
     onboarding_skip_rect = skip_rect
 
@@ -7074,18 +7433,18 @@ def draw_modals():
         pygame.draw.rect(virtual_surface, (22, 22, 22), card_rect, border_radius=12)
         pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, card_rect, width=1, border_radius=12)
 
-        hdr = font_body.render(t("Search Album Art  •  iTunes"), True, COLOR_SPOTIFY_GREEN)
+        hdr = _cached_render(font_body, t("Search Album Art  •  iTunes"), True, COLOR_SPOTIFY_GREEN)
         virtual_surface.blit(hdr, (card_x + 20, card_y + 18))
         sub_title = f"{current_track['title']} — {current_track['artist']}"
         if len(sub_title) > 55: sub_title = sub_title[:53] + "…"
-        sub = font_small.render(sub_title, True, COLOR_TEXT_MUTED)
+        sub = _cached_render(font_small, sub_title, True, COLOR_TEXT_MUTED)
         virtual_surface.blit(sub, (card_x + 20, card_y + 46))
 
         art_search_close_rect = pygame.Rect(card_x + card_w - 110, card_y + 14, 90, 34)
         cls_hov = art_search_close_rect.collidepoint(mouse_pos)
         pygame.draw.rect(virtual_surface, COLOR_HOVER if cls_hov else COLOR_LIGHT_GREY,
                          art_search_close_rect, border_radius=17)
-        cls_txt = font_small.render(t("Close"), True, COLOR_WHITE)
+        cls_txt = _cached_render(font_small, t("Close"), True, COLOR_WHITE)
         virtual_surface.blit(cls_txt, (
             art_search_close_rect.x + (art_search_close_rect.width - cls_txt.get_width()) // 2,
             art_search_close_rect.y + 9))
@@ -7094,7 +7453,7 @@ def draw_modals():
         amn_hov = art_manual_rect.collidepoint(mouse_pos)
         amn_bg = COLOR_SPOTIFY_GREEN if (amn_hov and mouse_held) else (COLOR_HOVER if amn_hov else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, amn_bg, art_manual_rect, border_radius=17)
-        amn_txt = font_small.render(t("Manual"), True, COLOR_WHITE)
+        amn_txt = _cached_render(font_small, t("Manual"), True, COLOR_WHITE)
         virtual_surface.blit(amn_txt, (
             art_manual_rect.x + (art_manual_rect.width - amn_txt.get_width()) // 2,
             art_manual_rect.y + 9))
@@ -7110,7 +7469,7 @@ def draw_modals():
         if show_art_manual_modal:
             pygame.draw.rect(virtual_surface, COLOR_CARD_BG, body_rect, border_radius=8)
 
-            name_lbl = font_small.render(t("Song name"), True, COLOR_TEXT_MUTED)
+            name_lbl = _cached_render(font_small, t("Song name"), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(name_lbl, (body_rect.x + 25, body_rect.y + 25))
             art_manual_title_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 47, body_rect.width - 50, 44)
             pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, art_manual_title_rect, border_radius=6)
@@ -7118,7 +7477,7 @@ def draw_modals():
             if _amt_active:
                 pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, art_manual_title_rect, width=2, border_radius=6)
             if manual_title_text:
-                amt_surf = font_small.render(manual_title_text, True, COLOR_WHITE)
+                amt_surf = _cached_render(font_small, manual_title_text, True, COLOR_WHITE)
                 virtual_surface.blit(amt_surf, (art_manual_title_rect.x + 12, art_manual_title_rect.y + 13))
                 if _amt_active and not HAS_ANDROID_MEDIA and int(time.time() * 2) % 2 == 0:
                     _tc = min(manual_title_cursor, len(manual_title_text))
@@ -7126,10 +7485,10 @@ def draw_modals():
                     pygame.draw.line(virtual_surface, COLOR_WHITE,
                                      (_cx, art_manual_title_rect.y + 8), (_cx, art_manual_title_rect.y + 36), 2)
             else:
-                virtual_surface.blit(font_small.render(t("e.g. Blinding Lights"), True, COLOR_TEXT_MUTED),
+                virtual_surface.blit(_cached_render(font_small, t("e.g. Blinding Lights"), True, COLOR_TEXT_MUTED),
                                      (art_manual_title_rect.x + 12, art_manual_title_rect.y + 13))
 
-            artist_lbl = font_small.render(t("Artist"), True, COLOR_TEXT_MUTED)
+            artist_lbl = _cached_render(font_small, t("Artist"), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(artist_lbl, (body_rect.x + 25, body_rect.y + 107))
             art_manual_artist_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 129, body_rect.width - 50, 44)
             pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, art_manual_artist_rect, border_radius=6)
@@ -7137,7 +7496,7 @@ def draw_modals():
             if _ama_active:
                 pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, art_manual_artist_rect, width=2, border_radius=6)
             if manual_artist_text:
-                ama_surf = font_small.render(manual_artist_text, True, COLOR_WHITE)
+                ama_surf = _cached_render(font_small, manual_artist_text, True, COLOR_WHITE)
                 virtual_surface.blit(ama_surf, (art_manual_artist_rect.x + 12, art_manual_artist_rect.y + 13))
                 if _ama_active and not HAS_ANDROID_MEDIA and int(time.time() * 2) % 2 == 0:
                     _ac = min(manual_artist_cursor, len(manual_artist_text))
@@ -7145,25 +7504,25 @@ def draw_modals():
                     pygame.draw.line(virtual_surface, COLOR_WHITE,
                                      (_cx, art_manual_artist_rect.y + 8), (_cx, art_manual_artist_rect.y + 36), 2)
             else:
-                virtual_surface.blit(font_small.render(t("e.g. The Weeknd"), True, COLOR_TEXT_MUTED),
+                virtual_surface.blit(_cached_render(font_small, t("e.g. The Weeknd"), True, COLOR_TEXT_MUTED),
                                      (art_manual_artist_rect.x + 12, art_manual_artist_rect.y + 13))
 
             art_manual_go_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 195, 140, 44)
             amg_hovered = art_manual_go_rect.collidepoint(mouse_pos)
             amg_bg = (40, 230, 110) if amg_hovered else COLOR_SPOTIFY_GREEN
             pygame.draw.rect(virtual_surface, amg_bg, art_manual_go_rect, border_radius=22)
-            amg_txt = font_body.render(t("Search"), True, COLOR_BLACK)
+            amg_txt = _cached_render(font_body, t("Search"), True, COLOR_BLACK)
             amg_txt_x = art_manual_go_rect.x + (art_manual_go_rect.width - amg_txt.get_width()) // 2
             virtual_surface.blit(amg_txt, (amg_txt_x, art_manual_go_rect.y + 11))
         elif art_search_loading:
-            wait_lbl = font_body.render(t("Searching iTunes..."), True, COLOR_TEXT_MUTED)
+            wait_lbl = _cached_render(font_body, t("Searching iTunes..."), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(wait_lbl, (card_x + 20, body_top + 20))
         elif art_apply_pending:
-            dl_lbl = font_body.render(t("Downloading cover..."), True, COLOR_TEXT_MUTED)
+            dl_lbl = _cached_render(font_body, t("Downloading cover..."), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(dl_lbl, (card_x + 20, body_top + 20))
         elif art_search_error and not art_search_results:
             for ei, eline in enumerate(get_wrapped_lines(art_search_error, font_body, body_rect.width - 30)):
-                virtual_surface.blit(font_body.render(eline, True, (200, 90, 90)),
+                virtual_surface.blit(_cached_render(font_body, eline, True, (200, 90, 90)),
                                      (card_x + 20, body_top + 20 + ei * 28))
         else:
             banner_h = 0
@@ -7173,7 +7532,7 @@ def draw_modals():
                 pygame.draw.rect(virtual_surface, (60, 30, 30), banner_rect, border_radius=6)
                 err_txt = art_search_error
                 if len(err_txt) > 70: err_txt = err_txt[:68] + "\u2026"
-                err_surf = font_small.render(err_txt, True, (235, 140, 140))
+                err_surf = _cached_render(font_small, err_txt, True, (235, 140, 140))
                 virtual_surface.blit(err_surf, (banner_rect.x + 10, banner_rect.y + 6))
 
             list_top = body_top + banner_h
@@ -7199,7 +7558,7 @@ def draw_modals():
                         virtual_surface.blit(thumb_surf, thumb_rect.topleft)
                     else:
                         pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, thumb_rect, border_radius=4)
-                        note = font_small.render("\u266a", True, COLOR_TEXT_MUTED)
+                        note = _cached_render(font_small, "\u266a", True, COLOR_TEXT_MUTED)
                         virtual_surface.blit(note, (thumb_rect.x + 20, thumb_rect.y + 16))
 
                     track_name  = result.get("trackName")  or result.get("collectionName") or "Unknown"
@@ -7210,10 +7569,10 @@ def draw_modals():
                     if len(coll_name)   > 40: coll_name   = coll_name[:38]   + "\u2026"
 
                     tx = row_rect.x + 70
-                    virtual_surface.blit(font_body.render(track_name,   True, COLOR_WHITE),       (tx, row_rect.y + 6))
-                    virtual_surface.blit(font_small.render(artist_name, True, COLOR_TEXT_MUTED),  (tx, row_rect.y + 28))
+                    virtual_surface.blit(_cached_render(font_body, track_name,   True, COLOR_WHITE),       (tx, row_rect.y + 6))
+                    virtual_surface.blit(_cached_render(font_small, artist_name, True, COLOR_TEXT_MUTED),  (tx, row_rect.y + 28))
                     if coll_name:
-                        virtual_surface.blit(font_small.render(coll_name, True, (130, 130, 130)), (tx, row_rect.y + 44))
+                        virtual_surface.blit(_cached_render(font_small, coll_name, True, (130, 130, 130)), (tx, row_rect.y + 44))
                 y_item += item_h
             virtual_surface.set_clip(None)
         return
@@ -7222,8 +7581,8 @@ def draw_modals():
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
         current_lyrics_str = song_lyrics_database.get(track_ref, "")
         
-        header_lbl = font_huge.render(t("Edit Song Lyrics"), True, COLOR_SPOTIFY_GREEN)
-        track_lbl = font_body.render(f"Track: {current_track['title']} • {current_track['artist']}", True, COLOR_WHITE)
+        header_lbl = _cached_render(font_huge, t("Edit Song Lyrics"), True, COLOR_SPOTIFY_GREEN)
+        track_lbl = _cached_render(font_body, f"Track: {current_track['title']} • {current_track['artist']}", True, COLOR_WHITE)
         virtual_surface.blit(header_lbl, (main_x + 40, 45))
         virtual_surface.blit(track_lbl, (main_x + 40, 105))
         
@@ -7320,7 +7679,7 @@ def draw_modals():
                 else:
                     accumulated_chars = 0
                     for sub_idx, sl in enumerate(wrapped_sublines):
-                        line_surf = font_small.render(sl, True, line_color)
+                        line_surf = _cached_render(font_small, sl, True, line_color)
                         virtual_surface.blit(line_surf, (lyrics_textarea_rect.x + 15, y_pos))
                         
                         if i == target_line_idx and not cursor_drawn_for_line:
@@ -7345,7 +7704,7 @@ def draw_modals():
                     pygame.draw.line(virtual_surface, COLOR_SPOTIFY_GREEN, (cursor_x, cursor_y), (cursor_x, cursor_y + 16), 2)
         else:
             max_lyrics_scroll = 0
-            placeholder = font_small.render("Type or paste the song lyrics here... (e.g., [00:12] Synced Line! Press Ctrl+V to paste)", True, COLOR_TEXT_MUTED)
+            placeholder = _cached_render(font_small, "Type or paste the song lyrics here... (e.g., [00:12] Synced Line! Press Ctrl+V to paste)", True, COLOR_TEXT_MUTED)
             virtual_surface.blit(placeholder, (lyrics_textarea_rect.x + 15, lyrics_textarea_rect.y + 15))
             
         if is_portrait and layout_mode == "phone":
@@ -7382,28 +7741,28 @@ def draw_modals():
         c_clicked = c_hovered and mouse_held
         c_bg = COLOR_SPOTIFY_GREEN if c_clicked else (COLOR_HOVER if c_hovered else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, c_bg, lyrics_close_rect, border_radius=21)
-        c_txt = font_body.render(t("Close"), True, COLOR_WHITE)
+        c_txt = _cached_render(font_body, t("Close"), True, COLOR_WHITE)
         virtual_surface.blit(c_txt, (lyrics_close_rect.x + 28, lyrics_close_rect.y + 11))
         
         s_hovered = lyrics_save_rect.collidepoint(mouse_pos)
         s_clicked = s_hovered and mouse_held
         s_bg = COLOR_SPOTIFY_GREEN if s_clicked else (COLOR_HOVER if s_hovered else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, s_bg, lyrics_save_rect, border_radius=21)
-        s_txt = font_body.render(t("Save"), True, COLOR_WHITE)
+        s_txt = _cached_render(font_body, t("Save"), True, COLOR_WHITE)
         virtual_surface.blit(s_txt, (lyrics_save_rect.x + 30, lyrics_save_rect.y + 11))
 
         cl_hovered = lyrics_clear_rect.collidepoint(mouse_pos)
         cl_clicked = cl_hovered and mouse_held
         cl_bg = COLOR_SPOTIFY_GREEN if cl_clicked else (COLOR_HOVER if cl_hovered else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, cl_bg, lyrics_clear_rect, border_radius=21)
-        cl_txt = font_body.render(t("Clear"), True, COLOR_WHITE)
+        cl_txt = _cached_render(font_body, t("Clear"), True, COLOR_WHITE)
         virtual_surface.blit(cl_txt, (lyrics_clear_rect.x + 28, lyrics_clear_rect.y + 11))
 
         im_hovered = lyrics_import_rect.collidepoint(mouse_pos)
         im_clicked = im_hovered and mouse_held
         im_bg = COLOR_SPOTIFY_GREEN if im_clicked else (COLOR_HOVER if im_hovered else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, im_bg, lyrics_import_rect, border_radius=21)
-        im_txt = font_body.render(t("Import"), True, COLOR_WHITE)
+        im_txt = _cached_render(font_body, t("Import"), True, COLOR_WHITE)
         im_txt_x = lyrics_import_rect.x + (lyrics_import_rect.width - im_txt.get_width()) // 2
         virtual_surface.blit(im_txt, (im_txt_x, lyrics_import_rect.y + 11))
 
@@ -7411,7 +7770,7 @@ def draw_modals():
         se_clicked = se_hovered and mouse_held
         se_bg = COLOR_SPOTIFY_GREEN if se_clicked else (COLOR_HOVER if se_hovered else COLOR_LIGHT_GREY)
         pygame.draw.rect(virtual_surface, se_bg, lyrics_search_rect, border_radius=21)
-        se_txt = font_body.render(t("Search"), True, COLOR_WHITE)
+        se_txt = _cached_render(font_body, t("Search"), True, COLOR_WHITE)
         se_txt_x = lyrics_search_rect.x + (lyrics_search_rect.width - se_txt.get_width()) // 2
         virtual_surface.blit(se_txt, (se_txt_x, lyrics_search_rect.y + 11))
 
@@ -7429,18 +7788,18 @@ def draw_modals():
             pygame.draw.rect(virtual_surface, (22, 22, 22), card_rect, border_radius=12)
             pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, card_rect, width=1, border_radius=12)
 
-            hdr = font_body.render(t("Search Synced Lyrics"), True, COLOR_SPOTIFY_GREEN)
+            hdr = _cached_render(font_body, t("Search Synced Lyrics"), True, COLOR_SPOTIFY_GREEN)
             virtual_surface.blit(hdr, (card_x + 20, card_y + 18))
             sub_title = f"{current_track['title']} \u2014 {current_track['artist']}"
             if len(sub_title) > 55: sub_title = sub_title[:53] + "\u2026"
-            sub = font_small.render(sub_title, True, COLOR_TEXT_MUTED)
+            sub = _cached_render(font_small, sub_title, True, COLOR_TEXT_MUTED)
             virtual_surface.blit(sub, (card_x + 20, card_y + 46))
 
             lyrics_search_close_rect = pygame.Rect(card_x + card_w - 110, card_y + 14, 90, 34)
             cls_hov = lyrics_search_close_rect.collidepoint(mouse_pos)
             pygame.draw.rect(virtual_surface, COLOR_HOVER if cls_hov else COLOR_LIGHT_GREY,
                              lyrics_search_close_rect, border_radius=17)
-            cls_txt = font_small.render(t("Close"), True, COLOR_WHITE)
+            cls_txt = _cached_render(font_small, t("Close"), True, COLOR_WHITE)
             virtual_surface.blit(cls_txt, (
                 lyrics_search_close_rect.x + (lyrics_search_close_rect.width - cls_txt.get_width()) // 2,
                 lyrics_search_close_rect.y + 9))
@@ -7449,7 +7808,7 @@ def draw_modals():
             man_hov = lyrics_manual_rect.collidepoint(mouse_pos)
             man_bg = COLOR_SPOTIFY_GREEN if (man_hov and mouse_held) else (COLOR_HOVER if man_hov else COLOR_LIGHT_GREY)
             pygame.draw.rect(virtual_surface, man_bg, lyrics_manual_rect, border_radius=17)
-            man_txt = font_small.render(t("Manual"), True, COLOR_WHITE)
+            man_txt = _cached_render(font_small, t("Manual"), True, COLOR_WHITE)
             virtual_surface.blit(man_txt, (
                 lyrics_manual_rect.x + (lyrics_manual_rect.width - man_txt.get_width()) // 2,
                 lyrics_manual_rect.y + 9))
@@ -7464,7 +7823,7 @@ def draw_modals():
             if show_lyrics_manual_modal:
                 pygame.draw.rect(virtual_surface, COLOR_CARD_BG, body_rect, border_radius=8)
 
-                name_lbl = font_small.render(t("Song name"), True, COLOR_TEXT_MUTED)
+                name_lbl = _cached_render(font_small, t("Song name"), True, COLOR_TEXT_MUTED)
                 virtual_surface.blit(name_lbl, (body_rect.x + 25, body_rect.y + 25))
                 lyrics_manual_title_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 47, body_rect.width - 50, 44)
                 pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, lyrics_manual_title_rect, border_radius=6)
@@ -7472,7 +7831,7 @@ def draw_modals():
                 if _lmt_active:
                     pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, lyrics_manual_title_rect, width=2, border_radius=6)
                 if manual_title_text:
-                    mt_surf = font_small.render(manual_title_text.replace("\n", " ").replace("\r", ""), True, COLOR_WHITE)
+                    mt_surf = _cached_render(font_small, manual_title_text.replace("\n", " ").replace("\r", ""), True, COLOR_WHITE)
                     virtual_surface.blit(mt_surf, (lyrics_manual_title_rect.x + 12, lyrics_manual_title_rect.y + 13))
                     if _lmt_active and not HAS_ANDROID_MEDIA and int(time.time() * 2) % 2 == 0:
                         _tc = min(manual_title_cursor, len(manual_title_text))
@@ -7480,10 +7839,10 @@ def draw_modals():
                         pygame.draw.line(virtual_surface, COLOR_WHITE,
                                          (_cx, lyrics_manual_title_rect.y + 8), (_cx, lyrics_manual_title_rect.y + 36), 2)
                 else:
-                    virtual_surface.blit(font_small.render(t("e.g. Blinding Lights"), True, COLOR_TEXT_MUTED),
+                    virtual_surface.blit(_cached_render(font_small, t("e.g. Blinding Lights"), True, COLOR_TEXT_MUTED),
                                          (lyrics_manual_title_rect.x + 12, lyrics_manual_title_rect.y + 13))
 
-                artist_lbl = font_small.render(t("Artist"), True, COLOR_TEXT_MUTED)
+                artist_lbl = _cached_render(font_small, t("Artist"), True, COLOR_TEXT_MUTED)
                 virtual_surface.blit(artist_lbl, (body_rect.x + 25, body_rect.y + 107))
                 lyrics_manual_artist_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 129, body_rect.width - 50, 44)
                 pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, lyrics_manual_artist_rect, border_radius=6)
@@ -7491,7 +7850,7 @@ def draw_modals():
                 if _lma_active:
                     pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, lyrics_manual_artist_rect, width=2, border_radius=6)
                 if manual_artist_text:
-                    maa_surf = font_small.render(manual_artist_text.replace("\n", " ").replace("\r", ""), True, COLOR_WHITE)
+                    maa_surf = _cached_render(font_small, manual_artist_text.replace("\n", " ").replace("\r", ""), True, COLOR_WHITE)
                     virtual_surface.blit(maa_surf, (lyrics_manual_artist_rect.x + 12, lyrics_manual_artist_rect.y + 13))
                     if _lma_active and not HAS_ANDROID_MEDIA and int(time.time() * 2) % 2 == 0:
                         _ac = min(manual_artist_cursor, len(manual_artist_text))
@@ -7499,25 +7858,25 @@ def draw_modals():
                         pygame.draw.line(virtual_surface, COLOR_WHITE,
                                          (_cx, lyrics_manual_artist_rect.y + 8), (_cx, lyrics_manual_artist_rect.y + 36), 2)
                 else:
-                    virtual_surface.blit(font_small.render(t("e.g. The Weeknd"), True, COLOR_TEXT_MUTED),
+                    virtual_surface.blit(_cached_render(font_small, t("e.g. The Weeknd"), True, COLOR_TEXT_MUTED),
                                          (lyrics_manual_artist_rect.x + 12, lyrics_manual_artist_rect.y + 13))
 
                 lyrics_manual_go_rect = pygame.Rect(body_rect.x + 25, body_rect.y + 195, 140, 44)
                 mg_hovered = lyrics_manual_go_rect.collidepoint(mouse_pos)
                 mg_bg = (40, 230, 110) if mg_hovered else COLOR_SPOTIFY_GREEN
                 pygame.draw.rect(virtual_surface, mg_bg, lyrics_manual_go_rect, border_radius=22)
-                mg_txt = font_body.render(t("Search"), True, COLOR_BLACK)
+                mg_txt = _cached_render(font_body, t("Search"), True, COLOR_BLACK)
                 mg_txt_x = lyrics_manual_go_rect.x + (lyrics_manual_go_rect.width - mg_txt.get_width()) // 2
                 virtual_surface.blit(mg_txt, (mg_txt_x, lyrics_manual_go_rect.y + 11))
                 lyrics_manual_close_rect = pygame.Rect(0, 0, 0, 0)
             else:
                 lyrics_search_item_rects = []
                 if lyrics_search_loading:
-                    loading_lbl = font_body.render(t("Searching..."), True, COLOR_TEXT_MUTED)
+                    loading_lbl = _cached_render(font_body, t("Searching..."), True, COLOR_TEXT_MUTED)
                     virtual_surface.blit(loading_lbl, (card_x + 20, body_top + 20))
                 elif lyrics_search_error and not lyrics_search_results:
                     for ei, eline in enumerate(get_wrapped_lines(lyrics_search_error, font_body, body_rect.width - 30)):
-                        virtual_surface.blit(font_body.render(eline, True, (200, 90, 90)),
+                        virtual_surface.blit(_cached_render(font_body, eline, True, (200, 90, 90)),
                                              (card_x + 20, body_top + 20 + ei * 28))
                 else:
                     virtual_surface.set_clip(body_rect)
@@ -7539,7 +7898,7 @@ def draw_modals():
                             has_synced = bool(cand.get("syncedLyrics"))
                             icon_char = "\u266a" if has_synced else "\u2715"
                             icon_col  = COLOR_SPOTIFY_GREEN if has_synced else (200, 90, 90)
-                            icon_surf = font_body.render(icon_char, True, icon_col)
+                            icon_surf = _cached_render(font_body, icon_char, True, icon_col)
                             virtual_surface.blit(icon_surf, (
                                 thumb_rect.x + (thumb_rect.width  - icon_surf.get_width())  // 2,
                                 thumb_rect.y + (thumb_rect.height - icon_surf.get_height()) // 2))
@@ -7552,11 +7911,11 @@ def draw_modals():
                             if len(cand_artist) > 40: cand_artist = cand_artist[:38] + "\u2026"
 
                             tx = row_rect.x + 70
-                            virtual_surface.blit(font_body.render(cand_title,  True, COLOR_WHITE),      (tx, row_rect.y + 6))
-                            virtual_surface.blit(font_small.render(cand_artist, True, COLOR_TEXT_MUTED), (tx, row_rect.y + 28))
+                            virtual_surface.blit(_cached_render(font_body, cand_title,  True, COLOR_WHITE),      (tx, row_rect.y + 6))
+                            virtual_surface.blit(_cached_render(font_small, cand_artist, True, COLOR_TEXT_MUTED), (tx, row_rect.y + 28))
                             sync_lbl = "synced" if has_synced else "no synced lyrics"
                             sync_col  = COLOR_TEXT_MUTED if has_synced else (200, 90, 90)
-                            virtual_surface.blit(font_small.render(f"{dur_str} \u2022 {sync_lbl}", True, sync_col),
+                            virtual_surface.blit(_cached_render(font_small, f"{dur_str} \u2022 {sync_lbl}", True, sync_col),
                                                  (tx, row_rect.y + 44))
                         y_item += item_h
                     virtual_surface.set_clip(None)
@@ -7565,7 +7924,7 @@ def draw_modals():
                         fail_lines = get_wrapped_lines(lyrics_search_error, font_small, body_rect.width - 40)[:2]
                         y_fail = body_rect.bottom - 24 - (len(fail_lines) - 1) * 18
                         for fline in fail_lines:
-                            virtual_surface.blit(font_small.render(fline, True, (200, 90, 90)),
+                            virtual_surface.blit(_cached_render(font_small, fline, True, (200, 90, 90)),
                                                  (body_rect.x + 20, y_fail))
                             y_fail += 18
         return
@@ -7577,7 +7936,7 @@ def draw_modals():
 
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT))
         
-        lbl = font_huge.render(t("Create playlist"), True, COLOR_WHITE)
+        lbl = _cached_render(font_huge, t("Create playlist"), True, COLOR_WHITE)
         if is_portrait:
             virtual_surface.blit(lbl, (main_x + (main_w - lbl.get_width()) // 2, 45))
         else:
@@ -7592,7 +7951,7 @@ def draw_modals():
             
         modal_image_picker_rect = pygame.Rect(img_x, img_y, 220, 220)
         if modal_playlist_cover_surface:
-            disp_modal_cover = pygame.transform.smoothscale(modal_playlist_cover_surface, (220, 220))
+            disp_modal_cover = _cached_scale(modal_playlist_cover_surface, (220, 220))
             virtual_surface.blit(disp_modal_cover, (img_x, img_y))
         else:
             pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, modal_image_picker_rect)
@@ -7600,7 +7959,7 @@ def draw_modals():
             
         draw_unified_cover_overlay(virtual_surface, modal_image_picker_rect, mouse_pos)
             
-        label_meta = font_small.render(t("Name"), True, COLOR_TEXT_MUTED)
+        label_meta = _cached_render(font_small, t("Name"), True, COLOR_TEXT_MUTED)
         
         input_x = main_x + 300 if not is_portrait else main_x + 50
         input_y = 185 if not is_portrait else 405
@@ -7614,12 +7973,12 @@ def draw_modals():
             pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, modal_input_rect, width=2, border_radius=6)
             
         if playlist_input_text:
-            text_surf = font_body.render(playlist_input_text, True, COLOR_WHITE)
+            text_surf = _cached_render(font_body, playlist_input_text, True, COLOR_WHITE)
         else:
-            text_surf = font_body.render(t("My Playlist #1"), True, COLOR_TEXT_MUTED)
+            text_surf = _cached_render(font_body, t("My Playlist #1"), True, COLOR_TEXT_MUTED)
         virtual_surface.blit(text_surf, (modal_input_rect.x + 15, modal_input_rect.y + 11))
         
-        label_desc = font_small.render(t("Description"), True, COLOR_TEXT_MUTED)
+        label_desc = _cached_render(font_small, t("Description"), True, COLOR_TEXT_MUTED)
         virtual_surface.blit(label_desc, (input_x, input_y + 60))
         
         modal_desc_rect = pygame.Rect(input_x, input_y + 85, input_w, 110)
@@ -7632,14 +7991,14 @@ def draw_modals():
             y_text_line = modal_desc_rect.y + 12
             for line in wrapped_lines:
                 if y_text_line + 18 <= modal_desc_rect.bottom:
-                    line_surf = font_small.render(line, True, COLOR_WHITE)
+                    line_surf = _cached_render(font_small, line, True, COLOR_WHITE)
                     virtual_surface.blit(line_surf, (modal_desc_rect.x + 15, y_text_line))
                     y_text_line += 18
         else:
-            desc_surf = font_small.render(t("Add an optional description"), True, COLOR_TEXT_MUTED)
+            desc_surf = _cached_render(font_small, t("Add an optional description"), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(desc_surf, (modal_desc_rect.x + 15, modal_desc_rect.y + 12))
         
-        desc_lbl = font_small.render("Personalize your new local playlist with a clean title and custom description.", True, COLOR_WHITE)
+        desc_lbl = _cached_render(font_small, "Personalize your new local playlist with a clean title and custom description.", True, COLOR_WHITE)
         if not is_portrait:
             virtual_surface.blit(desc_lbl, (main_x + 50, 415))
         else:
@@ -7658,28 +8017,28 @@ def draw_modals():
         
         c_bg = COLOR_HOVER if modal_close_rect.collidepoint(mouse_pos) else COLOR_CARD_BG
         pygame.draw.rect(virtual_surface, c_bg, modal_close_rect, border_radius=21)
-        c_txt = font_body.render(t("Cancel"), True, COLOR_WHITE)
+        c_txt = _cached_render(font_body, t("Cancel"), True, COLOR_WHITE)
         virtual_surface.blit(c_txt, (modal_close_rect.x + 24, modal_close_rect.y + 11))
         
         s_bg = (40, 230, 110) if modal_save_rect.collidepoint(mouse_pos) else COLOR_SPOTIFY_GREEN
         pygame.draw.rect(virtual_surface, s_bg, modal_save_rect, border_radius=21)
-        s_txt = font_body.render(t("Save"), True, COLOR_BLACK)
+        s_txt = _cached_render(font_body, t("Save"), True, COLOR_BLACK)
         virtual_surface.blit(s_txt, (modal_save_rect.x + 32, modal_save_rect.y + 11))
 
     elif show_add_to_playlist_modal:
         pygame.draw.rect(virtual_surface, COLOR_BLACK, (main_x, 0, main_w, HEIGHT - portrait_sidebar_h))
         
-        lbl = font_title.render(t("Add to Playlist"), True, COLOR_WHITE)
+        lbl = _cached_render(font_title, t("Add to Playlist"), True, COLOR_WHITE)
         virtual_surface.blit(lbl, (content_pad_x, 40))
         
         track_lbl_text = f"Song: {track_to_add_to_playlist['title']}" if track_to_add_to_playlist else ""
-        track_lbl = font_small.render(track_lbl_text, True, COLOR_TEXT_MUTED)
+        track_lbl = _cached_render(font_small, track_lbl_text, True, COLOR_TEXT_MUTED)
         virtual_surface.blit(track_lbl, (content_pad_x, 70))
         
         modal_close_rect = pygame.Rect(main_x + main_w - 110, 35, 90, 35)
         c_bg = COLOR_HOVER if modal_close_rect.collidepoint(mouse_pos) else COLOR_LIGHT_GREY
         pygame.draw.rect(virtual_surface, c_bg, modal_close_rect, border_radius=15)
-        c_txt = font_small.render(t("Cancel"), True, COLOR_WHITE)
+        c_txt = _cached_render(font_small, t("Cancel"), True, COLOR_WHITE)
         virtual_surface.blit(c_txt, (modal_close_rect.x + 23, modal_close_rect.y + 8))
         
         pygame.draw.line(virtual_surface, COLOR_LIGHT_GREY, (content_pad_x, 115), (main_x + main_w - 40, 115), 1)
@@ -7688,9 +8047,9 @@ def draw_modals():
         p_names = list(custom_playlists.keys())
         
         if not p_names:
-            empty_lbl = font_body.render(t("No custom playlists built yet."), True, COLOR_TEXT_MUTED)
+            empty_lbl = _cached_render(font_body, t("No custom playlists built yet."), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(empty_lbl, (content_pad_x, 150))
-            hint_lbl = font_small.render(t("Go to 'Your Library' and tap '+' to create one."), True, COLOR_TEXT_MUTED)
+            hint_lbl = _cached_render(font_small, t("Go to 'Your Library' and tap '+' to create one."), True, COLOR_TEXT_MUTED)
             virtual_surface.blit(hint_lbl, (content_pad_x, 180))
             max_music_scroll = 0
         else:
@@ -7712,10 +8071,10 @@ def draw_modals():
                     else:
                         pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, item_rect, border_radius=6)
                         
-                    p_lbl = font_body.render(f" ♫  {p_name}", True, COLOR_WHITE)
+                    p_lbl = _cached_render(font_body, f" ♫  {p_name}", True, COLOR_WHITE)
                     virtual_surface.blit(p_lbl, (item_rect.x + 15, item_rect.y + 12))
                     
-                    count_lbl = font_small.render(f"{len(custom_playlists[p_name]['tracks'])} tracks", True, COLOR_TEXT_MUTED)
+                    count_lbl = _cached_render(font_small, f"{len(custom_playlists[p_name]['tracks'])} tracks", True, COLOR_TEXT_MUTED)
                     virtual_surface.blit(count_lbl, (main_x + main_w - 140, item_rect.y + 14))
                 y_item += 55
             virtual_surface.set_clip(None)
@@ -7846,7 +8205,7 @@ def draw_media_bar():
         else:
             pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, mediabar_add_btn_rect.center, 13, width=2)
             plus_color = COLOR_TEXT_MUTED
-        plus_surf = font_body.render("+", True, plus_color)
+        plus_surf = _cached_render(font_body, "+", True, plus_color)
         virtual_surface.blit(plus_surf, (mediabar_add_btn_rect.centerx - plus_surf.get_width() // 2,
                                           mediabar_add_btn_rect.centery - plus_surf.get_height() // 2 - 2))
 
@@ -7876,7 +8235,7 @@ def draw_media_bar():
         else:
             pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, minus_10_btn_rect.center, 21, width=2)
             m10_text_color = COLOR_TEXT_MUTED
-        m10_surf = font_small.render("-10", True, m10_text_color)
+        m10_surf = _cached_render(font_small, "-10", True, m10_text_color)
         virtual_surface.blit(m10_surf, (minus_10_btn_rect.centerx - m10_surf.get_width() // 2,
                                          minus_10_btn_rect.centery - m10_surf.get_height() // 2))
 
@@ -7924,7 +8283,7 @@ def draw_media_bar():
         else:
             pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, plus_10_btn_rect.center, 21, width=2)
             p10_text_color = COLOR_TEXT_MUTED
-        p10_surf = font_small.render("+10", True, p10_text_color)
+        p10_surf = _cached_render(font_small, "+10", True, p10_text_color)
         virtual_surface.blit(p10_surf, (plus_10_btn_rect.centerx - p10_surf.get_width() // 2,
                                          plus_10_btn_rect.centery - p10_surf.get_height() // 2))
 
@@ -7965,10 +8324,10 @@ def draw_media_bar():
             display_text = active_lyric_text
             display_color = COLOR_SPOTIFY_GREEN
             trimmed_text = display_text
-            now_playing_title = font_body.render(trimmed_text, True, display_color)
+            now_playing_title = _cached_render(font_body, trimmed_text, True, display_color)
             while trimmed_text and now_playing_title.get_width() > available_text_w:
                 trimmed_text = trimmed_text[:-1]
-                now_playing_title = font_body.render(trimmed_text + "...", True, display_color)
+                now_playing_title = _cached_render(font_body, trimmed_text + "...", True, display_color)
             title_row_y = progress_bar_y + 18
             title_row_x = text_bound_left + (available_text_w - now_playing_title.get_width()) // 2
             virtual_surface.blit(now_playing_title, (title_row_x, title_row_y))
@@ -7977,8 +8336,8 @@ def draw_media_bar():
             full_artist = " - " + current_track["artist"]
 
             def _render_title_artist(title_str, artist_str):
-                t_surf = font_body.render(title_str, True, COLOR_WHITE)
-                a_surf = font_small.render(artist_str, True, COLOR_TEXT_MUTED)
+                t_surf = _cached_render(font_body, title_str, True, COLOR_WHITE)
+                a_surf = _cached_render(font_small, artist_str, True, COLOR_TEXT_MUTED)
                 return t_surf, a_surf
 
             now_playing_title, now_playing_artist = _render_title_artist(full_title, full_artist)
@@ -7989,7 +8348,7 @@ def draw_media_bar():
                 trimmed_title = full_title
                 while trimmed_title and combined_w > available_text_w:
                     trimmed_title = trimmed_title[:-1]
-                    now_playing_title = font_body.render(trimmed_title + "...", True, COLOR_WHITE)
+                    now_playing_title = _cached_render(font_body, trimmed_title + "...", True, COLOR_WHITE)
                     combined_w = now_playing_title.get_width() + now_playing_artist.get_width()
 
             title_row_y = progress_bar_y + 18
@@ -8006,8 +8365,8 @@ def draw_media_bar():
         bar_rect = pygame.Rect(0, bar_y, WIDTH, bar_height)
         media_bar_rect = bar_rect
         pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, bar_rect)
-        now_playing_title = font_body.render(current_track["title"] if len(current_track["title"]) < 20 else current_track["title"][:17] + "...", True, COLOR_WHITE)
-        now_playing_artist = font_small.render(current_track["artist"] if len(current_track["artist"]) < 20 else current_track["artist"][:17] + "...", True, COLOR_TEXT_MUTED)
+        now_playing_title = _cached_render(font_body, current_track["title"] if len(current_track["title"]) < 20 else current_track["title"][:17] + "...", True, COLOR_WHITE)
+        now_playing_artist = _cached_render(font_small, current_track["artist"] if len(current_track["artist"]) < 20 else current_track["artist"][:17] + "...", True, COLOR_TEXT_MUTED)
         if not (is_portrait and active_lyric_text):
             virtual_surface.blit(now_playing_title, (20, bar_y + 25))
             virtual_surface.blit(now_playing_artist, (20, bar_y + 45))
@@ -8061,7 +8420,7 @@ def draw_media_bar():
         else:
             pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, mediabar_add_btn_rect.center, 13, width=2)
             plus_color = COLOR_TEXT_MUTED
-        plus_surf = font_body.render("+", True, plus_color)
+        plus_surf = _cached_render(font_body, "+", True, plus_color)
         plus_x = mediabar_add_btn_rect.centerx - plus_surf.get_width() // 2
         plus_y = mediabar_add_btn_rect.centery - plus_surf.get_height() // 2 - 2
         virtual_surface.blit(plus_surf, (plus_x, plus_y))
@@ -8079,7 +8438,7 @@ def draw_media_bar():
         else:
             pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, minus_10_btn_rect.center, 16, width=2)
             m10_text_color = COLOR_TEXT_MUTED
-        m10_surf = font_small.render("-10", True, m10_text_color)
+        m10_surf = _cached_render(font_small, "-10", True, m10_text_color)
         virtual_surface.blit(m10_surf, (minus_10_btn_rect.centerx - m10_surf.get_width() // 2, minus_10_btn_rect.centery - m10_surf.get_height() // 2))
 
         prev_hover = prev_btn_rect.collidepoint(mouse_pos)
@@ -8119,7 +8478,7 @@ def draw_media_bar():
         else:
             pygame.draw.circle(virtual_surface, COLOR_TEXT_MUTED, plus_10_btn_rect.center, 16, width=2)
             p10_text_color = COLOR_TEXT_MUTED
-        p10_surf = font_small.render("+10", True, p10_text_color)
+        p10_surf = _cached_render(font_small, "+10", True, p10_text_color)
         virtual_surface.blit(p10_surf, (plus_10_btn_rect.centerx - p10_surf.get_width() // 2, plus_10_btn_rect.centery - p10_surf.get_height() // 2))
 
         sh_hover = shuffle_btn_rect.collidepoint(mouse_pos)
@@ -8152,10 +8511,10 @@ def draw_media_bar():
             lyric_clip_rect = pygame.Rect(progress_bar_x, lyric_row_y, lyric_max_w, 18)
             if active_lyric_text:
                 trimmed_text = active_lyric_text
-                lyric_surf = font_small.render(trimmed_text, True, COLOR_SPOTIFY_GREEN)
+                lyric_surf = _cached_render(font_small, trimmed_text, True, COLOR_SPOTIFY_GREEN)
                 while trimmed_text and lyric_surf.get_width() > lyric_max_w:
                     trimmed_text = trimmed_text[:-1]
-                    lyric_surf = font_small.render(trimmed_text + "...", True, COLOR_SPOTIFY_GREEN)
+                    lyric_surf = _cached_render(font_small, trimmed_text + "...", True, COLOR_SPOTIFY_GREEN)
                 if trimmed_text:
                     lyric_x = progress_bar_x + (lyric_max_w - lyric_surf.get_width()) // 2
                     virtual_surface.set_clip(lyric_clip_rect)
@@ -8174,11 +8533,11 @@ def draw_media_bar():
                 lyric_clip_w = max(0, lyric_clip_right - lyric_clip_left)
                 lyric_clip_rect = pygame.Rect(lyric_clip_left, lyric_row_y, lyric_clip_w, 24)
                 trimmed_text = active_lyric_text
-                lyric_surf = font_small.render(trimmed_text, True, COLOR_SPOTIFY_GREEN)
+                lyric_surf = _cached_render(font_small, trimmed_text, True, COLOR_SPOTIFY_GREEN)
                 # Trim with a safety margin so the rendered text never reaches the box edge
                 while trimmed_text and lyric_surf.get_width() > max(0, lyric_clip_w - 8):
                     trimmed_text = trimmed_text[:-1]
-                    lyric_surf = font_small.render(trimmed_text + "...", True, COLOR_SPOTIFY_GREEN)
+                    lyric_surf = _cached_render(font_small, trimmed_text + "...", True, COLOR_SPOTIFY_GREEN)
                 if trimmed_text:
                     virtual_surface.set_clip(lyric_clip_rect)
                     virtual_surface.blit(lyric_surf, (lyric_clip_left, lyric_row_y))
@@ -8191,8 +8550,8 @@ def draw_media_bar():
     el_min, el_sec = int(elapsed_sec) // 60, int(elapsed_sec) % 60
     rem_min, rem_sec = int(remaining_sec) // 60, int(remaining_sec) % 60
     
-    time_start = font_small.render(f"{el_min}:{el_sec:02d}", True, COLOR_TEXT_MUTED)
-    time_end = font_small.render(f"-{rem_min}:{rem_sec:02d}" if track_duration > 0 else "0:00", True, COLOR_TEXT_MUTED)
+    time_start = _cached_render(font_small, f"{el_min}:{el_sec:02d}", True, COLOR_TEXT_MUTED)
+    time_end = _cached_render(font_small, f"-{rem_min}:{rem_sec:02d}" if track_duration > 0 else "0:00", True, COLOR_TEXT_MUTED)
     
     virtual_surface.blit(time_start, (progress_bar_x - 35, progress_bar_y - 6))
     virtual_surface.blit(time_end, (progress_bar_x + progress_bar_width + 10, progress_bar_y - 6))
@@ -8374,18 +8733,10 @@ while running:
 
     frame_had_input = False
     
-    music_grid_scroll_offset     += (target_music_scroll          - music_grid_scroll_offset)     * (12.0 * dt)
-    browser_scroll_offset        += (target_browser_scroll        - browser_scroll_offset)        * (12.0 * dt)
-    settings_scroll_offset       += (target_settings_scroll       - settings_scroll_offset)       * (12.0 * dt)
-    lyrics_scroll_offset         += (target_lyrics_scroll         - lyrics_scroll_offset)         * (12.0 * dt)
-    top100_scroll_offset         += (target_top100_scroll         - top100_scroll_offset)         * (12.0 * dt)
-    theme_page_scroll_offset     += (target_theme_page_scroll     - theme_page_scroll_offset)     * (12.0 * dt)
-    sotd_scroll_offset           += (target_sotd_scroll           - sotd_scroll_offset)           * (12.0 * dt)
-    aotd_scroll_offset           += (target_aotd_scroll           - aotd_scroll_offset)           * (12.0 * dt)
-    hm_scroll_offset             += (target_hm_scroll             - hm_scroll_offset)             * (12.0 * dt)
-    art_search_scroll_offset     += (target_art_search_scroll     - art_search_scroll_offset)     * (12.0 * dt)
-    lyrics_search_scroll_offset  += (target_lyrics_search_scroll  - lyrics_search_scroll_offset)  * (12.0 * dt)
-    btn_row_scroll_offset        += (target_btn_row_scroll        - btn_row_scroll_offset)        * (12.0 * dt)
+    # Real inertial-scroll physics (velocity + friction decay + rubber-band)
+    # for areas currently decelerating from a flick; a snappy ease-to-target
+    # for everything else. See _update_scroll_physics / SCROLL_AREAS above.
+    _update_scroll_physics(dt)
     if max_btn_row_scroll > 0:
         if target_btn_row_scroll > 100000 or target_btn_row_scroll < -100000:
             target_btn_row_scroll %= max_btn_row_scroll
@@ -8394,15 +8745,16 @@ while running:
     if mouse_held or is_dragging_progress:
         frame_had_input = True
 
+    _finger_moved_this_frame = False
+
     for event in pygame.event.get():
-        if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION, pygame.KEYDOWN, pygame.TEXTINPUT, pygame.VIDEORESIZE, pygame.FINGERDOWN, pygame.FINGERUP):
+        if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION, pygame.KEYDOWN, pygame.TEXTINPUT, pygame.VIDEORESIZE, pygame.FINGERDOWN, pygame.FINGERUP, pygame.FINGERMOTION):
             frame_had_input = True
         if event.type == pygame.QUIT:
             running = False
             
         elif event.type == pygame.VIDEORESIZE:
             REAL_WIDTH, REAL_HEIGHT = event.w, event.h
-            screen = pygame.display.set_mode((REAL_WIDTH, REAL_HEIGHT), pygame.FULLSCREEN | pygame.RESIZABLE)
             if layout_mode == "phone":
                 # Phone mode is locked to portrait — never fall back to landscape/desktop layout
                 is_portrait = True
@@ -8411,6 +8763,10 @@ while running:
             else:
                 is_portrait = REAL_HEIGHT > REAL_WIDTH
                 WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, layout_mode)
+            screen = pygame.display.set_mode(
+                (REAL_WIDTH, REAL_HEIGHT),
+                (pygame.FULLSCREEN | pygame.RESIZABLE) if IS_ANDROID else pygame.RESIZABLE
+            )
             virtual_surface = pygame.Surface((WIDTH, HEIGHT))
             
         elif event.type == pygame.TEXTINPUT:
@@ -8472,6 +8828,9 @@ while running:
         elif event.type == pygame.KEYDOWN:
             mods = pygame.key.get_mods()
             is_ctrl_or_cmd = (mods & pygame.KMOD_CTRL) or (mods & pygame.KMOD_META)
+
+            if event.key == pygame.K_F5:
+                _debug_reveal = not _debug_reveal
 
             if event.key == pygame.K_ESCAPE:
                 search_input_active = False
@@ -8699,7 +9058,7 @@ while running:
         elif event.type == pygame.FINGERMOTION:
             _last_touch_norm = (event.x, event.y)
             if HAS_ANDROID_MEDIA:
-                pygame.event.post(pygame.event.Event(pygame.MOUSEMOTION, pos=(0, 0), rel=(0, 0), buttons=(1, 0, 0), synthetic=True))
+                _finger_moved_this_frame = True
 
         elif event.type == pygame.FINGERUP:
             _last_touch_norm = (event.x, event.y)
@@ -8810,6 +9169,7 @@ while running:
                 total_drag_dy = 0
                 press_origin_pos = mouse_pos
                 _scroll_velocity_samples.clear()
+                _scroll_momentum.clear()  # a new grab always wins over any flick still decelerating
                 if media_bar_rect.collidepoint(mouse_pos) and current_track["title"] != "Select a song":
                     is_dragging_grid = False
                 if (current_page == "Search" and is_portrait and layout_mode == "phone"
@@ -8857,53 +9217,65 @@ while running:
                 if show_art_search_modal:
                     target_art_search_scroll += dy * 2.5
                     target_art_search_scroll = max(0.0, min(max_art_search_scroll, target_art_search_scroll))
+                    art_search_scroll_offset = target_art_search_scroll
                     last_touch_y = mouse_pos[1]
                 elif show_lyrics_search_modal:
                     target_lyrics_search_scroll += dy * 2.5
                     target_lyrics_search_scroll = max(0.0, min(max_lyrics_search_scroll, target_lyrics_search_scroll))
+                    lyrics_search_scroll_offset = target_lyrics_search_scroll
                     last_touch_y = mouse_pos[1]
                 elif show_top100_page:
                     target_top100_scroll += dy * 2.5
                     target_top100_scroll = max(0.0, min(float(max_top100_scroll), target_top100_scroll))
+                    top100_scroll_offset = target_top100_scroll
                     last_touch_y = mouse_pos[1]
                 elif show_theme_page:
                     target_theme_page_scroll += dy * 2.5
                     target_theme_page_scroll = max(0.0, min(float(max_theme_page_scroll), target_theme_page_scroll))
+                    theme_page_scroll_offset = target_theme_page_scroll
                     last_touch_y = mouse_pos[1]
                 elif show_song_of_day_page:
                     target_sotd_scroll += dy * 2.5
                     target_sotd_scroll = max(0.0, min(float(max_sotd_scroll), target_sotd_scroll))
+                    sotd_scroll_offset = target_sotd_scroll
                     last_touch_y = mouse_pos[1]
                 elif show_artist_of_day_page:
                     target_aotd_scroll += dy * 2.5
                     target_aotd_scroll = max(0.0, min(float(max_aotd_scroll), target_aotd_scroll))
+                    aotd_scroll_offset = target_aotd_scroll
                     last_touch_y = mouse_pos[1]
                 elif show_history_maker_page:
                     target_hm_scroll += dy * 2.5
                     target_hm_scroll = max(0.0, min(float(max_hm_scroll), target_hm_scroll))
+                    hm_scroll_offset = target_hm_scroll
                     last_touch_y = mouse_pos[1]
                 elif show_create_playlist_modal:
                     if is_browsing_for_cover:
                         target_browser_scroll += dy * 2.5
                         target_browser_scroll = max(0.0, min(max_browser_scroll, target_browser_scroll))
+                        browser_scroll_offset = target_browser_scroll
                         last_touch_y = mouse_pos[1]
                 elif show_lyrics_editor_view:
                     target_lyrics_scroll += dy * 2.5
                     target_lyrics_scroll = max(0.0, min(max_lyrics_scroll, target_lyrics_scroll))
+                    lyrics_scroll_offset = target_lyrics_scroll
                     last_touch_y = mouse_pos[1]
                 else:
                     if show_add_to_playlist_modal or current_page == "Search" or (current_page == "Your Library" and (viewing_liked_playlist or selected_custom_playlist_name)):
                         if is_browsing_storage or is_browsing_for_cover:
                             target_browser_scroll += dy * 2.5
                             target_browser_scroll = max(0.0, min(max_browser_scroll, target_browser_scroll))
+                            browser_scroll_offset = target_browser_scroll
                             last_touch_y = mouse_pos[1]
                         elif viewing_settings_page:
                             target_settings_scroll += dy * 2.5
                             target_settings_scroll = max(0.0, min(max_settings_scroll, target_settings_scroll))
+                            settings_scroll_offset = target_settings_scroll
                             last_touch_y = mouse_pos[1]
                         else:
                             target_music_scroll += dy * 2.5
                             target_music_scroll = max(0.0, min(max_music_scroll, target_music_scroll))
+                            music_grid_scroll_offset = target_music_scroll
                             last_touch_y = mouse_pos[1]
 
         elif event.type == pygame.MOUSEBUTTONUP:
@@ -8926,47 +9298,41 @@ while running:
             else:
                 mouse_pos = get_virtual_mouse_pos(event.pos)
             if event.button == 1:
-                # Compute momentum from recent velocity samples and kick the target
+                # Hand off to real inertial physics: give the released area a
+                # genuine velocity (px/sec) and let _update_scroll_physics decay
+                # it with friction every frame, instead of pre-computing a single
+                # "landing spot" and easing toward it. This is what makes the
+                # release feel like a continuous, decelerating flick (Spotify/iOS
+                # style) rather than a snap-to-target catch-up.
                 if _scroll_velocity_samples and is_dragging_grid:
                     total_dy = sum(s[1] for s in _scroll_velocity_samples)
                     elapsed  = max(0.001, _scroll_velocity_samples[-1][0] - _scroll_velocity_samples[0][0])
                     velocity = total_dy / elapsed   # px/sec
-                    kick = velocity * 0.28          # momentum factor — tune here
-                    kick = max(-2400.0, min(2400.0, kick))  # cap so it can't fly off screen
+                    velocity = max(-SCROLL_MAX_FLICK_VELOCITY, min(SCROLL_MAX_FLICK_VELOCITY, velocity))
 
-                    if show_art_search_modal:
-                        target_art_search_scroll = max(0.0, min(float(max_art_search_scroll),
-                                                                 target_art_search_scroll + kick))
-                    elif show_lyrics_search_modal:
-                        target_lyrics_search_scroll = max(0.0, min(float(max_lyrics_search_scroll),
-                                                                    target_lyrics_search_scroll + kick))
-                    elif show_top100_page:
-                        target_top100_scroll = max(0.0, min(float(max_top100_scroll),
-                                                             target_top100_scroll + kick))
-                    elif show_theme_page:
-                        target_theme_page_scroll = max(0.0, min(float(max_theme_page_scroll),
-                                                                  target_theme_page_scroll + kick))
-                    elif show_song_of_day_page:
-                        target_sotd_scroll = max(0.0, min(float(max_sotd_scroll),
-                                                           target_sotd_scroll + kick))
-                    elif show_artist_of_day_page:
-                        target_aotd_scroll = max(0.0, min(float(max_aotd_scroll),
-                                                           target_aotd_scroll + kick))
-                    elif show_history_maker_page:
-                        target_hm_scroll = max(0.0, min(float(max_hm_scroll),
-                                                         target_hm_scroll + kick))
-                    elif show_lyrics_editor_view:
-                        target_lyrics_scroll = max(0.0, min(float(max_lyrics_scroll),
-                                                             target_lyrics_scroll + kick))
-                    elif is_browsing_storage or is_browsing_for_cover:
-                        target_browser_scroll = max(0.0, min(float(max_browser_scroll),
-                                                              target_browser_scroll + kick))
-                    elif viewing_settings_page:
-                        target_settings_scroll = max(0.0, min(float(max_settings_scroll),
-                                                               target_settings_scroll + kick))
-                    else:
-                        target_music_scroll = max(0.0, min(float(max_music_scroll),
-                                                            target_music_scroll + kick))
+                    if abs(velocity) > SCROLL_MIN_VELOCITY:
+                        if show_art_search_modal:
+                            _scroll_momentum["art_search"] = velocity
+                        elif show_lyrics_search_modal:
+                            _scroll_momentum["lyrics_search"] = velocity
+                        elif show_top100_page:
+                            _scroll_momentum["top100"] = velocity
+                        elif show_theme_page:
+                            _scroll_momentum["theme_page"] = velocity
+                        elif show_song_of_day_page:
+                            _scroll_momentum["sotd"] = velocity
+                        elif show_artist_of_day_page:
+                            _scroll_momentum["aotd"] = velocity
+                        elif show_history_maker_page:
+                            _scroll_momentum["hm"] = velocity
+                        elif show_lyrics_editor_view:
+                            _scroll_momentum["lyrics"] = velocity
+                        elif is_browsing_storage or is_browsing_for_cover:
+                            _scroll_momentum["browser"] = velocity
+                        elif viewing_settings_page:
+                            _scroll_momentum["settings"] = velocity
+                        else:
+                            _scroll_momentum["music"] = velocity
                 _scroll_velocity_samples.clear()
                 if search_input_active:
                     _was_in_manual = (
@@ -8995,6 +9361,15 @@ while running:
                 is_dragging_row = False
 
                 tap_on_media_bar = media_bar_rect.collidepoint(mouse_pos) and current_track["title"] != "Select a song"
+
+                # A short tap (not a drag/flick that moved past the threshold)
+                # is about to be dispatched to whatever button/row/tab is under
+                # it below - fire one haptic tick for it here, in one place,
+                # so every tappable control in the app gets the same feedback
+                # instead of needing a trigger_haptic() call at each of the
+                # many individual click sites further down.
+                if total_drag_dy < 15:
+                    trigger_haptic()
 
                 if total_drag_dy < 15 and not tap_on_media_bar:
                     if show_lyrics_editor_view and show_lyrics_search_modal:
@@ -9230,14 +9605,28 @@ while running:
                                     break
 
                     elif current_page == "Settings":
-                        if desktop_btn_rect.collidepoint(mouse_pos):
+                        if (not IS_ANDROID) and resolution_btn_rect.collidepoint(mouse_pos):
+                            REAL_WIDTH, REAL_HEIGHT = 1920, 1080
+                            screen = pygame.display.set_mode((REAL_WIDTH, REAL_HEIGHT), pygame.RESIZABLE)
+                            is_portrait = REAL_HEIGHT > REAL_WIDTH
+                            WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, layout_mode)
+                            virtual_surface = pygame.Surface((WIDTH, HEIGHT))
+                        elif font_size_btn_rect.collidepoint(mouse_pos):
+                            cycle_font_size()
+                            save_app_data()
+                        elif IS_ANDROID and haptics_btn_rect.collidepoint(mouse_pos):
+                            haptics_enabled = not haptics_enabled
+                            if haptics_enabled:
+                                trigger_haptic()  # immediate confirmation tick that it's on
+                            save_app_data()
+                        elif _debug_reveal and desktop_btn_rect.collidepoint(mouse_pos):
                             layout_mode = "desktop"
                             grid_cols_override = None
                             set_android_orientation(False)
                             WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, "desktop")
                             virtual_surface = pygame.Surface((WIDTH, HEIGHT))
                             save_app_data()
-                        elif phone_btn_rect.collidepoint(mouse_pos):
+                        elif _debug_reveal and phone_btn_rect.collidepoint(mouse_pos):
                             layout_mode = "phone"
                             grid_cols_override = None
                             set_android_orientation(True)
@@ -9666,7 +10055,10 @@ while running:
             if show_theme_page:
                 target_theme_page_scroll -= event.y * 60
                 target_theme_page_scroll = max(0.0, min(float(max_theme_page_scroll), target_theme_page_scroll))
-            
+
+    if _finger_moved_this_frame:
+        pygame.event.post(pygame.event.Event(pygame.MOUSEMOTION, pos=(0, 0), rel=(0, 0), buttons=(1, 0, 0), synthetic=True))
+
     # Keep a partial wake lock held for exactly as long as something is
     # actually playing, so the device can't fully sleep mid-song (which
     # would silently stop playback and prevent auto-advance once the
@@ -9746,12 +10138,23 @@ while running:
             print("Render error in draw_modals (recovered):")
             _tb.print_exc()
 
+    # --- FPS DEBUG OVERLAY ---
+    # Shown only while _debug_reveal is True (press F5 to toggle). Real
+    # measured framerate via clock.get_fps() (a rolling average of recent
+    # frame times, not a guess).
+    if _debug_reveal:
+        _fps_txt = f"{clock.get_fps():.0f} fps" + ("" if USING_GPU_SCALE else " (CPU scale)")
+        _fps_surf = _cached_render(font_small, _fps_txt, True, (0, 255, 0))
+        virtual_surface.blit(_fps_surf, (8, 8))
+
     # Accurate Letterbox/Pillarbox Screen Scaling
-    # smoothscale (bilinear) instead of the old blocky nearest-neighbor scale -
-    # same layout/content, just crisp/anti-aliased instead of pixelated when
-    # the small virtual canvas gets blown up to the real screen resolution
-    scaled_frame = pygame.transform.smoothscale(virtual_surface, (REAL_WIDTH, REAL_HEIGHT))
-    screen.blit(scaled_frame, (0, 0))
+    # When USING_GPU_SCALE is True, virtual_surface IS screen (same object) and
+    # SDL already scales it onto the real display during presentation, so
+    # there's nothing left to do here but flip. Only do the CPU
+    # smoothscale (bilinear) upscale when the GPU path wasn't available.
+    if not USING_GPU_SCALE:
+        scaled_frame = pygame.transform.smoothscale(virtual_surface, (REAL_WIDTH, REAL_HEIGHT))
+        screen.blit(scaled_frame, (0, 0))
 
     pygame.display.flip()
 
@@ -9776,7 +10179,8 @@ while running:
         abs(target_hm_scroll             - hm_scroll_offset)            > 0.5 or
         abs(target_art_search_scroll     - art_search_scroll_offset)    > 0.5 or
         abs(target_lyrics_search_scroll  - lyrics_search_scroll_offset) > 0.5 or
-        abs(target_btn_row_scroll        - btn_row_scroll_offset)       > 0.5
+        abs(target_btn_row_scroll        - btn_row_scroll_offset)       > 0.5 or
+        any(v != 0.0 for v in _scroll_momentum.values())
     )
     _needs_continuous_frames = (
         is_playing or
@@ -9796,7 +10200,20 @@ while running:
         hm_cover_loading or
         (show_top100_page and len(top100_art_cache) < len(top100_tracks))
     )
-    clock.tick(DEVICE_REFRESH_RATE if _needs_continuous_frames else 10)
+    # tick_busy_loop spins instead of sleeping for the last ~1ms, which costs
+    # a little extra CPU but hits the target interval far more precisely than
+    # tick()'s OS-sleep-based delay (whose granularity can itself shave a few
+    # fps off the top on some Android kernels). Only worth that trade while
+    # something's actually animating; the idle low-power tick stays a plain
+    # sleep-based tick() since there's nothing to keep smooth there.
+    if _needs_continuous_frames:
+        clock.tick_busy_loop(DEVICE_REFRESH_RATE)
+    else:
+        clock.tick(10)
+
+    if not _needs_continuous_frames and time.time() - _last_gc_time > 5.0:
+        gc.collect()
+        _last_gc_time = time.time()
 
 _flush_listen_session(current_track.get("path", ""))
 save_app_data()
