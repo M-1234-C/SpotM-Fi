@@ -133,7 +133,21 @@ _onboarding_bar_disp = 0.0          # smoothed/animated display value of the scr
 
 try:
     DEVICE_REFRESH_RATE = info.refresh_rate
-    if DEVICE_REFRESH_RATE == 0: 
+    # Sanity clamp, not just a zero-check: some phones (mainly ones with
+    # LTPO/"adaptive refresh" OLED panels - common on flagship Pixel/Samsung
+    # models) can report back whatever low refresh rate the panel happens to
+    # be idling at when this is queried at cold start (these panels drop as
+    # low as 1-10Hz to save battery on static content), not the panel's real
+    # max rate. Since clock.tick_busy_loop(DEVICE_REFRESH_RATE) below uses
+    # this value to deliberately CAP the render loop to match it, a bad
+    # early reading doesn't just "run a bit slow" - it locks the entire app
+    # to that low number for the whole session, which is exactly a solid,
+    # unmoving low FPS regardless of how much CPU/GPU headroom the device
+    # actually has. Gaming-phone panels (e.g. Red Magic) are typically fixed
+    # high-refresh, not LTPO, so they never hit this and always report their
+    # real rate - which is why the same code runs fine there. Treat any
+    # reading under 30 as bogus and fall back to a safe 60 floor.
+    if DEVICE_REFRESH_RATE < 30:
         DEVICE_REFRESH_RATE = 60
 except:
     DEVICE_REFRESH_RATE = 60
@@ -190,6 +204,36 @@ def set_android_sustained_performance_mode():
         pass
 
 set_android_sustained_performance_mode()
+
+# --- MAIN-THREAD SCHEDULING PRIORITY BOOST ---
+# The symptom this fixes: low FPS on stock devices (Pixel, Samsung, etc.)
+# even though CPU/GPU usage looks low, while it runs fine on devices that
+# let you manually lock CPU clocks high (e.g. Red Magic's game-mode clock
+# boost). That's the signature of the stock "schedutil" CPU governor: it
+# picks clock speed from measured utilization of a thread, and this app's
+# per-frame work is short/bursty rather than sustained, so the governor
+# never sees enough load to ramp clocks up in time for each frame's
+# ~16-33ms budget. A manual clock lock bypasses the governor entirely,
+# which is why that "fixes" it on devices that expose the option - but
+# most devices don't expose it, so the fix has to come from the app side.
+# Raising this thread's Android scheduling priority to
+# THREAD_PRIORITY_URGENT_DISPLAY - the same class Android gives its own
+# UI/render thread - tells schedutil to treat it as an urgent/display
+# workload and boost clocks for it accordingly, without needing root or
+# any vendor-specific API. It's a request, not a guarantee - the OS still
+# decides how much to honor it - and it silently does nothing on
+# non-Android platforms. Isolated on purpose: doesn't touch rendering,
+# display mode, or anything else, so it's trivial to remove if it doesn't
+# help.
+def set_android_thread_priority_urgent_display():
+    try:
+        from jnius import autoclass
+        Process = autoclass('android.os.Process')
+        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY)
+    except Exception:
+        pass
+
+set_android_thread_priority_urgent_display()
 
 # --- ANDROID RUNTIME PERMISSIONS ---
 # Listing permissions in buildozer.spec only adds them to the manifest — on
@@ -743,9 +787,9 @@ USING_GPU_SCALE = False
 
 screen = pygame.display.set_mode(
     (REAL_WIDTH, REAL_HEIGHT),
-    (pygame.FULLSCREEN | pygame.RESIZABLE) if IS_ANDROID else pygame.RESIZABLE
+    (pygame.FULLSCREEN | pygame.RESIZABLE | pygame.HWSURFACE | pygame.DOUBLEBUF) if IS_ANDROID else (pygame.RESIZABLE | pygame.DOUBLEBUF)
 )
-virtual_surface = pygame.Surface((WIDTH, HEIGHT))
+virtual_surface = pygame.Surface((WIDTH, HEIGHT)).convert()
 clock = pygame.time.Clock()
 
 # --- ANIMATED STARTUP SPLASH (spinning logo) ---
@@ -3781,28 +3825,45 @@ THEMES = {
     },
 }
 
+# --- GRADIENT-BACKGROUND CACHE ---
+# Same per-frame-recompute issue as the caches above: this painted a
+# multi-stop gradient one pixel-row at a time via a Python-level loop of
+# pygame.draw.line calls, redone from scratch every single frame it was
+# visible, even though the same rect size + color stops always produce the
+# exact same image until the theme or window size actually changes. Cache
+# the finished gradient as a Surface and blit it thereafter. Keyed on
+# (rect size, colors) using the same identity/value-based reasoning as the
+# other caches here, so a theme switch (new color list) or a resize simply
+# misses and rebuilds fresh.
+_gradient_cache = {}
 def draw_multicolor_gradient(surface, rect, colors):
     """Paint a smooth multi-stop vertical gradient into rect (a pygame.Rect-like
     tuple) using the given list of colors as sequential stops."""
     x, y, w, h = rect
     if not colors:
         return
-    if len(colors) == 1:
-        pygame.draw.rect(surface, colors[0], (x, y, w, h))
-        return
-    segments = len(colors) - 1
-    seg_h = h / segments
-    for i in range(segments):
-        c1, c2 = colors[i], colors[i + 1]
-        seg_top = int(y + i * seg_h)
-        seg_bottom = int(y + (i + 1) * seg_h)
-        seg_height = max(1, seg_bottom - seg_top)
-        for row in range(seg_height):
-            t = row / seg_height
-            r = int(c1[0] + (c2[0] - c1[0]) * t)
-            g = int(c1[1] + (c2[1] - c1[1]) * t)
-            b = int(c1[2] + (c2[2] - c1[2]) * t)
-            pygame.draw.line(surface, (r, g, b), (x, seg_top + row), (x + w, seg_top + row))
+    key = (w, h, tuple(colors))
+    cached = _gradient_cache.get(key)
+    if cached is None:
+        cached = pygame.Surface((w, h))
+        if len(colors) == 1:
+            cached.fill(colors[0])
+        else:
+            segments = len(colors) - 1
+            seg_h = h / segments
+            for i in range(segments):
+                c1, c2 = colors[i], colors[i + 1]
+                seg_top = int(i * seg_h)
+                seg_bottom = int((i + 1) * seg_h)
+                seg_height = max(1, seg_bottom - seg_top)
+                for row in range(seg_height):
+                    t = row / seg_height
+                    r = int(c1[0] + (c2[0] - c1[0]) * t)
+                    g = int(c1[1] + (c2[1] - c1[1]) * t)
+                    b = int(c1[2] + (c2[2] - c1[2]) * t)
+                    pygame.draw.line(cached, (r, g, b), (0, seg_top + row), (w, seg_top + row))
+        _gradient_cache[key] = cached
+    surface.blit(cached, (x, y))
 
 def apply_theme(theme_key):
     """Recolor the entire app by reassigning the global color constants used
@@ -5254,6 +5315,64 @@ def _cached_render(font, text, antialias, color):
         _text_cache[key] = out
     return out
 
+# --- MASKED-COVER CACHE ---
+# The album-grid cards round the corners of each cover by cropping it to
+# the box size and applying a rounded-rect alpha mask (BLEND_RGBA_MIN).
+# That mask draw uses pygame's anti-aliased border_radius rect, which is a
+# real per-pixel software rasterization - not GPU/hardware accelerated -
+# and it (plus the crop blit and the full-surface blend) was being redone
+# from scratch for every visible card on every single frame, even though
+# neither the source cover nor the card size changes frame to frame while
+# just sitting there or scrolling. That made this the single largest
+# remaining per-frame cost on the main library/grid view - the one screen
+# most people are looking at most of the time - which is exactly why FPS
+# stayed low regardless of device: the work itself, not the device's
+# available power, was the bottleneck. Same identity-based-key caching
+# approach as _cached_scale/_cached_render above: keyed on the literal
+# source Surface object plus the target box size, so a genuinely new/
+# resized/replaced cover is simply a cache miss and gets rebuilt fresh.
+_masked_cover_cache = {}
+def _cached_masked_cover(src_surf, box_w, box_h):
+    key = (src_surf, box_w, box_h)
+    out = _masked_cover_cache.get(key)
+    if out is None:
+        src_w, src_h = src_surf.get_size()
+        scale_factor = max(box_w / src_w, box_h / src_h)
+        fit_w, fit_h = max(1, round(src_w * scale_factor)), max(1, round(src_h * scale_factor))
+        scaled_cover = _cached_scale(src_surf, (fit_w, fit_h))
+        crop_x = (fit_w - box_w) // 2
+        crop_y = (fit_h - box_h) // 2
+        cropped_cover = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
+        cropped_cover.blit(scaled_cover, (-crop_x, -crop_y))
+        mask_surf = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
+        pygame.draw.rect(mask_surf, (255, 255, 255), mask_surf.get_rect(), border_radius=6)
+        cropped_cover.blit(mask_surf, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+        out = cropped_cover
+        _masked_cover_cache[key] = out
+    return out
+
+# --- ROUNDED-RECT SURFACE CACHE ---
+# Same reasoning as the caches above: pygame's border_radius rect fill runs
+# a real anti-aliased software rasterization, and the album-grid cards were
+# redrawing TWO of these per visible card every single frame - the card's
+# own background, and a placeholder box behind the cover art - even though
+# each only ever takes one of a small, fixed set of (color, size) shapes.
+# Caching the finished rounded-rect as a Surface and blitting it (a cheap
+# straight pixel copy) instead of re-rasterizing it live cuts that cost to
+# effectively zero after the first frame. Keyed on the literal color/size/
+# radius/outline-width, so a theme change (which reassigns the COLOR_*
+# globals to new color tuples) or a resize simply produces a new key and a
+# fresh cache entry, exactly like the other caches here.
+_rounded_rect_cache = {}
+def _cached_rounded_rect(color, w, h, radius, width=0):
+    key = (color, w, h, radius, width)
+    surf = _rounded_rect_cache.get(key)
+    if surf is None:
+        surf = pygame.Surface((w, h), pygame.SRCALPHA)
+        pygame.draw.rect(surf, color, surf.get_rect(), width=width, border_radius=radius)
+        _rounded_rect_cache[key] = surf
+    return surf
+
 def draw_sidebar():
     global sidebar_rects
     sidebar_rects = [] 
@@ -6391,32 +6510,20 @@ def draw_main_content():
                     is_card_clicked = is_card_hovered and mouse_held
                     
                     if is_card_clicked:
-                        pygame.draw.rect(virtual_surface, (45, 45, 45), card_rect, border_radius=8)
+                        virtual_surface.blit(_cached_rounded_rect((45, 45, 45), card_rect.width, card_rect.height, 8), card_rect.topleft)
                     elif track["path"] in green_toggled_tracks and track["title"] == current_track["title"]:
-                        pygame.draw.rect(virtual_surface, COLOR_SPOTIFY_GREEN, card_rect, width=2, border_radius=8)
+                        virtual_surface.blit(_cached_rounded_rect(COLOR_SPOTIFY_GREEN, card_rect.width, card_rect.height, 8, width=2), card_rect.topleft)
                     elif is_card_hovered:
-                        pygame.draw.rect(virtual_surface, COLOR_HOVER, card_rect, border_radius=8)
+                        virtual_surface.blit(_cached_rounded_rect(COLOR_HOVER, card_rect.width, card_rect.height, 8), card_rect.topleft)
                     else:
-                        pygame.draw.rect(virtual_surface, COLOR_CARD_BG, card_rect, border_radius=8)
+                        virtual_surface.blit(_cached_rounded_rect(COLOR_CARD_BG, card_rect.width, card_rect.height, 8), card_rect.topleft)
                     
                     cover_rect = pygame.Rect(box_x + 12, box_y + 12, card_width - 24, card_height - 24)
-                    pygame.draw.rect(virtual_surface, COLOR_LIGHT_GREY, cover_rect, border_radius=6)
+                    virtual_surface.blit(_cached_rounded_rect(COLOR_LIGHT_GREY, cover_rect.width, cover_rect.height, 6), cover_rect.topleft)
                     if track.get("cover_surface"):
                         src_surf = track["cover_surface"]
-                        src_w, src_h = src_surf.get_size()
                         box_w, box_h = cover_rect.width, cover_rect.height
-                        # Scale to fully cover the box on the limiting dimension, preserving aspect ratio
-                        scale_factor = max(box_w / src_w, box_h / src_h)
-                        fit_w, fit_h = max(1, round(src_w * scale_factor)), max(1, round(src_h * scale_factor))
-                        scaled_cover = _cached_scale(src_surf, (fit_w, fit_h))
-                        # Center-crop any overflow so nothing is squashed
-                        crop_x = (fit_w - box_w) // 2
-                        crop_y = (fit_h - box_h) // 2
-                        cropped_cover = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
-                        cropped_cover.blit(scaled_cover, (-crop_x, -crop_y))
-                        mask_surf = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
-                        pygame.draw.rect(mask_surf, (255, 255, 255), mask_surf.get_rect(), border_radius=6)
-                        cropped_cover.blit(mask_surf, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+                        cropped_cover = _cached_masked_cover(src_surf, box_w, box_h)
                         virtual_surface.blit(cropped_cover, (cover_rect.x, cover_rect.y))
                     
                     if track["title"] == current_track["title"]:
@@ -6693,11 +6800,21 @@ def draw_main_content():
         if not IS_ANDROID:
             _settings_btn_keys.append("resolution")
 
-        # Desktop/Tablet layout gets a wide row (4 buttons before wrapping);
-        # Phone layout (how the app runs on most Android phones) stays a
-        # narrow 2-per-row so buttons don't get cramped on a narrow screen.
-        _cols_per_row = 2 if layout_mode == "phone" else 4
+        # Desktop/Tablet layout gets more buttons per row than Phone layout
+        # since it usually has more width to work with - but "usually" isn't
+        # "always": in portrait orientation, Desktop/Tablet's content area is
+        # only 700px wide (vs. ~1100px in landscape), which isn't wide enough
+        # to fit a fixed 4-per-row layout (4 buttons + gaps needs 700px, but
+        # only ~640px is actually available after margins) - that's what was
+        # pushing the last button in each row off the right edge. Instead of
+        # a fixed column count per layout_mode, size it to the width that's
+        # actually available this frame, so it degrades gracefully at any
+        # width/orientation instead of assuming a specific one. This still
+        # resolves to the same 4 columns in Desktop/Tablet landscape and 2 in
+        # Phone portrait as before - it just also handles the width in
+        # between (Desktop/Tablet portrait) correctly instead of clipping.
         _avail_w = main_w - 60  # content_pad_x is main_x+30; mirror that as a symmetric right margin
+        _cols_per_row = max(1, min(4, (_avail_w + btn_gap) // (btn_w + btn_gap)))
 
         _settings_btn_rects = {}
         for _i, _key in enumerate(_settings_btn_keys):
@@ -8628,7 +8745,7 @@ while running:
             WIDTH, HEIGHT = compute_virtual_size(_calc_w, _calc_h, is_portrait, layout_mode)
         else:
             WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, layout_mode)
-        virtual_surface = pygame.Surface((WIDTH, HEIGHT))
+        virtual_surface = pygame.Surface((WIDTH, HEIGHT)).convert()
 
     if _permissions_just_granted:
         _permissions_just_granted = False
@@ -8767,7 +8884,7 @@ while running:
                 (REAL_WIDTH, REAL_HEIGHT),
                 (pygame.FULLSCREEN | pygame.RESIZABLE) if IS_ANDROID else pygame.RESIZABLE
             )
-            virtual_surface = pygame.Surface((WIDTH, HEIGHT))
+            virtual_surface = pygame.Surface((WIDTH, HEIGHT)).convert()
             
         elif event.type == pygame.TEXTINPUT:
             if search_input_active:
@@ -9610,7 +9727,7 @@ while running:
                             screen = pygame.display.set_mode((REAL_WIDTH, REAL_HEIGHT), pygame.RESIZABLE)
                             is_portrait = REAL_HEIGHT > REAL_WIDTH
                             WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, layout_mode)
-                            virtual_surface = pygame.Surface((WIDTH, HEIGHT))
+                            virtual_surface = pygame.Surface((WIDTH, HEIGHT)).convert()
                         elif font_size_btn_rect.collidepoint(mouse_pos):
                             cycle_font_size()
                             save_app_data()
@@ -9624,7 +9741,7 @@ while running:
                             grid_cols_override = None
                             set_android_orientation(False)
                             WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, "desktop")
-                            virtual_surface = pygame.Surface((WIDTH, HEIGHT))
+                            virtual_surface = pygame.Surface((WIDTH, HEIGHT)).convert()
                             save_app_data()
                         elif _debug_reveal and phone_btn_rect.collidepoint(mouse_pos):
                             layout_mode = "phone"
@@ -9632,7 +9749,7 @@ while running:
                             set_android_orientation(True)
                             is_portrait = True
                             WIDTH, HEIGHT = compute_virtual_size(REAL_WIDTH, REAL_HEIGHT, is_portrait, "phone")
-                            virtual_surface = pygame.Surface((WIDTH, HEIGHT))
+                            virtual_surface = pygame.Surface((WIDTH, HEIGHT)).convert()
                             save_app_data()
                         elif grid_toggle_btn_rect.collidepoint(mouse_pos):
                             if layout_mode == "phone":
@@ -10150,10 +10267,21 @@ while running:
     # Accurate Letterbox/Pillarbox Screen Scaling
     # When USING_GPU_SCALE is True, virtual_surface IS screen (same object) and
     # SDL already scales it onto the real display during presentation, so
-    # there's nothing left to do here but flip. Only do the CPU
-    # smoothscale (bilinear) upscale when the GPU path wasn't available.
+    # there's nothing left to do here but flip. Only do the CPU upscale when
+    # the GPU path wasn't available.
+    # NOTE: this used to be pygame.transform.smoothscale (bilinear-filtered).
+    # smoothscale does a real per-pixel filtered resample, and this call runs
+    # on the ENTIRE screen at full display resolution, unconditionally,
+    # every single frame, regardless of what's actually on screen - making it
+    # by far the single most expensive fixed per-frame cost in the app, and
+    # exactly the kind of flat, workload-independent cost that produces a
+    # solid low FPS no matter how much CPU/GPU headroom a device has. The
+    # last known-good version (V1_0_1) used plain pygame.transform.scale
+    # (nearest-neighbor, no filtering) for this exact same call and ran fine,
+    # so this switches back to that - same visual letterbox/pillarbox
+    # behavior, far cheaper per frame.
     if not USING_GPU_SCALE:
-        scaled_frame = pygame.transform.smoothscale(virtual_surface, (REAL_WIDTH, REAL_HEIGHT))
+        scaled_frame = pygame.transform.scale(virtual_surface, (REAL_WIDTH, REAL_HEIGHT))
         screen.blit(scaled_frame, (0, 0))
 
     pygame.display.flip()
